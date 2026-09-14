@@ -69,14 +69,21 @@ void error_handler(InterruptFrame*, void*) {
 }
 
 // Measures the delivered tick rate over `ticks` ticks, polling the reference
-// clock (busy, so the PIT variant stays monotonic). Returns Hz x 10.
+// clock (busy, so the PIT variant stays monotonic). Returns Hz x 10, or 0 if
+// the ticks did not arrive within a generous reference-clock deadline (some
+// hypervisor backends starve timer delivery while the guest spins).
 u64 measure_rate_x10(u32 ticks) {
+    constexpr u64 DEADLINE_US = 3000000;
+    u64 begin = refclock_now_us();
     u64 t0 = g_ticks;
-    while (g_ticks == t0) cpu_relax();          // align to a tick edge
+    while (g_ticks == t0) {                      // align to a tick edge
+        if (refclock_now_us() - begin > DEADLINE_US) return 0;
+        cpu_relax();
+    }
     u64 start_us = refclock_now_us();
     u64 t1 = g_ticks;
     while (g_ticks < t1 + ticks) {
-        refclock_now_us();
+        if (refclock_now_us() - start_us > DEADLINE_US) return 0;
         cpu_relax();
     }
     u64 us = refclock_now_us() - start_us;
@@ -157,7 +164,11 @@ u64 lapic_timer_tune(u32 hz) {
     int corrections = 0;
     for (int iter = 0; iter < 6; iter++) {
         measured_x10 = measure_rate_x10(hz / 4);        // a quarter second at the target rate
-        if (!measured_x10) break;
+        if (!measured_x10) {
+            kprintf("timer: WARNING: ticks stopped arriving during measurement; keeping reload %u\n",
+                    g_periodic_count);
+            break;
+        }
         u64 err = measured_x10 > target_x10 ? measured_x10 - target_x10 : target_x10 - measured_x10;
         if (err * 50 <= target_x10) break;              // within 2%
         // Rate is inversely proportional to the reload count.
