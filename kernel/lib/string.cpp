@@ -1,14 +1,15 @@
-// Straightforward byte-at-a-time implementations. Speed does not matter before
-// phase 14 (docs/SPEC.md section 17); correctness and freedom from SSE do.
+// memcpy/memset/memmove use the x86 string instructions: on every CPU we care
+// about `rep movsb`/`rep stosb` are microcoded fast paths (ERMSB) and they
+// never touch SSE, which the kernel is built without. The str* functions are
+// plain loops; speed does not matter there before phase 14.
 #include <lib/string.h>
 
 extern "C" {
 
 void* memcpy(void* dst, const void* src, usize n) {
-    u8* d = (u8*)dst;
-    const u8* s = (const u8*)src;
-    while (n--) *d++ = *s++;
-    return dst;
+    void* ret = dst;
+    asm volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(n) : : "memory");
+    return ret;
 }
 
 void* memmove(void* dst, const void* src, usize n) {
@@ -16,19 +17,20 @@ void* memmove(void* dst, const void* src, usize n) {
     const u8* s = (const u8*)src;
     if (d == s || n == 0) return dst;
     if (d < s || d >= s + n) {
-        while (n--) *d++ = *s++;
+        asm volatile("rep movsb" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
     } else {
-        d += n;
-        s += n;
-        while (n--) *--d = *--s;
+        // Overlapping with dst above src: copy backwards with the direction flag set.
+        d += n - 1;
+        s += n - 1;
+        asm volatile("std\n\trep movsb\n\tcld" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
     }
     return dst;
 }
 
 void* memset(void* dst, int c, usize n) {
-    u8* d = (u8*)dst;
-    while (n--) *d++ = (u8)c;
-    return dst;
+    void* ret = dst;
+    asm volatile("rep stosb" : "+D"(dst), "+c"(n) : "a"((u8)c) : "memory");
+    return ret;
 }
 
 int memcmp(const void* a, const void* b, usize n) {

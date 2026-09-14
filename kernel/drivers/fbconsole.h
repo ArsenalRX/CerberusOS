@@ -14,6 +14,9 @@ struct FramebufferInfo;
 bool fbconsole_init(const FramebufferInfo& fb);
 bool fbconsole_ready();
 void fbconsole_putc(char c);
+// Paints everything written since the last flush. Output is batched (at most
+// one repaint per ~20 ms during bursts); call this before blocking or halting.
+void fbconsole_flush();
 void fbconsole_set_colour(u32 fg, u32 bg);
 void fbconsole_clear();
 u32 fbconsole_columns();

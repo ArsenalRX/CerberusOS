@@ -7,3 +7,4 @@ toolchain/src/
 *.sym
 *.log
 .vscode/
+logs/

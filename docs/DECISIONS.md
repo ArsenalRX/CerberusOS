@@ -108,3 +108,71 @@ Windows combined" and will supply reference screenshots. Treat Pane/Facet/
 shell visuals as a first-class requirement, not a checkbox: consistent
 theme, shadows, animations, and polish per SPEC §10 "Accessibility and
 polish". Revisit this entry when the screenshots arrive.
+
+## 2026-09-14 — Kernel built with -fno-omit-frame-pointer -fno-optimize-sibling-calls
+
+The exception and panic backtraces walk the RBP chain (SPEC phase 2). GCC's
+tail-call optimisation removes the caller's frame before the callee runs, so
+a fault inside a tail-called function lost the two frames above it in the
+first test. Both flags are now global for the kernel: every function has a
+frame and every call leaves a return address. Cost is a few percent of
+kernel-side CPU time, acceptable before phase 14 ("correctness first").
+
+Rejected: stack-scanning heuristics for unreliable frames (Linux-style "?"
+entries) — more code for less certainty; may be added later for userland.
+
+## 2026-09-14 — Early MMIO/ACPI mapping extends the bootloader page tables
+
+Limine base revision 3 maps only usable/reclaimable/kernel/framebuffer
+regions in the HHDM, so ACPI tables (reserved memory) and APIC registers are
+unreachable at boot. kernel/mm/early_map.cpp walks the live PML4 through the
+HHDM and adds 4 KiB mappings in the vmalloc region (0xFFFFC000_00000000, SPEC
+§6.1) from a 32-page static pool. Phase 4's VMM inherits these tables rather
+than rebuilding from scratch.
+
+Rejected: requesting base revision 0 for the unconditional 4 GiB map (older
+semantics, and the spec wants the current protocol); x2APIC via MSRs (still
+leaves the I/O APIC and ACPI unmapped).
+
+## 2026-09-14 — Early PS/2 keyboard driver for the kernel shell
+
+The owner asked for a bootable ISO to try in VirtualBox before the desktop
+exists. A keyboard driver is a phase 10 deliverable, but a minimal
+scancode-set-1 decoder (kernel/drivers/ps2kbd.cpp) feeding the kernel shell
+makes the phase 2 ISO interactive on screen, and exercises the I/O APIC
+routing with a real device. Phase 10 replaces it with the full driver
+(set 2, key events, repeat, /dev/input); the interface is deliberately tiny
+(ps2kbd_getc) so nothing else grows a dependency on it.
+
+## 2026-09-14 — Owner requirements beyond the spec: networking, smoothness
+
+The owner wants internet access ("ability to use internet etc") and a
+smooth, responsive system in VirtualBox on a fast PC. Networking is SPEC
+phase 15 (stretch); it is now a required deliverable, scheduled after the
+desktop (phase 13) and before/alongside phase 14: e1000 (VirtualBox and
+QEMU both emulate it) plus a minimal TCP/IP stack in a userland server per
+the hybrid-kernel rule (§6.2). Smoothness: keep the compositor tear-free
+(already required) and target 60 Hz frame pacing; VirtualBox VM gets VMSVGA
+with enough VRAM and 4 CPUs.
+
+## 2026-09-14 — Framebuffer console keeps a text-cell shadow buffer
+
+The first console scrolled by memmove on the framebuffer itself, which reads
+the whole screen back from video memory on every scroll. Framebuffer memory
+is uncached/write-combined; reading it in VirtualBox took long enough that
+typing at a full screen felt laggy (owner: "sooo laggy"). The console now
+keeps a character-cell buffer (512x256 bytes) and redraws rows from it;
+nothing ever reads the framebuffer. memcpy/memset/memmove also switched to
+rep movsb/stosb.
+
+Rejected: a full pixel back-buffer (needs the allocator, and the compositor
+in phase 12 will own that concern in userland anyway).
+
+## 2026-09-14 — Every VirtualBox run leaves a serial log in logs/
+
+The owner tests by hand in VirtualBox and wants a record of each run that
+can be read afterwards. The VM's COM1 is bound to logs/vbox-serial.log (set
+on the VM itself, so GUI-started runs log too); `make vbox` archives the
+previous log with a timestamp; `make vbox-log` prints the latest. The kernel
+prints a one-line "boot: OK ..." summary once every subsystem is up, so the
+log can be judged at a glance.

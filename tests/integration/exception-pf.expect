@@ -1,0 +1,17 @@
+# Phase 2: a deliberate page fault prints a complete dump and halts.
+lumen kernel shell
+!send test exceptions pf
+!wait 2
+test exceptions: triggering pf
+  raising...
+*** EXCEPTION 14: #PF Page Fault ***
+page fault at 0x000000deadbee000: not-present read kernel
+RIP=
+fault_pf_read
+RAX=
+CR2=000000deadbee000
+backtrace:
+fault_pf_read
+trampoline
+ktest_exceptions
+System halted.

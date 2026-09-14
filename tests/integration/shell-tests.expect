@@ -1,0 +1,24 @@
+# Phase 2: interrupt machinery is up, the shell answers, and the non-halting
+# self-tests pass. Directives: "!send <text>" types a line into the serial
+# console; "!wait <seconds>" pauses.
+lumen: serial console up
+kernel symbols loaded
+gdt: loaded
+idt: 256 gates loaded
+acpi: MADT: lapic at
+lapic: id
+ioapic: id
+lapic: timer
+timer: periodic at 100 Hz, interrupts enabled
+ticks so far
+lumen kernel shell
+!send test all
+!wait 3
+== test kprintf ==
+== kprintf: PASS ==
+== test timer ==
+== timer: PASS ==
+tests: 2 run, 0 failed
+!send ticks
+!wait 1
+ticks=

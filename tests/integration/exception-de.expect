@@ -1,0 +1,12 @@
+# Phase 2: a deliberate divide error prints a complete dump and halts.
+lumen kernel shell
+!send test exceptions de
+!wait 2
+*** EXCEPTION 0: #DE Divide Error ***
+error code 0x0
+RIP=
+fault_de
+backtrace:
+fault_de
+trampoline
+System halted.

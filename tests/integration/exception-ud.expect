@@ -1,0 +1,11 @@
+# Phase 2: a deliberate invalid opcode prints a complete dump and halts.
+lumen kernel shell
+!send test exceptions ud
+!wait 2
+*** EXCEPTION 6: #UD Invalid Opcode ***
+RIP=
+fault_ud
+backtrace:
+fault_ud
+trampoline
+System halted.

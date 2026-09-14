@@ -1,6 +1,7 @@
 /* Kernel linker script: higher-half image at 0xFFFFFFFF80000000 laid out for Limine.
    Each output section gets its own PT_LOAD so the bootloader can map them with
-   distinct permissions (text RX, rodata R, data RW). */
+   distinct permissions (text RX, rodata R, data RW). The symbol table comes
+   last so its size never shifts another section between the two link passes. */
 
 OUTPUT_FORMAT(elf64-x86-64)
 ENTRY(kernel_main)
@@ -11,6 +12,7 @@ PHDRS
     text            PT_LOAD;
     rodata          PT_LOAD;
     data            PT_LOAD;
+    ksymtab         PT_LOAD;
 }
 
 SECTIONS
@@ -52,6 +54,14 @@ SECTIONS
         *(COMMON)
     } :data
     __data_end = .;
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    .ksymtab : {
+        __ksymtab_start = .;
+        KEEP(*(.ksymtab))
+        __ksymtab_end = .;
+    } :ksymtab
 
     __kernel_end = .;
 

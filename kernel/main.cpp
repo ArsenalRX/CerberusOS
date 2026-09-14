@@ -1,11 +1,22 @@
-// Kernel entry point. Phase 1: bring up serial and the framebuffer console,
-// capture the boot information, and print the boot banner.
+// Kernel entry point. Phase 2: after the console is up, install the GDT/TSS
+// and IDT, bring up the interrupt controllers and the APIC timer, then drop
+// into the kernel shell.
+#include <arch/x86_64/acpi.h>
+#include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
+#include <arch/x86_64/gdt.h>
+#include <arch/x86_64/interrupts.h>
 #include <boot/bootinfo.h>
 #include <drivers/fbconsole.h>
+#include <drivers/ioapic.h>
+#include <drivers/lapic.h>
+#include <drivers/pic.h>
+#include <drivers/ps2kbd.h>
 #include <drivers/serial.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
+#include <lib/shell.h>
+#include <lib/symbols.h>
 
 namespace {
 
@@ -67,6 +78,35 @@ extern "C" [[noreturn]] void kernel_main() {
 
     print_banner();
 
-    kprintf("lumen: phase 1 complete, halting\n");
-    halt_forever();
+    symbols_init();
+    kprintf("symbols: %lu kernel symbols loaded\n", (unsigned long)symbols_count());
+
+    gdt_init_bsp();
+    kprintf("gdt: loaded (kernel cs=%#x ds=%#x, user cs=%#x ds=%#x, tss=%#x)\n", seg::KCODE, seg::KDATA,
+            seg::UCODE, seg::UDATA, seg::TSS);
+    interrupts_init();
+    kprintf("idt: 256 gates loaded, IST for #DF/#NMI/#MC\n");
+
+    pic_init();
+    kprintf("pic: remapped to 0x20-0x2f and masked\n");
+    acpi_init();
+    lapic_init();
+    ioapic_init();
+    lapic_timer_calibrate();
+    lapic_timer_set_periodic(TIMER_HZ);
+    ps2kbd_init();
+    interrupts_enable();
+    kprintf("timer: periodic at %u Hz, interrupts enabled\n", TIMER_HZ);
+    kprintf("ps2kbd: irq 1 unmasked (early driver, US layout)\n");
+
+    // Prove the tick is alive before handing over to the shell.
+    u64 start = lapic_timer_ticks();
+    while (lapic_timer_ticks() < start + TIMER_HZ / 2) cpu_halt();
+    kprintf("timer: %lu ticks so far\n", (unsigned long)lapic_timer_ticks());
+
+    // One-line summary for the serial log so a VM run can be judged at a glance.
+    kprintf("boot: OK  serial fbconsole(%ux%u) symbols(%lu) gdt idt acpi lapic(%uHz) ioapic keyboard\n",
+            fbconsole_columns(), fbconsole_rows(), (unsigned long)symbols_count(), TIMER_HZ);
+
+    shell_run();
 }

@@ -36,13 +36,14 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # Kernel flags (see docs/SPEC.md §1 "Non-negotiables")
 # ---------------------------------------------------------------------------
 KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
+             -fno-omit-frame-pointer -fno-optimize-sibling-calls \
              -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
              -mno-sse -mno-sse2 -mno-mmx -mno-80387 \
              -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
              -nostdlib -nostdinc++ -fno-builtin \
              -Wall -Wextra -Werror=return-type -Wno-unused-parameter \
              -O2 -g -MMD -MP \
-             -I$(ROOT)/kernel -I$(LIMINE) \
+             -I$(ROOT)/kernel -I$(ROOT)/tests -I$(LIMINE) \
              -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
 DEBUG ?= 1
 ifeq ($(DEBUG),1)
@@ -50,10 +51,11 @@ KCXXFLAGS += -DLUMEN_DEBUG
 endif
 KASFLAGS  := -g -Wa,-I$(ROOT)
 KNASMFLAGS:= -f elf64 -g -F dwarf
-KLDFLAGS  := -nostdlib -static -z max-page-size=0x1000 -T $(ROOT)/kernel/linker.ld
+KLDFLAGS  := -nostdlib -static -z max-page-size=0x1000 -z noexecstack -T $(ROOT)/kernel/linker.ld
 
-KERNEL_CPP  := $(shell find $(ROOT)/kernel -name '*.cpp' | sort)
-KERNEL_S    := $(shell find $(ROOT)/kernel -name '*.S' | sort)
+SYMS_S      := $(ROOT)/kernel/lib/symbols.S
+KERNEL_CPP  := $(shell find $(ROOT)/kernel $(ROOT)/tests/kernel -name '*.cpp' | sort)
+KERNEL_S    := $(filter-out $(SYMS_S),$(shell find $(ROOT)/kernel -name '*.S' | sort))
 KERNEL_ASM  := $(shell find $(ROOT)/kernel -name '*.asm' | sort)
 KERNEL_OBJS := $(patsubst $(ROOT)/%.cpp,$(BUILD)/%.o,$(KERNEL_CPP)) \
                $(patsubst $(ROOT)/%.S,$(BUILD)/%.o,$(KERNEL_S)) \
@@ -72,7 +74,7 @@ QEMU_DISPLAY ?= -display gtk
 # ---------------------------------------------------------------------------
 # Top-level targets
 # ---------------------------------------------------------------------------
-.PHONY: all kernel iso run run-headless run-uefi debug gdb test clean check-tools vbox help
+.PHONY: all kernel iso run run-headless run-uefi debug gdb test clean check-tools vbox vbox-log dist help
 
 all: check-tools kernel
 
@@ -120,28 +122,59 @@ clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test clean vbox check-tools"
+	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test clean vbox vbox-log dist check-tools"
 
 # ---------------------------------------------------------------------------
 # Kernel build rules
 # ---------------------------------------------------------------------------
-$(BUILD)/%.o: $(ROOT)/%.cpp
+# Objects also depend on the Makefile so a flag change rebuilds everything.
+$(BUILD)/%.o: $(ROOT)/%.cpp $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(KCXXFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: $(ROOT)/%.S
+$(BUILD)/%.o: $(ROOT)/%.S $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(KCXXFLAGS) $(KASFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: $(ROOT)/%.asm
+$(BUILD)/%.o: $(ROOT)/%.asm $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(NASM) $(KNASMFLAGS) $< -o $@
 
-$(KERNEL_ELF): $(KERNEL_OBJS) $(ROOT)/kernel/linker.ld
-	@mkdir -p $(dir $@)
-	$(LD) $(KLDFLAGS) $(KERNEL_OBJS) -o $@
+# Two-pass link. Pass 1 links with an empty symbol table; its `nm` output is
+# turned into the .ksymtab blob (tools/gensyms.py) and pass 2 links that in.
+# The .ksymtab section is last in the image, so no other address can move; a
+# check after pass 2 enforces that.
+SYMS_EMPTY   := $(BUILD)/syms-empty.bin
+SYMS_FULL    := $(BUILD)/syms.bin
+KERNEL_PASS1 := $(BUILD)/kernel/lumen-pass1.elf
 
-# Symbol table used for backtraces (consumed properly from phase 2 on).
+$(SYMS_EMPTY): $(ROOT)/tools/gensyms.py
+	@mkdir -p $(dir $@)
+	$(PYTHON) $< $@
+
+$(BUILD)/symbols-empty.o: $(SYMS_S) $(SYMS_EMPTY)
+	$(CXX) $(KCXXFLAGS) $(KASFLAGS) -DSYMS_FILE=\"$(SYMS_EMPTY)\" -c $< -o $@
+
+$(KERNEL_PASS1): $(KERNEL_OBJS) $(BUILD)/symbols-empty.o $(ROOT)/kernel/linker.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(KLDFLAGS) $(KERNEL_OBJS) $(BUILD)/symbols-empty.o -o $@
+
+$(SYMS_FULL): $(KERNEL_PASS1) $(ROOT)/tools/gensyms.py
+	$(NM) -nC $< > $(BUILD)/pass1.sym
+	$(PYTHON) $(ROOT)/tools/gensyms.py $@ $(BUILD)/pass1.sym
+
+$(BUILD)/symbols-full.o: $(SYMS_S) $(SYMS_FULL)
+	$(CXX) $(KCXXFLAGS) $(KASFLAGS) -DSYMS_FILE=\"$(SYMS_FULL)\" -c $< -o $@
+
+$(KERNEL_ELF): $(KERNEL_OBJS) $(BUILD)/symbols-full.o $(ROOT)/kernel/linker.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(KLDFLAGS) $(KERNEL_OBJS) $(BUILD)/symbols-full.o -o $@
+	@$(NM) -n $(KERNEL_PASS1) | grep -vE 'ksymtab|__kernel_end' > $(BUILD)/pass1.chk; \
+	 $(NM) -n $@ | grep -vE 'ksymtab|__kernel_end' > $(BUILD)/pass2.chk; \
+	 cmp -s $(BUILD)/pass1.chk $(BUILD)/pass2.chk || \
+	     { echo "error: symbol addresses moved between link passes"; exit 1; }
+
+# Plain-text symbol list for GDB users and the debugging playbook.
 $(KERNEL_SYM): $(KERNEL_ELF)
 	$(NM) -n --defined-only $< | grep -E ' [tTwW] ' > $@ || true
 
@@ -176,20 +209,41 @@ $(ISO): $(KERNEL_ELF) $(LIMINE_BIN) $(ROOT)/limine.conf
 # ---------------------------------------------------------------------------
 VBOXMANAGE ?= /mnt/c/Program\ Files/Oracle/VirtualBox/VBoxManage.exe
 VBOX_VM    ?= Lumen
+LOGS       := $(ROOT)/logs
+VBOX_LOG   := $(LOGS)/vbox-serial.log
 
+# The VM's COM1 is written to logs/vbox-serial.log on every run (also when the
+# VM is started from the VirtualBox GUI). `make vbox` archives the previous
+# run's log with a timestamp first, so nothing is lost.
 vbox: $(ISO)
-	@ISO_WIN=$$(wslpath -w $(ISO)); \
+	@mkdir -p $(LOGS); \
+	ISO_WIN=$$(wslpath -w $(ISO)); LOG_WIN=$$(wslpath -w $(LOGS))\\vbox-serial.log; \
 	if ! $(VBOXMANAGE) showvminfo "$(VBOX_VM)" >/dev/null 2>&1; then \
 	    echo "creating VirtualBox VM '$(VBOX_VM)'"; \
 	    $(VBOXMANAGE) createvm --name "$(VBOX_VM)" --ostype Other_64 --register; \
-	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 512 --cpus 4 --firmware efi \
-	        --graphicscontroller vmsvga --vram 32 --uart1 0x3F8 4 --uartmode1 file "$$(wslpath -w $(BUILD))\serial.log" \
+	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 1024 --cpus 4 --firmware efi \
+	        --graphicscontroller vmsvga --vram 64 --uart1 0x3F8 4 \
 	        --boot1 dvd --boot2 none --boot3 none --boot4 none --mouse ps2 --keyboard ps2; \
 	    $(VBOXMANAGE) storagectl "$(VBOX_VM)" --name IDE --add ide; \
 	    $(VBOXMANAGE) storageattach "$(VBOX_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive --medium emptydrive; \
 	fi; \
+	if $(VBOXMANAGE) showvminfo "$(VBOX_VM)" --machinereadable | grep -q '^VMState="running"'; then \
+	    echo "VM '$(VBOX_VM)' is already running; quit it first"; exit 1; \
+	fi; \
+	if [ -s $(VBOX_LOG) ]; then mv $(VBOX_LOG) $(LOGS)/vbox-serial-$$(date +%Y%m%d-%H%M%S).log; fi; \
+	$(VBOXMANAGE) modifyvm "$(VBOX_VM)" --uartmode1 file "$$LOG_WIN"; \
 	$(VBOXMANAGE) storageattach "$(VBOX_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive --medium "$$ISO_WIN"; \
 	$(VBOXMANAGE) startvm "$(VBOX_VM)"
+
+# Show the serial log of the most recent VirtualBox run, ANSI codes stripped.
+vbox-log:
+	@$(PYTHON) -c "import re,sys; t=open('$(VBOX_LOG)',errors='replace').read(); print(re.sub(r'\x1b\[[0-9;?]*[A-Za-z]','',t))"
+
+# Snapshot ISO for trying out in a VM (dist/ is not cleaned by `make clean`).
+dist: $(ISO)
+	@mkdir -p $(ROOT)/dist
+	cp $(ISO) $(ROOT)/dist/lumen-$(VERSION).iso
+	@echo "snapshot: $(ROOT)/dist/lumen-$(VERSION).iso"
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)
