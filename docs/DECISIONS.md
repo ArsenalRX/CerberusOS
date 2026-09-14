@@ -58,3 +58,26 @@ default SeaBIOS works without OVMF. UEFI is still the primary path; the
 
 Rejected: GRUB/multiboot2 (spec forbids writing to anything but Limine);
 UEFI-only ISO (needlessly brittle for a VirtualBox user).
+
+## 2026-09-14 — libgcc is built with `-mcmodel=large -mno-red-zone`, SSE left on
+
+The spec's kernel flags (`-mcmodel=kernel -mno-sse`) cannot be applied to
+libgcc itself: libgcc is compiled `-fpic`, which the kernel code model
+rejects, and its float helpers return values in XMM registers, which
+`-mno-sse` makes uncompilable. libgcc is therefore built with the large code
+model (PIC-compatible, links into a kernel-model image) and no red zone, with
+SSE enabled. The kernel is compiled `-mno-sse`, so it can never emit a call to
+a float helper; the integer helpers (`__divti3`, `__popcountdi2`, …) are what
+we actually link. Note for `build-cross.sh`: GCC bakes `CFLAGS_FOR_TARGET`
+into `gcc/libgcc.mvars` during `all-gcc`, so the flags are passed to every
+step, not only the libgcc step.
+
+Rejected: not linking libgcc at all (128-bit division and a few builtins
+would then need hand-written replacements).
+
+## 2026-09-14 — Boot verification uses a QMP probe, not silence
+
+`tools/qemu-probe.py` boots the ISO headless, waits, and reads `RIP` through
+QEMU's QMP socket. A boot counts only if `RIP` is inside the higher-half
+kernel image. This is the primitive the integration harness (phase 1+) will
+build on, because "no crash on serial" is not evidence that the kernel ran.
