@@ -1,0 +1,187 @@
+# Top-level build for Lumen OS, the Spec compiler, and the userland.
+# Run from WSL2/Linux. Targets: all kernel iso run debug gdb test clean vbox check-tools.
+
+MAKEFLAGS += --no-builtin-rules --no-print-directory
+.SUFFIXES:
+
+# ---------------------------------------------------------------------------
+# Paths and tools
+# ---------------------------------------------------------------------------
+ROOT      := $(abspath .)
+BUILD     := $(ROOT)/build
+TOOLCHAIN ?= $(ROOT)/toolchain/out
+LIMINE    := $(ROOT)/toolchain/limine
+
+CROSS     := $(TOOLCHAIN)/bin/x86_64-elf-
+CXX       := $(CROSS)g++
+AS        := $(CROSS)as
+LD        := $(CROSS)ld
+OBJCOPY   := $(CROSS)objcopy
+NM        := $(CROSS)nm
+NASM      ?= nasm
+XORRISO   ?= xorriso
+QEMU      ?= qemu-system-x86_64
+GDB       ?= gdb
+PYTHON    ?= python3
+
+KERNEL_ELF := $(BUILD)/kernel/lumen.elf
+KERNEL_SYM := $(BUILD)/kernel/kernel.sym
+ISO        := $(BUILD)/lumen.iso
+LIMINE_BIN := $(BUILD)/limine-host/limine
+
+VERSION    := 0.0.1
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# ---------------------------------------------------------------------------
+# Kernel flags (see docs/SPEC.md §1 "Non-negotiables")
+# ---------------------------------------------------------------------------
+KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
+             -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
+             -mno-sse -mno-sse2 -mno-mmx -mno-80387 \
+             -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
+             -nostdlib -nostdinc++ -fno-builtin \
+             -Wall -Wextra -Werror=return-type -Wno-unused-parameter \
+             -O2 -g -MMD -MP \
+             -I$(ROOT)/kernel -I$(LIMINE) \
+             -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
+KASFLAGS  := -g
+KNASMFLAGS:= -f elf64 -g -F dwarf
+KLDFLAGS  := -nostdlib -static -z max-page-size=0x1000 -T $(ROOT)/kernel/linker.ld
+
+KERNEL_CPP  := $(shell find $(ROOT)/kernel -name '*.cpp' | sort)
+KERNEL_S    := $(shell find $(ROOT)/kernel -name '*.S' | sort)
+KERNEL_ASM  := $(shell find $(ROOT)/kernel -name '*.asm' | sort)
+KERNEL_OBJS := $(patsubst $(ROOT)/%.cpp,$(BUILD)/%.o,$(KERNEL_CPP)) \
+               $(patsubst $(ROOT)/%.S,$(BUILD)/%.o,$(KERNEL_S)) \
+               $(patsubst $(ROOT)/%.asm,$(BUILD)/%.o,$(KERNEL_ASM))
+KERNEL_DEPS := $(KERNEL_OBJS:.o=.d)
+
+# ---------------------------------------------------------------------------
+# QEMU invocation (docs/SPEC.md §3, exact)
+# ---------------------------------------------------------------------------
+QEMU_FLAGS := -machine q35 -cpu qemu64,+pdpe1gb -smp 4 -m 512M \
+              -cdrom $(ISO) -boot d \
+              -serial stdio \
+              -d guest_errors -no-reboot -no-shutdown
+QEMU_DISPLAY ?= -display gtk
+
+# ---------------------------------------------------------------------------
+# Top-level targets
+# ---------------------------------------------------------------------------
+.PHONY: all kernel iso run run-headless debug gdb test clean check-tools vbox help
+
+all: check-tools kernel
+
+kernel: $(KERNEL_ELF) $(KERNEL_SYM)
+
+iso: $(ISO)
+
+run: $(ISO)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_DISPLAY)
+
+run-headless: $(ISO)
+	$(QEMU) $(QEMU_FLAGS) -display none
+
+debug: $(ISO)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_DISPLAY) -s -S
+
+gdb: $(KERNEL_ELF)
+	$(GDB) -q $(KERNEL_ELF) \
+	    -ex "set confirm off" \
+	    -ex "directory $(ROOT)/kernel" \
+	    -ex "target remote localhost:1234"
+
+test: kernel
+	@echo "test: no test suites registered yet (phase 0)"
+
+clean:
+	rm -rf $(BUILD)
+
+help:
+	@echo "targets: all kernel iso run run-headless debug gdb test clean vbox check-tools"
+
+# ---------------------------------------------------------------------------
+# Kernel build rules
+# ---------------------------------------------------------------------------
+$(BUILD)/%.o: $(ROOT)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(KCXXFLAGS) -c $< -o $@
+
+$(BUILD)/%.o: $(ROOT)/%.S
+	@mkdir -p $(dir $@)
+	$(CXX) $(KCXXFLAGS) $(KASFLAGS) -c $< -o $@
+
+$(BUILD)/%.o: $(ROOT)/%.asm
+	@mkdir -p $(dir $@)
+	$(NASM) $(KNASMFLAGS) $< -o $@
+
+$(KERNEL_ELF): $(KERNEL_OBJS) $(ROOT)/kernel/linker.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(KLDFLAGS) $(KERNEL_OBJS) -o $@
+
+# Symbol table used for backtraces (consumed properly from phase 2 on).
+$(KERNEL_SYM): $(KERNEL_ELF)
+	$(NM) -n --defined-only $< | grep -E ' [tTwW] ' > $@ || true
+
+-include $(KERNEL_DEPS)
+
+# ---------------------------------------------------------------------------
+# ISO: Limine (UEFI + BIOS hybrid) + kernel + initramfs
+# ---------------------------------------------------------------------------
+$(LIMINE_BIN): $(LIMINE)/limine.c
+	@mkdir -p $(dir $@)
+	cc -g -O2 -pipe -std=c99 $< -o $@
+
+$(ISO): $(KERNEL_ELF) $(LIMINE_BIN) $(ROOT)/limine.conf
+	rm -rf $(BUILD)/iso_root
+	mkdir -p $(BUILD)/iso_root/boot/limine $(BUILD)/iso_root/EFI/BOOT
+	cp $(KERNEL_ELF) $(BUILD)/iso_root/boot/lumen.elf
+	cp $(ROOT)/limine.conf $(LIMINE)/limine-bios.sys $(LIMINE)/limine-bios-cd.bin \
+	   $(LIMINE)/limine-uefi-cd.bin $(BUILD)/iso_root/boot/limine/
+	cp $(LIMINE)/BOOTX64.EFI $(BUILD)/iso_root/EFI/BOOT/
+	$(XORRISO) -as mkisofs -R -r -J \
+	    -b boot/limine/limine-bios-cd.bin -no-emul-boot -boot-load-size 4 -boot-info-table \
+	    -hfsplus -apm-block-size 2048 \
+	    --efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
+	    --protective-msdos-label \
+	    $(BUILD)/iso_root -o $@ 2>&1 | grep -vE '^xorriso : (NOTE|UPDATE)' || true
+	$(LIMINE_BIN) bios-install $@
+	@echo "ISO ready: $@"
+
+# ---------------------------------------------------------------------------
+# VirtualBox: create (once) and boot a "Lumen" VM from the ISO.
+# Works from WSL by calling the Windows VBoxManage.exe.
+# ---------------------------------------------------------------------------
+VBOXMANAGE ?= /mnt/c/Program\ Files/Oracle/VirtualBox/VBoxManage.exe
+VBOX_VM    ?= Lumen
+
+vbox: $(ISO)
+	@ISO_WIN=$$(wslpath -w $(ISO)); \
+	if ! $(VBOXMANAGE) showvminfo "$(VBOX_VM)" >/dev/null 2>&1; then \
+	    echo "creating VirtualBox VM '$(VBOX_VM)'"; \
+	    $(VBOXMANAGE) createvm --name "$(VBOX_VM)" --ostype Other_64 --register; \
+	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 512 --cpus 4 --firmware efi \
+	        --graphicscontroller vmsvga --vram 32 --uart1 0x3F8 4 --uartmode1 file "$$(wslpath -w $(BUILD))\serial.log" \
+	        --boot1 dvd --boot2 none --boot3 none --boot4 none --mouse ps2 --keyboard ps2; \
+	    $(VBOXMANAGE) storagectl "$(VBOX_VM)" --name IDE --add ide; \
+	    $(VBOXMANAGE) storageattach "$(VBOX_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive --medium emptydrive; \
+	fi; \
+	$(VBOXMANAGE) storageattach "$(VBOX_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive --medium "$$ISO_WIN"; \
+	$(VBOXMANAGE) startvm "$(VBOX_VM)"
+
+# ---------------------------------------------------------------------------
+# Host tool check with install hints (docs/SPEC.md §3)
+# ---------------------------------------------------------------------------
+define CHECK_TOOL
+	@command -v $(1) >/dev/null 2>&1 || { echo "missing tool: $(1)  ->  $(2)"; exit 1; }
+endef
+
+check-tools:
+	@test -x $(CXX) || { echo "missing cross compiler: $(CXX)"; \
+	    echo "  ->  run: ./toolchain/build-cross.sh"; exit 1; }
+	$(call CHECK_TOOL,$(NASM),sudo apt install nasm)
+	$(call CHECK_TOOL,$(XORRISO),sudo apt install xorriso)
+	$(call CHECK_TOOL,$(QEMU),sudo apt install qemu-system-x86)
+	$(call CHECK_TOOL,$(GDB),sudo apt install gdb)
+	$(call CHECK_TOOL,$(PYTHON),sudo apt install python3)
+	$(call CHECK_TOOL,cc,sudo apt install build-essential)

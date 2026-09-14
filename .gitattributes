@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bin binary
+*.sys binary
+*.EFI binary
+*.exe binary
+*.png binary
+*.psf binary

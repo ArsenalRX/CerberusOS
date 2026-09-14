@@ -1,0 +1,9 @@
+build/
+toolchain/out/
+toolchain/src/
+*.o
+*.d
+*.iso
+*.sym
+*.log
+.vscode/
