@@ -68,13 +68,17 @@ mkdir -p build-gcc && cd build-gcc
     --disable-nls --enable-languages=c,c++ --without-headers \
     --disable-shared --disable-threads --disable-libssp --disable-libquadmath \
     --disable-libgomp --disable-libatomic --disable-hosted-libstdcxx
-make -j"$JOBS" all-gcc
-# libgcc without the red zone and without SSE so it is safe to link into the kernel.
+# libgcc without the red zone so it is safe to link into the kernel.
 # libgcc is built -fpic, which the kernel code model rejects; the large model is
-# PIC-compatible and links fine into a -mcmodel=kernel image.
-make -j"$JOBS" all-target-libgcc CFLAGS_FOR_TARGET='-g -O2 -mcmodel=large -mno-red-zone -mno-sse -mno-mmx'
+# PIC-compatible and links fine into a -mcmodel=kernel image. SSE cannot be
+# disabled here (libgcc's float helpers return in XMM registers); the kernel is
+# built -mno-sse so it never references those helpers. The flags must be given
+# to all-gcc too: that step bakes them into gcc/libgcc.mvars.
+LIBGCC_CFLAGS='-g -O2 -mcmodel=large -mno-red-zone'
+make -j"$JOBS" all-gcc            CFLAGS_FOR_TARGET="$LIBGCC_CFLAGS"
+make -j"$JOBS" all-target-libgcc  CFLAGS_FOR_TARGET="$LIBGCC_CFLAGS"
 make install-gcc
-make install-target-libgcc
+make install-target-libgcc        CFLAGS_FOR_TARGET="$LIBGCC_CFLAGS"
 cd ..
 
 echo "cross toolchain installed: $PREFIX/bin/$TARGET-g++"
