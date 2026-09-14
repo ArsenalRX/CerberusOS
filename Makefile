@@ -44,7 +44,11 @@ KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
              -O2 -g -MMD -MP \
              -I$(ROOT)/kernel -I$(LIMINE) \
              -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
-KASFLAGS  := -g
+DEBUG ?= 1
+ifeq ($(DEBUG),1)
+KCXXFLAGS += -DLUMEN_DEBUG
+endif
+KASFLAGS  := -g -Wa,-I$(ROOT)
 KNASMFLAGS:= -f elf64 -g -F dwarf
 KLDFLAGS  := -nostdlib -static -z max-page-size=0x1000 -T $(ROOT)/kernel/linker.ld
 
@@ -96,8 +100,21 @@ gdb: $(KERNEL_ELF)
 	    -ex "directory $(ROOT)/kernel" \
 	    -ex "target remote localhost:1234"
 
-test: kernel
-	@echo "test: no test suites registered yet (phase 0)"
+# Integration tests: each tests/integration/<name>.expect boots the ISO headless
+# and checks the serial log (see tools/qemu-probe.py). Exit nonzero on any failure.
+INTEGRATION_TESTS := $(wildcard $(ROOT)/tests/integration/*.expect)
+
+test: $(ISO)
+	@fail=0; \
+	for t in $(INTEGRATION_TESTS); do \
+	    name=$$(basename $$t .expect); \
+	    if $(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 8 --quiet --expect $$t > $(BUILD)/test-$$name.log 2>&1; then \
+	        echo "PASS integration/$$name"; \
+	    else \
+	        echo "FAIL integration/$$name (see build/test-$$name.log)"; fail=1; \
+	    fi; \
+	done; \
+	exit $$fail
 
 clean:
 	rm -rf $(BUILD)

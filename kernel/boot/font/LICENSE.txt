@@ -1,0 +1,7 @@
+terminus-8x16.psf and terminus-16x32.psf are the Terminus Font by Dimitar
+Toshkov Zhekov, as shipped in Debian/Ubuntu console-setup (Lat15-Terminus16
+converted to PSF2 with tools/psf1to2.py; Uni2-Terminus32x16 unchanged).
+
+Terminus Font is licensed under the SIL Open Font License, Version 1.1.
+Copyright (c) 2010 Dimitar Toshkov Zhekov, with Reserved Font Name
+"Terminus Font". https://terminus-font.sourceforge.net/

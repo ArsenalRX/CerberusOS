@@ -81,3 +81,30 @@ would then need hand-written replacements).
 QEMU's QMP socket. A boot counts only if `RIP` is inside the higher-half
 kernel image. This is the primitive the integration harness (phase 1+) will
 build on, because "no crash on serial" is not evidence that the kernel ran.
+
+## 2026-09-14 — Console font: Terminus 8x16 converted from PSF1 to PSF2
+
+The spec asks for a PSF v2 renderer. Ubuntu ships Terminus 8x16 only as
+PSF1 (Lat15-Terminus16.psf.gz); the 32x16 variant is already PSF2.
+tools/psf1to2.py converts the PSF1 file once and the result is committed as
+kernel/boot/font/terminus-8x16.psf, embedded with .incbin from
+kernel/boot/font.S. Terminus is SIL OFL 1.1 (kernel/boot/font/LICENSE.txt).
+
+Rejected: supporting PSF1 in the kernel renderer (one format is enough);
+fetching the upstream Terminus tarball (adds a network step to the build).
+
+## 2026-09-14 — Integration tests are expect-files over the serial log
+
+tests/integration/<name>.expect holds ordered substrings that must appear in
+the serial output of a headless boot. make test runs each through
+tools/qemu-probe.py, which also insists RIP ends inside the kernel image.
+Scripted input (for shell-driven tests) is added to the probe when phase 2
+introduces the kernel shell.
+
+## 2026-09-14 — Owner direction for the desktop (phases 12-13)
+
+The owner wants the GUI to feel "super nice and sleek, like Linux and
+Windows combined" and will supply reference screenshots. Treat Pane/Facet/
+shell visuals as a first-class requirement, not a checkbox: consistent
+theme, shadows, animations, and polish per SPEC §10 "Accessibility and
+polish". Revisit this entry when the screenshots arrive.

@@ -1,0 +1,16 @@
+# Phase 1: the kernel boots, prints the banner on serial, and halts cleanly.
+# Lines must appear in this order as substrings of the serial output.
+limine: Loading executable `boot():/boot/lumen.elf`
+lumen: serial console up
+lumen: boot info collected
+lumen: framebuffer console
+Lumen 0.0.1 (x86-64), built
+bootloader: Limine
+cpu:
+kernel: phys
+framebuffer: 1280x800, 32 bpp
+memory map:
+ KiB  usable
+ KiB  framebuffer
+MiB usable, top of RAM at
+lumen: phase 1 complete, halting
