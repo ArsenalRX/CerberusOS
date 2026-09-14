@@ -68,7 +68,7 @@ QEMU_DISPLAY ?= -display gtk
 # ---------------------------------------------------------------------------
 # Top-level targets
 # ---------------------------------------------------------------------------
-.PHONY: all kernel iso run run-headless debug gdb test clean check-tools vbox help
+.PHONY: all kernel iso run run-headless run-uefi debug gdb test clean check-tools vbox help
 
 all: check-tools kernel
 
@@ -81,6 +81,11 @@ run: $(ISO)
 
 run-headless: $(ISO)
 	$(QEMU) $(QEMU_FLAGS) -display none
+
+# UEFI boot through OVMF (the spec's primary boot path); the default `run` uses SeaBIOS.
+OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
+run-uefi: $(ISO)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_DISPLAY) -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE)
 
 debug: $(ISO)
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_DISPLAY) -s -S
@@ -98,7 +103,7 @@ clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "targets: all kernel iso run run-headless debug gdb test clean vbox check-tools"
+	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test clean vbox check-tools"
 
 # ---------------------------------------------------------------------------
 # Kernel build rules
