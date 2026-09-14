@@ -54,22 +54,25 @@ fetch "https://ftp.gnu.org/gnu/gcc/gcc-$GCC_VER/gcc-$GCC_VER.tar.xz"     "gcc-$G
 export PATH="$PREFIX/bin:$PATH"
 
 echo "== binutils $BINUTILS_VER =="
-rm -rf build-binutils && mkdir build-binutils && cd build-binutils
-"../binutils-$BINUTILS_VER/configure" --target="$TARGET" --prefix="$PREFIX" \
+# Build dirs are reused so an interrupted run resumes instead of starting over.
+mkdir -p build-binutils && cd build-binutils
+[[ -f Makefile ]] || "../binutils-$BINUTILS_VER/configure" --target="$TARGET" --prefix="$PREFIX" \
     --with-sysroot --disable-nls --disable-werror
 make -j"$JOBS"
 make install
 cd ..
 
 echo "== gcc $GCC_VER =="
-rm -rf build-gcc && mkdir build-gcc && cd build-gcc
-"../gcc-$GCC_VER/configure" --target="$TARGET" --prefix="$PREFIX" \
+mkdir -p build-gcc && cd build-gcc
+[[ -f Makefile ]] || "../gcc-$GCC_VER/configure" --target="$TARGET" --prefix="$PREFIX" \
     --disable-nls --enable-languages=c,c++ --without-headers \
     --disable-shared --disable-threads --disable-libssp --disable-libquadmath \
     --disable-libgomp --disable-libatomic --disable-hosted-libstdcxx
 make -j"$JOBS" all-gcc
 # libgcc without the red zone and without SSE so it is safe to link into the kernel.
-make -j"$JOBS" all-target-libgcc CFLAGS_FOR_TARGET='-g -O2 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx'
+# libgcc is built -fpic, which the kernel code model rejects; the large model is
+# PIC-compatible and links fine into a -mcmodel=kernel image.
+make -j"$JOBS" all-target-libgcc CFLAGS_FOR_TARGET='-g -O2 -mcmodel=large -mno-red-zone -mno-sse -mno-mmx'
 make install-gcc
 make install-target-libgcc
 cd ..
