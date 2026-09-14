@@ -81,6 +81,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("iso")
     ap.add_argument("--uefi", metavar="OVMF_CODE")
+    ap.add_argument("--no-hpet", action="store_true", help="boot without an HPET (tests the PIT path)")
     ap.add_argument("--wait", type=float, default=8.0)
     ap.add_argument("--smp", type=int, default=4)
     ap.add_argument("--screenshot", metavar="FILE.png")
@@ -93,7 +94,14 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="lumen-qmp-")
     sock = os.path.join(tmp, "qmp.sock")
-    cmd = ["qemu-system-x86_64", "-machine", "q35", "-cpu", "qemu64,+pdpe1gb",
+    machine = "q35,hpet=off" if a.no_hpet else "q35"
+    # KVM when available (nested virtualisation inside WSL2 works): faster tests
+    # and hardware-accurate timers. LUMEN_QEMU_ACCEL=tcg forces emulation.
+    if os.environ.get("LUMEN_QEMU_ACCEL", "kvm") == "kvm" and os.access("/dev/kvm", os.R_OK | os.W_OK):
+        accel = ["-accel", "kvm", "-cpu", "host"]
+    else:
+        accel = ["-cpu", "qemu64,+pdpe1gb"]
+    cmd = ["qemu-system-x86_64", "-machine", machine] + accel + [
            "-smp", str(a.smp), "-m", "512M", "-cdrom", a.iso, "-boot", "d",
            "-serial", "stdio", "-display", "none", "-d", "guest_errors",
            "-no-reboot", "-no-shutdown", "-qmp", f"unix:{sock},server,nowait"]

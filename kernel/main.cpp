@@ -8,10 +8,12 @@
 #include <arch/x86_64/interrupts.h>
 #include <boot/bootinfo.h>
 #include <drivers/fbconsole.h>
+#include <drivers/hpet.h>
 #include <drivers/ioapic.h>
 #include <drivers/lapic.h>
 #include <drivers/pic.h>
 #include <drivers/ps2kbd.h>
+#include <drivers/refclock.h>
 #include <drivers/serial.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -90,6 +92,8 @@ extern "C" [[noreturn]] void kernel_main() {
     pic_init();
     kprintf("pic: remapped to 0x20-0x2f and masked\n");
     acpi_init();
+    hpet_init();
+    refclock_init();
     lapic_init();
     ioapic_init();
     lapic_timer_calibrate();
@@ -99,14 +103,16 @@ extern "C" [[noreturn]] void kernel_main() {
     kprintf("timer: periodic at %u Hz, interrupts enabled\n", TIMER_HZ);
     kprintf("ps2kbd: irq 1 unmasked (early driver, US layout)\n");
 
-    // Prove the tick is alive before handing over to the shell.
-    u64 start = lapic_timer_ticks();
-    while (lapic_timer_ticks() < start + TIMER_HZ / 2) cpu_halt();
-    kprintf("timer: %lu ticks so far\n", (unsigned long)lapic_timer_ticks());
+    // Measure the delivered tick rate and correct the reload count if the
+    // estimate was off. A wrong rate here would make every timeout wrong.
+    u64 measured_hz_x10 = lapic_timer_tune(TIMER_HZ);
 
     // One-line summary for the serial log so a VM run can be judged at a glance.
-    kprintf("boot: OK  serial fbconsole(%ux%u) symbols(%lu) gdt idt acpi lapic(%uHz) ioapic keyboard\n",
-            fbconsole_columns(), fbconsole_rows(), (unsigned long)symbols_count(), TIMER_HZ);
+    kprintf("boot: OK  serial fbconsole(%ux%u) symbols(%lu) gdt idt acpi %s lapic ioapic "
+            "timer(%uHz, measured %lu.%luHz) keyboard\n",
+            fbconsole_columns(), fbconsole_rows(), (unsigned long)symbols_count(),
+            hpet_available() ? "hpet" : "no-hpet", TIMER_HZ, (unsigned long)(measured_hz_x10 / 10),
+            (unsigned long)(measured_hz_x10 % 10));
 
     shell_run();
 }

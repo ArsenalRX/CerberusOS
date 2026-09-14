@@ -6,6 +6,7 @@
 #include <drivers/fbconsole.h>
 #include <drivers/lapic.h>
 #include <drivers/ps2kbd.h>
+#include <drivers/refclock.h>
 #include <drivers/serial.h>
 #include <kernel/ktest.h>
 #include <lib/kprintf.h>
@@ -24,9 +25,13 @@ int cmd_ticks(int, char**);
 int cmd_mem(int, char**);
 int cmd_sym(int argc, char** argv);
 int cmd_test(int argc, char** argv);
+int cmd_idle(int argc, char** argv);
+int cmd_timermode(int argc, char** argv);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
+
+bool g_idle_spin = false;       // shell waits with pause instead of hlt (diagnostic)
 
 const ShellCommandEntry COMMANDS[] = {
     {"help", "list commands", cmd_help},
@@ -34,10 +39,26 @@ const ShellCommandEntry COMMANDS[] = {
     {"mem", "print the boot memory map", cmd_mem},
     {"sym", "sym <hex-address>: resolve an address to a symbol", cmd_sym},
     {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
+    {"idle", "idle hlt|spin: how the shell waits for input (diagnostic)", cmd_idle},
+    {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"panic", "trigger a kernel panic", cmd_panic},
     {"halt", "halt the CPU", cmd_halt},
     {"reboot", "reset the machine", cmd_reboot},
 };
+
+int cmd_idle(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "spin") == 0) g_idle_spin = true;
+    else if (argc > 1 && strcmp(argv[1], "hlt") == 0) g_idle_spin = false;
+    kprintf("idle: %s\n", g_idle_spin ? "spin" : "hlt");
+    return 0;
+}
+
+int cmd_timermode(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "oneshot") == 0) lapic_timer_set_rearm_mode(true);
+    else if (argc > 1 && strcmp(argv[1], "periodic") == 0) lapic_timer_set_rearm_mode(false);
+    kprintf("timermode: %s\n", lapic_timer_rearm_mode() ? "oneshot (re-armed per tick)" : "periodic");
+    return 0;
+}
 
 int cmd_help(int, char**) {
     for (const auto& c : COMMANDS) kprintf("  %-8s %s\n", c.name, c.help);
@@ -48,8 +69,10 @@ int cmd_help(int, char**) {
 
 int cmd_ticks(int, char**) {
     u64 t = lapic_timer_ticks();
-    kprintf("ticks=%lu (%lu.%02lu s at %u Hz)\n", (unsigned long)t, (unsigned long)(t / TIMER_HZ),
-            (unsigned long)(t % TIMER_HZ * 100 / TIMER_HZ), TIMER_HZ);
+    u64 us = refclock_now_us();
+    kprintf("ticks=%lu (%lu.%02lu s at %u Hz); %s clock %lu.%02lu s since boot\n", (unsigned long)t,
+            (unsigned long)(t / TIMER_HZ), (unsigned long)(t % TIMER_HZ * 100 / TIMER_HZ), TIMER_HZ,
+            refclock_name(), (unsigned long)(us / 1000000), (unsigned long)(us % 1000000 / 10000));
     return 0;
 }
 
@@ -153,7 +176,8 @@ int read_line(char* buf, usize cap) {
         if (c < 0) c = ps2kbd_getc();
         if (c < 0) {
             fbconsole_flush();
-            cpu_halt();     // the timer tick or a key press wakes us to poll again
+            if (g_idle_spin) cpu_relax();
+            else cpu_halt();    // the timer tick or a key press wakes us to poll again
             continue;
         }
         if (c == '\r' || c == '\n') {

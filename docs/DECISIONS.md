@@ -176,3 +176,49 @@ on the VM itself, so GUI-started runs log too); `make vbox` archives the
 previous log with a timestamp; `make vbox-log` prints the latest. The kernel
 prints a one-line "boot: OK ..." summary once every subsystem is up, so the
 log can be judged at a glance.
+
+## 2026-09-14 — APIC timer calibrated against the HPET, PIT counter as fallback
+
+The first calibration used PIT channel 2 with the speaker gate and polled
+the "timer 2 output" bit of port 0x61. Under VirtualBox the three 10 ms
+samples disagreed by 4x and the 100 Hz tick ran 5x slow. Now:
+1. The HPET (ACPI "HPET" table, main counter with a known period) is the
+   reference when present. Both QEMU q35 and VirtualBox (with the VM's HPET
+   setting on, which `make vbox` enables) provide one.
+2. Without an HPET, the PIT is used differently: channel 0 runs as a
+   free-running rate generator and elapsed time is the difference between
+   latched count readings. No dependence on port 0x61.
+3. Three samples, median taken.
+4. After the periodic timer starts, the kernel measures the actual tick rate
+   against the reference for 50 ticks and prints it in the "boot: OK" line,
+   so a wrong calibration is visible in every VM log.
+Verified: QEMU with and without HPET (`tools/qemu-probe.py --no-hpet`) both
+measure 100.0-100.9 Hz.
+
+Rejected: TSC-based calibration (no reliable frequency source on AMD/QEMU
+CPUID; the TSC may not be invariant in VMs).
+
+## 2026-09-14 — VirtualBox on this host runs on Hyper-V (NEM); QEMU+KVM in WSL2 is the fast path
+
+Both VirtualBox VMs logged "HM: HMR3Init: Attempting fall back to NEM:
+AMD-V is not available": Windows Hyper-V is active (required by WSL2 and
+Docker Desktop, and the host is Windows 11 Home so Hyper-V Manager is not an
+option either), so VirtualBox uses the Windows Hypervisor Platform backend.
+Measured consequences in the guest: typing lag, and virtual time advancing at
+roughly a third of wall time while idle (HPET and APIC timer agree with each
+other, both lag the host). Nothing in the kernel can fix that.
+
+Nested virtualisation is enabled in this WSL2, so /dev/kvm exists there.
+QEMU with -accel kvm -cpu host runs the kernel at native speed with accurate
+timers, and WSLg puts the QEMU window on the Windows desktop. Therefore:
+- Makefile and tools/qemu-probe.py auto-select KVM when /dev/kvm exists
+  (QEMU_ACCEL=tcg / LUMEN_QEMU_ACCEL=tcg force emulation).
+- run-lumen.cmd at the repo root boots the ISO from Windows with one click.
+- VirtualBox stays supported (make vbox, logs/vbox-serial.log) for the
+  owner's preference, with the caveat above recorded in STATUS.md.
+
+The `idle` and `timermode` shell commands and `test idle` stay as
+diagnostics; they were what exposed the problem.
+
+Rejected: disabling Hyper-V (bcdedit hypervisorlaunchtype off) to give
+VirtualBox AMD-V — it would break WSL2 and therefore the build.

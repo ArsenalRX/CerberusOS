@@ -5,11 +5,13 @@
 int ktest_exceptions(int argc, char** argv);
 int ktest_kprintf(int argc, char** argv);
 int ktest_timer(int argc, char** argv);
+int ktest_idle(int argc, char** argv);
 
 namespace {
 const KernelTest TESTS[] = {
     {"kprintf", "format engine: widths, padding, lengths", ktest_kprintf, false},
     {"timer", "APIC timer advances at 100 Hz", ktest_timer, false},
+    {"idle", "timer ticks keep arriving while the CPU is halted", ktest_idle, false},
     {"exceptions", "exceptions <de|ud|pf|pfw|gp|bp>: trigger a CPU exception (halts)", ktest_exceptions,
      true},
 };

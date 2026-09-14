@@ -65,11 +65,20 @@ KERNEL_DEPS := $(KERNEL_OBJS:.o=.d)
 # ---------------------------------------------------------------------------
 # QEMU invocation (docs/SPEC.md §3, exact)
 # ---------------------------------------------------------------------------
-QEMU_FLAGS := -machine q35 -cpu qemu64,+pdpe1gb -smp 4 -m 512M \
+# With KVM available (nested virtualisation inside WSL2, or a Linux host) the
+# guest runs at native speed with accurate timers; otherwise the spec's TCG
+# line is used unchanged. Override with QEMU_ACCEL=tcg to force emulation.
+QEMU_ACCEL ?= $(if $(wildcard /dev/kvm),kvm,tcg)
+ifeq ($(QEMU_ACCEL),kvm)
+QEMU_CPU := -accel kvm -cpu host
+else
+QEMU_CPU := -cpu qemu64,+pdpe1gb
+endif
+QEMU_FLAGS := -machine q35 $(QEMU_CPU) -smp 4 -m 512M \
               -cdrom $(ISO) -boot d \
               -serial stdio \
               -d guest_errors -no-reboot -no-shutdown
-QEMU_DISPLAY ?= -display gtk
+QEMU_DISPLAY ?= -display gtk,zoom-to-fit=on
 
 # ---------------------------------------------------------------------------
 # Top-level targets
@@ -208,7 +217,7 @@ $(ISO): $(KERNEL_ELF) $(LIMINE_BIN) $(ROOT)/limine.conf
 # Works from WSL by calling the Windows VBoxManage.exe.
 # ---------------------------------------------------------------------------
 VBOXMANAGE ?= /mnt/c/Program\ Files/Oracle/VirtualBox/VBoxManage.exe
-VBOX_VM    ?= Lumen
+VBOX_VM    ?= Lumen 0.0.1
 LOGS       := $(ROOT)/logs
 VBOX_LOG   := $(LOGS)/vbox-serial.log
 
@@ -222,7 +231,7 @@ vbox: $(ISO)
 	    echo "creating VirtualBox VM '$(VBOX_VM)'"; \
 	    $(VBOXMANAGE) createvm --name "$(VBOX_VM)" --ostype Other_64 --register; \
 	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 1024 --cpus 4 --firmware efi \
-	        --graphicscontroller vmsvga --vram 64 --uart1 0x3F8 4 \
+	        --graphicscontroller vmsvga --vram 64 --uart1 0x3F8 4 --hpet on \
 	        --boot1 dvd --boot2 none --boot3 none --boot4 none --mouse ps2 --keyboard ps2; \
 	    $(VBOXMANAGE) storagectl "$(VBOX_VM)" --name IDE --add ide; \
 	    $(VBOXMANAGE) storageattach "$(VBOX_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive --medium emptydrive; \

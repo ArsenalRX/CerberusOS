@@ -10,15 +10,18 @@ lapic: id
 ioapic: id
 lapic: timer
 timer: periodic at 100 Hz, interrupts enabled
-ticks so far
+timer: 100 Hz confirmed: measured
+boot: OK
 lumen kernel shell
 !send test all
-!wait 3
+!wait 7
 == test kprintf ==
 == kprintf: PASS ==
 == test timer ==
 == timer: PASS ==
-tests: 2 run, 0 failed
+== test idle ==
+== idle: PASS ==
+tests: 3 run, 0 failed
 !send ticks
 !wait 1
 ticks=
