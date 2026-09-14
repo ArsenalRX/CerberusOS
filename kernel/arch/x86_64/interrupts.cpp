@@ -3,6 +3,7 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/interrupts.h>
+#include <lib/console.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
 #include <lib/string.h>
@@ -124,6 +125,7 @@ void decode_error_code(const InterruptFrame& f) {
 
 [[noreturn]] void unhandled_exception(InterruptFrame* f) {
     interrupts_disable();
+    console_emergency_text_mode();
     kprintf("\n*** EXCEPTION %lu: %s ***\n", (unsigned long)f->vector, exception_name((u8)f->vector));
     decode_error_code(*f);
     dump_frame(*f);

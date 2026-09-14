@@ -1,0 +1,38 @@
+# Desktop preview: boots to the compositor, the terminal window takes typed
+# input, the mouse can drag a window, open the launcher menu, and start an
+# application. Coordinates assume the 1280x800 test display.
+ps2mouse: streaming
+gui: desktop up
+lumen kernel shell
+!key help
+!wait 1
+lumen> help
+!screenshot build/desktop-1.png
+# Drag the About window by its title bar (starts at x=760..1220, y=90..122).
+!mouseto 1000 105
+!button left down
+!mouse -220 180
+!button left up
+!wait 0.5
+!screenshot build/desktop-2.png
+# Open the launcher menu (button at x=8..104, y=766..794).
+!mouseto 50 780
+!button left down
+!button left up
+!wait 0.5
+!screenshot build/desktop-3.png
+# Pick "System Monitor": menu at y=584..752, second item centre y~649.
+!mouseto 100 649
+!button left down
+!button left up
+!wait 1.5
+!screenshot build/desktop-4.png
+# Alt+Tab is exercised by the keyboard test; here type into the terminal
+# again after clicking it, to prove focus follows the click.
+!mouseto 120 470
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+lumen> ticks
+ticks=

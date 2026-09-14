@@ -3,12 +3,10 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/interrupts.h>
 #include <boot/bootinfo.h>
-#include <drivers/fbconsole.h>
 #include <drivers/lapic.h>
-#include <drivers/ps2kbd.h>
 #include <drivers/refclock.h>
-#include <drivers/serial.h>
 #include <kernel/ktest.h>
+#include <lib/console.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
 #include <lib/shell.h>
@@ -178,12 +176,9 @@ int cmd_reboot(int, char**) {
 int read_line(char* buf, usize cap) {
     usize n = 0;
     for (;;) {
-        int c = serial_getc();
-        if (c < 0) c = ps2kbd_getc();
+        int c = console_getc();
         if (c < 0) {
-            fbconsole_flush();
-            if (g_idle_spin) cpu_relax();
-            else cpu_halt();    // the timer tick or a key press wakes us to poll again
+            console_idle(g_idle_spin);      // presents frames, then waits for an interrupt
             continue;
         }
         if (c == '\r' || c == '\n') {

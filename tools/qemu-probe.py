@@ -52,9 +52,33 @@ def load_expect(path):
             steps.append(("key", line[5:]))
         elif line.startswith("!wait "):
             steps.append(("wait", float(line[6:])))
+        elif line.startswith("!mouseto "):          # !mouseto <x> <y>  absolute (guest clamps at 0,0)
+            x, y = line[9:].split()
+            steps.append(("mouseto", (int(x), int(y))))
+        elif line.startswith("!mouse "):            # !mouse <dx> <dy>  relative motion
+            dx, dy = line[7:].split()
+            steps.append(("mouse", (int(dx), int(dy))))
+        elif line.startswith("!button "):           # !button <left|right|middle> <down|up>
+            btn, state = line[8:].split()
+            steps.append(("button", (btn, state == "down")))
+        elif line.startswith("!screenshot "):
+            steps.append(("screenshot", line[12:]))
         else:
             steps.append(("expect", line))
     return steps
+
+def mouse_move(q, dx, dy):
+    """Relative motion through the PS/2 mouse (moves in small steps for the guest)."""
+    while dx or dy:
+        sx = max(-40, min(40, dx)); sy = max(-40, min(40, dy))
+        q.cmd("input-send-event", events=[
+            {"type": "rel", "data": {"axis": "x", "value": sx}},
+            {"type": "rel", "data": {"axis": "y", "value": sy}}])
+        dx -= sx; dy -= sy
+        time.sleep(0.03)
+
+def mouse_button(q, button, down):
+    q.cmd("input-send-event", events=[{"type": "btn", "data": {"button": button, "down": down}}])
 
 # QEMU qcode names for the characters "!key" can type (plus Enter at the end).
 QCODE = {" ": "spc", "-": "minus", "=": "equal", ".": "dot", ",": "comma", "/": "slash",
@@ -117,6 +141,19 @@ def main():
             time.sleep(0.3)
         elif kind == "key":
             type_keys(q, arg)
+            time.sleep(0.3)
+        elif kind == "mouse":
+            mouse_move(q, *arg)
+            time.sleep(0.2)
+        elif kind == "mouseto":
+            mouse_move(q, -4000, -4000)        # park at the top-left corner
+            mouse_move(q, *arg)
+            time.sleep(0.2)
+        elif kind == "button":
+            mouse_button(q, *arg)
+            time.sleep(0.2)
+        elif kind == "screenshot":
+            q.cmd("screendump", filename=os.path.abspath(arg), format="png")
             time.sleep(0.3)
         elif kind == "wait":
             time.sleep(arg)

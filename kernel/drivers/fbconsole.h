@@ -13,6 +13,10 @@ struct FramebufferInfo;
 // drawing garbage.
 bool fbconsole_init(const FramebufferInfo& fb);
 bool fbconsole_ready();
+// The desktop takes the framebuffer over; disable stops all drawing, enable
+// clears the screen and resumes (used for panic output).
+void fbconsole_disable();
+void fbconsole_enable();
 void fbconsole_putc(char c);
 // Paints everything written since the last flush. Output is batched (at most
 // one repaint per ~20 ms during bursts); call this before blocking or halting.

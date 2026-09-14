@@ -1,5 +1,5 @@
-// Scancode set 1 decode. Only what the kernel shell needs: printable ASCII,
-// Enter, Backspace, Tab, Ctrl+letter. Everything else is dropped.
+// Scancode set 1 decode with modifier state. Extended (E0) codes cover the
+// navigation cluster and the Super keys.
 #include <arch/x86_64/interrupts.h>
 #include <arch/x86_64/io.h>
 #include <drivers/ioapic.h>
@@ -12,11 +12,12 @@ constexpr u16 PORT_DATA = 0x60;
 constexpr u16 PORT_STATUS = 0x64;
 constexpr u8 IRQ_KEYBOARD = 1;
 
-constexpr usize RING_SIZE = 64;
-volatile u8 g_ring[RING_SIZE];
+constexpr usize RING_SIZE = 128;
+KeyEvent g_ring[RING_SIZE];
 volatile usize g_head = 0, g_tail = 0;
 
-bool g_shift = false, g_ctrl = false, g_caps = false, g_extended = false;
+u8 g_mods = 0;
+bool g_extended = false;
 
 // Index = scancode (set 1, make codes). 0 = no character.
 const char MAP_LOWER[128] = {
@@ -40,11 +41,49 @@ const char MAP_UPPER[128] = {
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 };
 
-void push(u8 c) {
+void push(const KeyEvent& e) {
     usize next = (g_head + 1) % RING_SIZE;
     if (next == g_tail) return;     // full: drop the key
-    g_ring[g_head] = c;
+    g_ring[g_head] = e;
     g_head = next;
+}
+
+u8 special_key(u8 code, bool extended) {
+    if (extended) {
+        switch (code) {
+        case 0x48: return key::UP;
+        case 0x50: return key::DOWN;
+        case 0x4B: return key::LEFT;
+        case 0x4D: return key::RIGHT;
+        case 0x47: return key::HOME;
+        case 0x4F: return key::END;
+        case 0x49: return key::PAGE_UP;
+        case 0x51: return key::PAGE_DOWN;
+        case 0x53: return key::DELETE;
+        case 0x52: return key::INSERT;
+        case 0x5B: case 0x5C: return key::SUPER;
+        case 0x1D: return key::CTRL;
+        case 0x38: return key::ALT;
+        case 0x1C: return key::ENTER;
+        default: return key::NONE;
+        }
+    }
+    switch (code) {
+    case 0x01: return key::ESCAPE;
+    case 0x0F: return key::TAB;
+    case 0x1C: return key::ENTER;
+    case 0x0E: return key::BACKSPACE;
+    case 0x2A: case 0x36: return key::SHIFT;
+    case 0x1D: return key::CTRL;
+    case 0x38: return key::ALT;
+    case 0x3A: return key::CAPS_LOCK;
+    case 0x37: return key::PRINT;
+    default: break;
+    }
+    if (code >= 0x3B && code <= 0x44) return (u8)(key::F1 + (code - 0x3B));
+    if (code == 0x57) return key::F1 + 10;
+    if (code == 0x58) return key::F1 + 11;
+    return key::NONE;
 }
 
 void handle_scancode(u8 sc) {
@@ -52,29 +91,47 @@ void handle_scancode(u8 sc) {
         g_extended = true;
         return;
     }
-    bool released = sc & 0x80;
+    bool pressed = !(sc & 0x80);
     u8 code = sc & 0x7F;
     bool extended = g_extended;
     g_extended = false;
 
-    switch (code) {
-    case 0x2A: case 0x36: g_shift = !released; return;      // left/right shift
-    case 0x1D: g_ctrl = !released; return;                  // ctrl (also E0 1D)
-    case 0x3A: if (!released) g_caps = !g_caps; return;     // caps lock
+    u8 k = special_key(code, extended);
+    switch (k) {
+    case key::SHIFT: g_mods = pressed ? (g_mods | mod::SHIFT) : (g_mods & ~mod::SHIFT); break;
+    case key::CTRL: g_mods = pressed ? (g_mods | mod::CTRL) : (g_mods & ~mod::CTRL); break;
+    case key::ALT: g_mods = pressed ? (g_mods | mod::ALT) : (g_mods & ~mod::ALT); break;
+    case key::SUPER: g_mods = pressed ? (g_mods | mod::SUPER) : (g_mods & ~mod::SUPER); break;
+    case key::CAPS_LOCK: if (pressed) g_mods ^= mod::CAPS; break;
     default: break;
     }
-    if (released || extended) return;
 
-    char c = g_shift ? MAP_UPPER[code] : MAP_LOWER[code];
-    if (!c) return;
-    if (g_caps && !g_shift && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-    else if (g_caps && g_shift && c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-    if (g_ctrl && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) c = (char)((c & 0x1F));
-    push((u8)c);
+    KeyEvent e{k, 0, g_mods, pressed};
+    if (!extended) {
+        bool shift = g_mods & mod::SHIFT;
+        char c = shift ? MAP_UPPER[code] : MAP_LOWER[code];
+        if (c) {
+            bool caps = g_mods & mod::CAPS;
+            if (caps && !shift && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+            else if (caps && shift && c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            if ((g_mods & mod::CTRL) && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) c = (char)(c & 0x1F);
+            e.ascii = c;
+            if (e.key == key::NONE) e.key = key::CHAR;
+        }
+    } else if (k == key::ENTER) {
+        e.ascii = '\n';
+    }
+    if (e.key == key::NONE && !e.ascii) return;
+    push(e);
 }
 
 void irq_handler(InterruptFrame*, void*) {
-    while (inb(PORT_STATUS) & 1) handle_scancode(inb(PORT_DATA));
+    while (inb(PORT_STATUS) & 1) {
+        u8 st = inb(PORT_STATUS);
+        u8 b = inb(PORT_DATA);
+        if (st & 0x20) continue;        // aux (mouse) byte: not ours
+        handle_scancode(b);
+    }
     lapic_eoi();
 }
 
@@ -87,9 +144,17 @@ void ps2kbd_init() {
     ioapic_unmask_irq(IRQ_KEYBOARD);
 }
 
-int ps2kbd_getc() {
-    if (g_head == g_tail) return -1;
-    u8 c = g_ring[g_tail];
+bool ps2kbd_poll_event(KeyEvent* out) {
+    if (g_head == g_tail) return false;
+    *out = g_ring[g_tail];
     g_tail = (g_tail + 1) % RING_SIZE;
-    return c;
+    return true;
+}
+
+int ps2kbd_getc() {
+    KeyEvent e;
+    while (ps2kbd_poll_event(&e)) {
+        if (e.pressed && e.ascii) return (unsigned char)e.ascii;
+    }
+    return -1;
 }

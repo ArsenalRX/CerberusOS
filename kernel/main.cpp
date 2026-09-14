@@ -13,7 +13,10 @@
 #include <drivers/lapic.h>
 #include <drivers/pic.h>
 #include <drivers/ps2kbd.h>
+#include <drivers/ps2mouse.h>
 #include <drivers/refclock.h>
+#include <drivers/rtc.h>
+#include <gui/desktop.h>
 #include <drivers/serial.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -109,12 +112,16 @@ extern "C" [[noreturn]] void kernel_main() {
     // estimate was off. A wrong rate here would make every timeout wrong.
     u64 measured_hz_x10 = lapic_timer_tune(TIMER_HZ);
 
+    rtc_init();
+    bool mouse = ps2mouse_init();
+
     // One-line summary for the serial log so a VM run can be judged at a glance.
-    kprintf("boot: OK  serial fbconsole(%ux%u) symbols(%lu) gdt idt acpi %s lapic ioapic "
-            "timer(%uHz, measured %lu.%luHz) keyboard\n",
+    kprintf("boot: OK  serial fbconsole(%ux%u) symbols(%lu) pmm gdt idt acpi %s lapic ioapic "
+            "timer(%uHz, measured %lu.%luHz) keyboard %s rtc\n",
             fbconsole_columns(), fbconsole_rows(), (unsigned long)symbols_count(),
             hpet_available() ? "hpet" : "no-hpet", TIMER_HZ, (unsigned long)(measured_hz_x10 / 10),
-            (unsigned long)(measured_hz_x10 % 10));
+            (unsigned long)(measured_hz_x10 % 10), mouse ? "mouse" : "no-mouse");
 
+    gui_init();
     shell_run();
 }

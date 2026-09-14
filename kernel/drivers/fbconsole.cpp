@@ -145,6 +145,15 @@ bool fbconsole_init(const FramebufferInfo& fb) {
 
 bool fbconsole_ready() { return g.ready; }
 
+void fbconsole_disable() { g.ready = false; }
+
+void fbconsole_enable() {
+    if (!g.fb) return;
+    g.ready = true;
+    g.last_flush_tick = 0;
+    fbconsole_clear();
+}
+
 void fbconsole_set_colour(u32 fg, u32 bg) {
     g.fg = fg;
     g.bg = bg;

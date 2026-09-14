@@ -119,7 +119,7 @@ test: $(ISO)
 	@fail=0; \
 	for t in $(INTEGRATION_TESTS); do \
 	    name=$$(basename $$t .expect); \
-	    if $(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 8 --quiet --expect $$t > $(BUILD)/test-$$name.log 2>&1; then \
+	    if $(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 6 --quiet --expect $$t > $(BUILD)/test-$$name.log 2>&1; then \
 	        echo "PASS integration/$$name"; \
 	    else \
 	        echo "FAIL integration/$$name (see build/test-$$name.log)"; fail=1; \

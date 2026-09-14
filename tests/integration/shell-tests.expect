@@ -14,14 +14,16 @@ timer: 100 Hz confirmed: measured
 boot: OK
 lumen kernel shell
 !send test all
-!wait 7
+!wait 12
 == test kprintf ==
 == kprintf: PASS ==
+== test pmm ==
+== pmm: PASS ==
 == test timer ==
 == timer: PASS ==
 == test idle ==
 == idle: PASS ==
-tests: 3 run, 0 failed
+tests: 4 run, 0 failed
 !send ticks
 !wait 1
 ticks=
