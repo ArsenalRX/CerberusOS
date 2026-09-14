@@ -19,6 +19,7 @@
 #include <lib/panic.h>
 #include <lib/shell.h>
 #include <lib/symbols.h>
+#include <mm/pmm.h>
 
 namespace {
 
@@ -82,6 +83,7 @@ extern "C" [[noreturn]] void kernel_main() {
 
     symbols_init();
     kprintf("symbols: %lu kernel symbols loaded\n", (unsigned long)symbols_count());
+    pmm_init();
 
     gdt_init_bsp();
     kprintf("gdt: loaded (kernel cs=%#x ds=%#x, user cs=%#x ds=%#x, tss=%#x)\n", seg::KCODE, seg::KDATA,

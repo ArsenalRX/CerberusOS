@@ -1,0 +1,10 @@
+# Phase 3: physical frame allocator self-test.
+pmm:
+lumen kernel shell
+!send test pmm
+!wait 6
+allocated 10000 chunks
+freed in shuffled order: bitmap checksum and stats match
+allocator correctly reports exhaustion
+freed everything: bitmap checksum and stats match
+test pmm: PASS

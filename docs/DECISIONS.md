@@ -222,3 +222,27 @@ diagnostics; they were what exposed the problem.
 
 Rejected: disabling Hyper-V (bcdedit hypervisorlaunchtype off) to give
 VirtualBox AMD-V — it would break WSL2 and therefore the build.
+
+## 2026-09-14 — Owner decision: a graphical desktop now, hosted in the kernel until phase 12
+
+The owner asked for a GUI today ("keep going i want a gui today"). The spec
+schedules the window server for phase 12, after the scheduler, userland,
+SMP, filesystems, drivers and IPC. Rather than wait, the graphics stack is
+brought forward in a form that does not have to be rewritten:
+- Phase 3 (physical memory) is completed first, properly, because pixel
+  buffers need it.
+- libgfx (SPEC §8.2) is written as a freestanding C++ library under
+  kernel/gfx/ with no kernel dependencies beyond an allocation callback, so
+  it moves to userland/libgfx unchanged.
+- A compositor ("Pane preview") under kernel/gui/ implements the SPEC §9
+  compositor internals (stacking, damage, decorations, shadows, cursor,
+  panel) against in-kernel window objects. At phase 12 the same code becomes
+  the Pane server process with the port protocol in front of it.
+- An early PS/2 mouse driver joins the early keyboard driver (phase 10
+  replaces both).
+- Until the scheduler exists (phase 6) the compositor is pumped
+  cooperatively from the kernel shell's idle loop; long-running shell
+  commands freeze the desktop for their duration. That is a known,
+  temporary limitation.
+Phases 4-11 continue afterwards in order; the GUI is not a reason to skip
+them.

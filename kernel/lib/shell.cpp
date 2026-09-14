@@ -14,6 +14,7 @@
 #include <lib/shell.h>
 #include <lib/string.h>
 #include <lib/symbols.h>
+#include <mm/pmm.h>
 
 namespace {
 
@@ -85,6 +86,11 @@ int cmd_mem(int, char**) {
                 memory_type_name(r.type));
     }
     kprintf("%lu MiB usable\n", (unsigned long)(bi.usable_bytes() / MIB));
+    PmmStats s = pmm_stats();
+    kprintf("pmm: %lu frames, %lu usable, %lu used (%lu MiB), %lu free (%lu MiB), largest run %lu frames\n",
+            (unsigned long)s.total_frames, (unsigned long)s.usable_frames, (unsigned long)s.used_frames,
+            (unsigned long)(s.used_frames * PAGE_SIZE / MIB), (unsigned long)s.free_frames,
+            (unsigned long)(s.free_frames * PAGE_SIZE / MIB), (unsigned long)s.largest_free_run);
     return 0;
 }
 
