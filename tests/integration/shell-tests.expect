@@ -19,11 +19,13 @@ lumen kernel shell
 == kprintf: PASS ==
 == test pmm ==
 == pmm: PASS ==
+== test vmm ==
+== vmm: PASS ==
 == test timer ==
 == timer: PASS ==
 == test idle ==
 == idle: PASS ==
-tests: 4 run, 0 failed
+tests: 5 run, 0 failed
 !send ticks
 !wait 1
 ticks=

@@ -171,3 +171,42 @@ void boot_info_collect() {
         bi.cpu_count = 1;
     }
 }
+
+namespace {
+
+volatile u32 g_aps_parked = 0;
+
+// Where every application processor waits until SMP bring-up (phase 8).
+// Runs on the bootloader-provided stack with interrupts off and touches
+// nothing but this loop and the counter.
+[[noreturn]] void ap_park(limine_mp_info*) {
+    __atomic_fetch_add(&g_aps_parked, 1, __ATOMIC_SEQ_CST);
+    for (;;) asm volatile("pause");
+}
+
+} // namespace
+
+usize boot_park_aps() {
+    if (!mp_req.response) return 0;
+    limine_mp_response* resp = mp_req.response;
+    u32 expected = 0;
+    for (u64 i = 0; i < resp->cpu_count; i++) {
+        limine_mp_info* info = resp->cpus[i];
+        if (info->lapic_id == resp->bsp_lapic_id) continue;
+        __atomic_store_n(&info->goto_address, (limine_goto_address)ap_park, __ATOMIC_SEQ_CST);
+        expected++;
+    }
+    // No clock is up this early; bound the wait by the time-stamp counter
+    // (tens of seconds on any CPU this kernel runs on) and fail loudly.
+    u32 lo, hi;
+    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    u64 start = ((u64)hi << 32) | lo;
+    while (__atomic_load_n(&g_aps_parked, __ATOMIC_SEQ_CST) < expected) {
+        asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        if ((((u64)hi << 32) | lo) - start > 60000000000ull)
+            PANIC("boot: %u of %u application processors did not leave the bootloader",
+                  expected - g_aps_parked, expected);
+        asm volatile("pause");
+    }
+    return expected;
+}

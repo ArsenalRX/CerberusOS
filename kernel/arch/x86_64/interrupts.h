@@ -35,6 +35,10 @@ const char* exception_name(u8 vector);
 // Number of times a vector has been dispatched since boot (diagnostics).
 u64 interrupt_count(u8 vector);
 
+// Reports an exception nobody could handle (name, decoded error code,
+// registers, backtrace) and halts. For handlers that tried and failed.
+[[noreturn]] void exception_fatal(InterruptFrame* frame);
+
 // Prints the full register set, decodes the error code, and walks the stack.
 void dump_frame(const InterruptFrame& f);
 // Walks the RBP chain from `rbp`, printing each return address with a symbol.

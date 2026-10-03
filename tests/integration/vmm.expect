@@ -1,0 +1,24 @@
+# Phase 4: the VMM hardens the kernel mappings at boot and passes its
+# self-test (twice, to show nothing leaks between runs).
+vmm: kernel space adopted; NX and WP on
+vmm: image
+lumen kernel shell
+!send test vmm
+!wait 4
+map/write/read/unmap: access after unmap faulted at 0x40000000 (not-present)
+W+X requests rejected
+kernel image: writes to .rodata and .text fault; a jump into .data faults
+demand paging: 64 pages reserved, 4 touched, 4 frames allocated
+zeroing: frame
+came back all zero
+mprotect: read-only pages refuse writes
+munmap: hole punched
+guard page: the page below the mapping is reserved and faults
+copy-on-write: parent and child each see only their own write
+2 MiB page: one huge leaf
+teardown: all user frames freed
+test vmm: PASS
+!send test vmm
+!wait 4
+teardown: all user frames freed; 0 frame(s) kept
+test vmm: PASS

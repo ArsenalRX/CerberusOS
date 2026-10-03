@@ -6,6 +6,7 @@
 #include <kernel/ktest.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
+#include <mm/vmm.h>
 
 namespace {
 
@@ -48,6 +49,47 @@ __attribute__((noinline)) void fault_bp() {
     asm volatile("int3");
 }
 
+// Unbounded recursion (deliberate, hence the pragma); each frame keeps a
+// little data live so the compiler cannot turn it into a loop.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winfinite-recursion"
+__attribute__((noinline)) u64 recurse_forever(u64 depth) {
+    volatile u8 pad[200];
+    pad[0] = (u8)depth;
+    return recurse_forever(depth + 1) + pad[0];
+}
+#pragma GCC diagnostic pop
+
+__attribute__((noinline)) void fault_stack_overflow() {
+    Result<vaddr_t> stack = vmm_alloc_kernel_stack(16 * KIB);
+    if (!stack.ok()) {
+        kprintf("  could not allocate a test stack: %s\n", error_name(stack.error()));
+        return;
+    }
+    kprintf("  recursing without end on a 16 KiB stack below %p\n", (void*)stack.value());
+    // Switch to the guarded stack and never come back: the recursion runs
+    // into the guard page, which must be reported instead of silently
+    // overwriting whatever lies below.
+    asm volatile("mov %0, %%rsp\n"
+                 "xor %%edi, %%edi\n"
+                 "call *%1\n"
+                 "ud2\n" ::"r"(stack.value()), "r"((void*)recurse_forever) : "memory");
+}
+
+__attribute__((noinline)) int add_ints(int a, int b) { return a + b; }
+
+// Signed overflow is undefined behaviour; debug builds must stop on it.
+__attribute__((noinline)) void fault_undefined_behaviour() {
+#ifdef LUMEN_DEBUG
+    volatile int big = 0x7FFFFFFF;
+    kprintf("  adding 1 to the largest int\n");
+    int r = add_ints(big, 1);
+    kprintf("unexpectedly computed %d\n", r);
+#else
+    kprintf("  the undefined-behaviour sanitizer is only built into debug kernels\n");
+#endif
+}
+
 __attribute__((noinline)) void trampoline(void (*fn)()) {
     kprintf("  raising...\n");
     fn();
@@ -58,7 +100,7 @@ __attribute__((noinline)) void trampoline(void (*fn)()) {
 
 int ktest_exceptions(int argc, char** argv) {
     if (argc < 2) {
-        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp>\n");
+        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp|so|ub>\n");
         return 1;
     }
     const char* which = argv[1];
@@ -69,6 +111,8 @@ int ktest_exceptions(int argc, char** argv) {
     else if (strcmp(which, "pfw") == 0) fn = fault_pf_write;
     else if (strcmp(which, "gp") == 0) fn = fault_gp;
     else if (strcmp(which, "bp") == 0) fn = fault_bp;
+    else if (strcmp(which, "so") == 0) fn = fault_stack_overflow;
+    else if (strcmp(which, "ub") == 0) fn = fault_undefined_behaviour;
     if (!fn) {
         kprintf("unknown exception '%s'\n", which);
         return 1;

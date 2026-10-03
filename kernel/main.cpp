@@ -24,6 +24,7 @@
 #include <lib/symbols.h>
 #include <lib/version.h>
 #include <mm/pmm.h>
+#include <mm/vmm.h>
 
 namespace {
 
@@ -94,6 +95,7 @@ extern "C" [[noreturn]] void kernel_main() {
             seg::UCODE, seg::UDATA, seg::TSS);
     interrupts_init();
     kprintf("idt: 256 gates loaded, IST for #DF/#NMI/#MC\n");
+    vmm_init();
 
     pic_init();
     kprintf("pic: remapped to 0x20-0x2f and masked\n");

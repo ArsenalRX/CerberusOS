@@ -82,3 +82,10 @@ bool limine_base_revision_supported();
 // bootloader-reclaimable memory is touched. Panics if a required response
 // (memory map, HHDM, kernel address) is missing.
 void boot_info_collect();
+
+// Moves every application processor out of the bootloader's waiting loop
+// (which runs from bootloader memory) into a parking loop in kernel text,
+// and returns how many were moved once all have arrived. Must run before
+// bootloader memory is made non-executable. Panics if a processor never
+// arrives. Call once, from the bootstrap processor.
+usize boot_park_aps();

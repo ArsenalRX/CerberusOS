@@ -8,6 +8,7 @@
 #include <lib/panic.h>
 #include <lib/string.h>
 #include <lib/symbols.h>
+#include <mm/vmm.h>
 
 extern "C" const u64 isr_stub_table[256];
 
@@ -103,8 +104,15 @@ void decode_error_code(const InterruptFrame& f) {
                 e & 8 ? " reserved-bit" : "",
                 e & 16 ? " instruction-fetch" : "",
                 e & 32 ? " protection-key" : "");
+        vmm_fault_note(read_cr2());
         break;
     }
+    case 8:
+        // Usually a page fault that could not be delivered because the
+        // stack itself is gone; CR2 still names the address.
+        kprintf("double fault; last page-fault address %#018lx\n", (unsigned long)read_cr2());
+        vmm_fault_note(read_cr2());
+        break;
     case 10: case 11: case 12: case 13: {
         u64 e = f.error;
         if (e == 0) {
@@ -123,7 +131,9 @@ void decode_error_code(const InterruptFrame& f) {
     }
 }
 
-[[noreturn]] void unhandled_exception(InterruptFrame* f) {
+} // namespace
+
+[[noreturn]] void exception_fatal(InterruptFrame* f) {
     interrupts_disable();
     console_emergency_text_mode();
     kprintf("\n*** EXCEPTION %lu: %s ***\n", (unsigned long)f->vector, exception_name((u8)f->vector));
@@ -132,8 +142,6 @@ void decode_error_code(const InterruptFrame& f) {
     kprintf("System halted.\n");
     halt_forever();
 }
-
-} // namespace
 
 void interrupts_init() {
     memset(g_idt, 0, sizeof g_idt);
@@ -167,7 +175,7 @@ extern "C" void interrupt_dispatch(InterruptFrame* f) {
         r.fn(f, r.ctx);
         return;
     }
-    if (f->vector < 32) unhandled_exception(f);
+    if (f->vector < 32) exception_fatal(f);
     // Spurious or unclaimed IRQ: report the first few occurrences, then stay quiet.
     if (g_unhandled_irq_count[f->vector]++ < 3)
         kprintf("interrupt: unhandled vector %lu (no handler registered)\n", (unsigned long)f->vector);

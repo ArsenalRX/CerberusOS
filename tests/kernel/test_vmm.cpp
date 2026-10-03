@@ -1,0 +1,226 @@
+// Phase 4 acceptance (SPEC §5 and §5A): map/write/read/unmap with the right
+// fault address, W^X, the null guard, kernel image protections, demand
+// paging, zero-on-reuse, VMA splitting, guard pages, copy-on-write, 2 MiB
+// kernel mappings, and no leaked frames. Faults that are expected go through
+// the probes in mm/probe.h, so the test survives them.
+#include <kernel/ktest.h>
+#include <lib/kprintf.h>
+#include <lib/string.h>
+#include <mm/early_map.h>
+#include <mm/pmm.h>
+#include <mm/probe.h>
+#include <mm/vmm.h>
+
+extern "C" {
+extern char __text_start[];
+}
+
+namespace {
+
+constexpr u64 PF_PRESENT = 1, PF_WRITE = 2, PF_FETCH = 16;
+constexpr vaddr_t RAW_USER = 0x40000000ull;
+constexpr vaddr_t RAW_KERNEL = 0xFFFFD00000000000ull;      // far from anything mmap hands out
+
+const char g_ro_text[] = "read-only data lives here";
+u8 g_data_bytes[64];
+
+bool page_is_zero(const volatile u8* p) {
+    for (usize i = 0; i < PAGE_SIZE; i++)
+        if (p[i]) return false;
+    return true;
+}
+
+bool str_at(const volatile char* p, const char* expect) {
+    for (usize i = 0;; i++) {
+        if (p[i] != expect[i]) return false;
+        if (!expect[i]) return true;
+    }
+}
+
+void put_str(volatile char* p, const char* s) {
+    usize i = 0;
+    do p[i] = s[i];
+    while (s[i++]);
+}
+
+} // namespace
+
+int ktest_vmm(int, char**) {
+    AddressSpace& k = vmm_kernel();
+    PmmStats pm0 = pmm_stats();
+    VmmStats vs0 = vmm_stats();
+    u8 byte = 0;
+
+    Result<AddressSpace*> made = AddressSpace::create();
+    KTEST_CHECK(made.ok());
+    AddressSpace* as = made.value();
+    as->activate();
+
+    // --- raw map, write, read back, unmap, fault with the right CR2 ---
+    paddr_t frame = pmm_alloc_zeroed(1);
+    KTEST_CHECK(frame != PMM_NO_MEMORY);
+    KTEST_CHECK(as->map(RAW_USER, frame, PAGE_SIZE, vm::WRITE | vm::USER).ok());
+    KTEST_CHECK(as->map(RAW_USER, frame, PAGE_SIZE, vm::WRITE | vm::USER).error() == Error::Exists);
+    volatile u64* word = (volatile u64*)RAW_USER;
+    *word = 0x1122334455667788ull;
+    KTEST_CHECK(*word == 0x1122334455667788ull);
+    KTEST_CHECK(*(u64*)hhdm_virt(frame) == 0x1122334455667788ull);
+    Result<paddr_t> tr = as->translate(RAW_USER + 0x123);
+    KTEST_CHECK(tr.ok() && tr.value() == frame + 0x123);
+    KTEST_CHECK(as->unmap(RAW_USER, PAGE_SIZE).ok());
+    KTEST_CHECK(!probe_read((void*)RAW_USER, &byte));
+    ProbeFault pf = probe_last_fault();
+    KTEST_CHECK(pf.addr == RAW_USER && !(pf.error & PF_PRESENT));
+    KTEST_CHECK(as->translate(RAW_USER).error() == Error::NotFound);
+    kprintf("  map/write/read/unmap: access after unmap faulted at %#lx (not-present)\n", (unsigned long)pf.addr);
+
+    // --- W^X and the null guard ---
+    KTEST_CHECK(as->map(RAW_USER, frame, PAGE_SIZE, vm::WRITE | vm::EXEC | vm::USER).error() == Error::Invalid);
+    KTEST_CHECK(k.map(RAW_KERNEL, frame, PAGE_SIZE, vm::WRITE | vm::EXEC).error() == Error::Invalid);
+    KTEST_CHECK(as->mmap(0, PAGE_SIZE, vm::WRITE | vm::EXEC, 0).error() == Error::Invalid);
+    KTEST_CHECK(as->map(0, frame, PAGE_SIZE, vm::USER).error() == Error::Invalid);
+    KTEST_CHECK(as->mmap(0x1000, PAGE_SIZE, vm::WRITE, mmap_flag::FIXED).error() == Error::Invalid);
+    KTEST_CHECK(!probe_read((void*)8, &byte));
+    pmm_free(frame, 1);
+    kprintf("  W+X requests rejected (map, mmap); the first 64 KiB cannot be mapped\n");
+
+    // --- kernel image protections ---
+    KTEST_CHECK(!probe_write((void*)g_ro_text, (u8)g_ro_text[0]));
+    pf = probe_last_fault();
+    KTEST_CHECK((pf.error & (PF_PRESENT | PF_WRITE)) == (PF_PRESENT | PF_WRITE));
+    KTEST_CHECK(probe_read(__text_start, &byte));
+    KTEST_CHECK(!probe_write(__text_start, byte));
+    pf = probe_last_fault();
+    KTEST_CHECK((pf.error & (PF_PRESENT | PF_WRITE)) == (PF_PRESENT | PF_WRITE));
+    KTEST_CHECK(!probe_exec(g_data_bytes));
+    pf = probe_last_fault();
+    KTEST_CHECK(pf.addr == (vaddr_t)g_data_bytes && (pf.error & PF_FETCH) && (pf.error & PF_PRESENT));
+    kprintf("  kernel image: writes to .rodata and .text fault; a jump into .data faults "
+            "(instruction fetch, error %#lx)\n", (unsigned long)pf.error);
+
+    // --- demand paging ---
+    Result<vaddr_t> reg = as->mmap(0, 64 * PAGE_SIZE, vm::WRITE, 0);
+    KTEST_CHECK(reg.ok());
+    vaddr_t region = reg.value();
+    volatile u8* mem = (volatile u8*)region;
+    VmmStats before = vmm_stats();
+    KTEST_CHECK(as->translate(region + 5 * PAGE_SIZE).error() == Error::NotFound);
+    KTEST_CHECK(mem[5 * PAGE_SIZE] == 0);
+    mem[1 * PAGE_SIZE] = 1;
+    mem[2 * PAGE_SIZE] = 2;
+    mem[3 * PAGE_SIZE + 77] = 3;
+    VmmStats after = vmm_stats();
+    KTEST_CHECK(after.demand_faults == before.demand_faults + 4);
+    KTEST_CHECK(after.anon_frames == before.anon_frames + 4);
+    KTEST_CHECK(as->translate(region + 6 * PAGE_SIZE).error() == Error::NotFound);
+    KTEST_CHECK(mem[3 * PAGE_SIZE + 77] == 3 && mem[3 * PAGE_SIZE] == 0);
+    kprintf("  demand paging: 64 pages reserved, 4 touched, 4 frames allocated\n");
+
+    // --- a reused frame arrives zeroed ---
+    paddr_t dirty = pmm_alloc(1);
+    KTEST_CHECK(dirty != PMM_NO_MEMORY);
+    memset(hhdm_virt(dirty), 0xA5, PAGE_SIZE);
+    pmm_free(dirty, 1);
+    volatile u8* fresh = mem + 10 * PAGE_SIZE;
+    u8 first = fresh[0];
+    Result<paddr_t> got = as->translate(region + 10 * PAGE_SIZE);
+    KTEST_CHECK(got.ok() && got.value() == dirty);
+    KTEST_CHECK(first == 0 && page_is_zero(fresh));
+    kprintf("  zeroing: frame %#lx held 0xA5 bytes, was freed, and came back all zero\n", (unsigned long)dirty);
+
+    // --- data pages are not executable; mprotect ---
+    KTEST_CHECK(!probe_exec((void*)(region + 1 * PAGE_SIZE)));
+    KTEST_CHECK(probe_last_fault().error & PF_FETCH);
+    KTEST_CHECK(as->mprotect(region, 4 * PAGE_SIZE, 0).ok());
+    KTEST_CHECK(!probe_write((void*)(region + 1 * PAGE_SIZE), 9));
+    KTEST_CHECK(mem[1 * PAGE_SIZE] == 1);
+    KTEST_CHECK(as->mprotect(region, 4 * PAGE_SIZE, vm::WRITE | vm::EXEC).error() == Error::Invalid);
+    KTEST_CHECK(as->mprotect(region, 4 * PAGE_SIZE, vm::WRITE).ok());
+    mem[1 * PAGE_SIZE] = 11;
+    KTEST_CHECK(mem[1 * PAGE_SIZE] == 11);
+    kprintf("  mprotect: read-only pages refuse writes; W+X refused; writable again works\n");
+
+    // --- munmap splits a VMA ---
+    usize vmas_before = as->vma_count();
+    KTEST_CHECK(as->munmap(region + 20 * PAGE_SIZE, 2 * PAGE_SIZE).ok());
+    KTEST_CHECK(as->vma_count() == vmas_before + 1);
+    KTEST_CHECK(as->find_vma(region + 19 * PAGE_SIZE) && as->find_vma(region + 22 * PAGE_SIZE));
+    KTEST_CHECK(!as->find_vma(region + 20 * PAGE_SIZE) && !as->find_vma(region + 21 * PAGE_SIZE));
+    KTEST_CHECK(!probe_read((void*)(region + 20 * PAGE_SIZE), &byte));
+    kprintf("  munmap: hole punched in the middle of a region; the hole faults\n");
+
+    // --- guard page below a stack-style mapping ---
+    Result<vaddr_t> st = as->mmap(0, 4 * PAGE_SIZE, vm::WRITE, mmap_flag::GUARD_BELOW);
+    KTEST_CHECK(st.ok());
+    const Vma* guard = as->find_vma(st.value() - 1);
+    KTEST_CHECK(guard && guard->kind == VmaKind::Guard);
+    KTEST_CHECK(probe_write((void*)st.value(), 1));
+    KTEST_CHECK(!probe_write((void*)(st.value() - 8), 1));
+    kprintf("  guard page: the page below the mapping is reserved and faults\n");
+
+    // --- copy-on-write clone ---
+    volatile char* cow = (volatile char*)(region + 30 * PAGE_SIZE);
+    put_str(cow, "original");
+    VmmStats c0 = vmm_stats();
+    Result<AddressSpace*> cl = as->clone();
+    KTEST_CHECK(cl.ok());
+    AddressSpace* child = cl.value();
+    Result<paddr_t> shared_parent = as->translate((vaddr_t)cow), shared_child = child->translate((vaddr_t)cow);
+    KTEST_CHECK(shared_parent.ok() && shared_child.ok() && shared_parent.value() == shared_child.value());
+    put_str(cow, "parent-wrote");
+    child->activate();
+    KTEST_CHECK(str_at(cow, "original"));
+    KTEST_CHECK(mem[1 * PAGE_SIZE] == 11);
+    put_str(cow, "child-wrote");
+    KTEST_CHECK(str_at(cow, "child-wrote"));
+    as->activate();
+    KTEST_CHECK(str_at(cow, "parent-wrote"));
+    VmmStats c1 = vmm_stats();
+    Result<paddr_t> own_parent = as->translate((vaddr_t)cow), own_child = child->translate((vaddr_t)cow);
+    KTEST_CHECK(own_parent.ok() && own_child.ok() && own_parent.value() != own_child.value());
+    KTEST_CHECK(c1.cow_faults == c0.cow_faults + 2 && c1.cow_copies == c0.cow_copies + 1);
+    // A page neither side wrote is still one shared frame.
+    Result<paddr_t> ro_parent = as->translate(region + 2 * PAGE_SIZE), ro_child = child->translate(region + 2 * PAGE_SIZE);
+    KTEST_CHECK(ro_parent.ok() && ro_child.ok() && ro_parent.value() == ro_child.value());
+    kprintf("  copy-on-write: parent and child each see only their own write "
+            "(2 write faults, 1 page copied; untouched pages stay shared)\n");
+
+    // --- 2 MiB kernel mapping ---
+    paddr_t big = pmm_alloc(1024);
+    KTEST_CHECK(big != PMM_NO_MEMORY);
+    paddr_t aligned = align_up(big, 2 * MIB);
+    VmmStats h0 = vmm_stats();
+    KTEST_CHECK(k.map(RAW_KERNEL, aligned, 2 * MIB, vm::WRITE).ok());
+    KTEST_CHECK(vmm_stats().huge_mappings == h0.huge_mappings + 1);
+    volatile u64* far_word = (volatile u64*)(RAW_KERNEL + MIB + 8);
+    *far_word = 0xCAFEF00Dull;
+    KTEST_CHECK(*far_word == 0xCAFEF00Dull && *(u64*)hhdm_virt(aligned + MIB + 8) == 0xCAFEF00Dull);
+    Result<paddr_t> ht = k.translate(RAW_KERNEL + 0x123456);
+    KTEST_CHECK(ht.ok() && ht.value() == aligned + 0x123456);
+    KTEST_CHECK(k.unmap(RAW_KERNEL, 2 * MIB).ok());
+    KTEST_CHECK(!probe_read((void*)RAW_KERNEL, &byte));
+    pmm_free(big, 1024);
+    kprintf("  2 MiB page: one huge leaf maps an aligned 2 MiB kernel range\n");
+
+    // --- kernel stack with a guard page ---
+    Result<vaddr_t> ks = vmm_alloc_kernel_stack(16 * KIB);
+    KTEST_CHECK(ks.ok());
+    *(volatile u64*)(ks.value() - 8) = 1;
+    const Vma* kguard = k.find_vma(ks.value() - 16 * KIB - 1);
+    KTEST_CHECK(kguard && kguard->kind == VmaKind::Guard);
+    vmm_free_kernel_stack(ks.value(), 16 * KIB);
+    KTEST_CHECK(!k.find_vma(ks.value() - 8));
+
+    // --- teardown: every frame comes back ---
+    k.activate();
+    child->destroy();
+    as->destroy();
+    PmmStats pm1 = pmm_stats();
+    VmmStats vs1 = vmm_stats();
+    u64 kept = (vs1.table_frames - vs0.table_frames) + (vs1.pool_frames - vs0.pool_frames);
+    KTEST_CHECK(vs1.anon_frames == vs0.anon_frames);
+    KTEST_CHECK(pm1.used_frames - pm0.used_frames == kept);
+    kprintf("  teardown: all user frames freed; %lu frame(s) kept as kernel page tables and pools\n",
+            (unsigned long)kept);
+    return 0;
+}

@@ -44,7 +44,10 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # ---------------------------------------------------------------------------
 # Kernel flags (see docs/SPEC.md §1 "Non-negotiables")
 # ---------------------------------------------------------------------------
+# -ftrivial-auto-var-init=zero: no stack variable is ever uninitialised, so a
+# forgotten initialiser cannot leak old stack contents (SPEC §5A phase 4).
 KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
+             -ftrivial-auto-var-init=zero \
              -fno-omit-frame-pointer -fno-optimize-sibling-calls \
              -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
              -mno-sse -mno-sse2 -mno-mmx -mno-80387 \
@@ -56,7 +59,21 @@ KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
 DEBUG ?= 1
 ifeq ($(DEBUG),1)
 KCXXFLAGS += -DLUMEN_DEBUG
+# Undefined-behaviour sanitizer (SPEC §5A phase 4); handlers in lib/ubsan.cpp
+# panic with the source location. Left out: vptr (needs RTTI), the float
+# checks (no FPU in the kernel), and the per-dereference checks alignment,
+# null and object-size, which tripled the size of kernel text; x86 permits
+# unaligned access (firmware tables are unaligned by design) and a null
+# dereference already faults cleanly because the low half is unmapped.
+KSANFLAGS := -fsanitize=undefined \
+             -fno-sanitize=vptr,float-cast-overflow,float-divide-by-zero,alignment,null,object-size
 endif
+# The sanitizer runtime must not be instrumented itself. The pixel loops in
+# libgfx are left uninstrumented too, as a precaution: they are the hottest
+# code in the system. (First-frame timings were too noisy, 21-29 ms either
+# way, to measure the cost; revisit with `make bench` in phase 6.)
+$(BUILD)/kernel/lib/ubsan.o: KSANFLAGS :=
+$(BUILD)/kernel/gfx/%.o: KSANFLAGS :=
 KASFLAGS  := -g -Wa,-I$(ROOT)
 KNASMFLAGS:= -f elf64 -g -F dwarf
 KLDFLAGS  := -nostdlib -static -z max-page-size=0x1000 -z noexecstack -T $(ROOT)/kernel/linker.ld
@@ -160,7 +177,7 @@ help:
 # Objects also depend on the Makefile so a flag change rebuilds everything.
 $(BUILD)/%.o: $(ROOT)/%.cpp $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(KCXXFLAGS) -c $< -o $@
+	$(CXX) $(KCXXFLAGS) $(KSANFLAGS) -c $< -o $@
 
 $(BUILD)/%.o: $(ROOT)/%.S $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
