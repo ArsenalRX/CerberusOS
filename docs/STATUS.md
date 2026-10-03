@@ -22,18 +22,19 @@ Last updated: **2026-10-03**.
 
 ## Version
 
-Released: **0.4.0** (2026-10-03, tag `v0.4.0`, `dist/lumen-0.4.0.iso`).
-The tree now builds as `0.4.1-dev+<commit>`. Scheme: docs/SPEC.md §23;
+Released: **0.5.0** (2026-10-03, tag `v0.5.0`, `dist/lumen-0.5.0.iso`).
+The tree now builds as `0.5.1-dev+<commit>`. Scheme: docs/SPEC.md §23;
 history: docs/CHANGELOG.md.
 
 ---
 
 ## Current phase
 
-**Phase 4 — Virtual memory: COMPLETE (2026-10-03).**
+**Phase 5 — Kernel heap: COMPLETE (2026-10-03).** Phase 4 (virtual memory)
+completed the same day.
 Phases 0–3 complete (2026-09-14). Desktop preview (owner-requested, brought
 forward from phases 12-13): first version done (2026-09-14).
-Next up: **Phase 5 — Kernel heap** (SPEC §5 and §5A). The owner approves
+Next up: **Phase 6 — Threads and scheduling** (SPEC §5 and §5A). The owner approves
 each phase's contents before it starts.
 
 **Spec is version 2 (2026-10-03).** Security, privacy, networking and
@@ -43,11 +44,14 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
 
 ## Last verified
 
-- `make test`: all **11** integration tests passed on **2026-10-03** in
-  QEMU/KVM on the code released as 0.4.0: boot-banner, desktop, keyboard,
-  pmm, shell-tests, vmm, exception-de/pf/ud/so/ub.
-- The `vmm` test also passed under software emulation (TCG), and the kernel
-  boots to the shell under UEFI (OVMF) when QEMU is run directly.
+- `make test`: all **15** integration tests passed on **2026-10-03** in
+  QEMU/KVM on the code released as 0.5.0: boot-banner, desktop, keyboard,
+  pmm, shell-tests, vmm, heap, exception-de/pf/ud/so/ub,
+  heap-freelist, heap-write-after-free, heap-double-free.
+- A `DEBUG=0` build also passes `test heap` (checked 2026-10-03).
+- On the 0.4.0 code (not repeated for 0.5.0): the `vmm` test passed under
+  software emulation (TCG), and the kernel booted to the shell under UEFI
+  (OVMF) when QEMU was run directly.
 - **`tools/qemu-probe.py --uefi` does not work:** the kernel is entered but
   blocks in `serial_putc` waiting for the UART, with both 0.3.0 and 0.4.0.
   The same ISO under the same firmware with QEMU's serial on stdout boots
@@ -74,6 +78,13 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
   - `kernel/lib/result.h`: `Result<T>` and `Error` (SPEC §6.3).
   - `kernel/lib/ubsan.cpp` and build flags: zero-initialised locals always,
     a subset of the undefined-behaviour sanitizer in debug builds.
+- **Phase 5** (released as 0.5.0):
+  - `kernel/mm/kheap.*`: slab caches for 16–2048 bytes, whole pages above
+    that; `kmalloc`/`kzalloc`/`kfree`/`krealloc`/`kfree_sensitive`/`ksize`;
+    encoded and validated free lists; debug red zones, poisoning, call-site
+    tracking; `heapstat`.
+  - The desktop's pixel buffers and terminal cells, and the VMM's VMA and
+    address-space records, now come from the heap.
 
 ## How to run it
 
@@ -81,7 +92,7 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
   inside WSL2, window on the desktop via WSLg, serial log in
   `logs/qemu-serial.log`. `run-lumen.cmd uefi` boots through OVMF;
   `run-lumen.cmd build` rebuilds first. This is the fast, accurate path.
-- `dist/lumen-0.4.0.iso`: the release ISO for any VM (`make RELEASE=1 dist`
+- `dist/lumen-0.5.0.iso`: the release ISO for any VM (`make RELEASE=1 dist`
   writes `dist/lumen-<version>.iso`; the older `lumen-0.0.1.iso` snapshot is
   still there).
 - VirtualBox: the owner's VM is "Lumen 0.0.1" (COM1 → `logs/vbox-serial.log`,
@@ -115,6 +126,10 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
   hardened at boot; `test vmm` passes twice in a row with no frame leaked;
   `test exceptions so` reports a stack overflow through the guard page;
   `test exceptions ub` shows the sanitizer stopping on signed overflow.
+- Phase 5: kernel heap (`kernel/mm/kheap.cpp`); `test heap` (100,000 random
+  allocate/free pairs, every buffer verified, zero leaks, run twice);
+  `test exceptions fl|waf|df` show a corrupted free list, a write after
+  free and a double free each stopping the kernel; `heapstat`.
 - Desktop preview (`kernel/gui/`, `kernel/gfx/`):
   - libgfx: fills, rounded rects, alpha blits, scaled blits, lines, circles,
     linear/radial gradients, box blur, PSF text with ellipsis, clip stack.
@@ -134,6 +149,13 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
     visible.
 
 ## Security and privacy state (honest summary)
+
+In place since 0.5.0 (each demonstrated by an exception test):
+
+- Heap free lists are encoded with a per-boot secret and validated; double
+  frees and foreign pointers are refused; debug builds add red zones,
+  poisoning and write-after-free detection. `kfree_sensitive` exists for
+  secrets.
 
 In place since 0.4.0 (each demonstrated by `test vmm` or an exception test):
 
@@ -155,7 +177,8 @@ Still missing, because the mechanisms they attach to do not exist yet:
   get one in phase 6).
 - SMEP/SMAP/UMIP are not enabled (phase 7, with user mode).
 - No randomness source, no ASLR, no stack canaries (kernel is built
-  `-fno-stack-protector`).
+  `-fno-stack-protector`). The heap's free-list secret comes from RDRAND
+  and the time-stamp counter until the CSPRNG exists (phase 7).
 - No networking, so nothing leaves the machine.
 - No persistent storage, so no user data is kept.
 
@@ -167,7 +190,10 @@ holds no user data today. Do not put real data in it before phase 15.
 No benchmarks exist yet (`make bench` arrives in phase 6; budgets in
 docs/SPEC.md §20.1). The only measurement so far is the first desktop frame,
 which varied between 21 and 29 ms at 1280×800 across boots on 2026-10-03 —
-too noisy to compare builds with. Known issues:
+too noisy to compare builds with. One budget has a real number: a
+`kmalloc(64)`+`kfree` pair takes 74–83 ns in the debug build and 13–19 ns
+with `DEBUG=0` (budget 100 ns; `test heap`, QEMU/KVM, 2026-10-03). Known
+issues:
 
 - The compositor is pumped from the shell idle loop, and the console spins
   instead of halting while the desktop is up, so an idle desktop uses a full
@@ -191,7 +217,8 @@ too noisy to compare builds with. Known issues:
 
 ## Open decisions waiting on the owner
 
-Recorded in docs/DECISIONS.md (2026-10-03). None blocks phases 5–13.
+Recorded in docs/DECISIONS.md (2026-10-03). None blocks phase 6. The libc
+question (2) should be answered before phase 7.
 
 1. TLS and cryptography source: port Mbed TLS (recommended), port BearSSL,
    or write in-tree. Needed before phase 15.
@@ -205,13 +232,12 @@ Recorded in docs/DECISIONS.md (2026-10-03). None blocks phases 5–13.
 
 ## Next
 
-1. Get the owner's go-ahead for phase 5 (the owner approves each phase's
+1. Get the owner's go-ahead for phase 6 (the owner approves each phase's
    contents before it starts), and permission to reset the "Lumen-dev" VM.
-2. Phase 5: slab heap (`kmalloc`), red zones, leak tracking, encoded
-   free-list pointers, `kfree_sensitive`; the desktop moves its static
-   pools to it; the VMM's private pools move onto it.
-3. Phase 6: threads and the scheduler; compositor thread; idle `hlt`;
-   `make bench` and docs/BENCH.md begin.
+2. Phase 6: threads and the scheduler; compositor thread; idle `hlt`;
+   guard pages under every kernel stack; `make bench` and docs/BENCH.md
+   begin.
+3. Phase 7: user mode and system calls.
 4. Desktop polish as the owner sends reference screenshots.
 
 ## Known bugs

@@ -17,6 +17,31 @@ completed spec phase.
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-03 (security release)
+
+Spec phase 5, the kernel heap, is complete.
+
+### Security
+- The kernel's memory allocator protects its own bookkeeping: a corrupted
+  free list is detected and stops the system instead of being followed.
+- Freeing the same memory twice, or freeing something that was never
+  allocated, stops the system with a clear message.
+- Debug builds also catch writes past the end or before the start of an
+  allocation, and writes to memory after it was freed.
+- `kfree_sensitive` wipes memory before releasing it (for keys and
+  passwords in later phases).
+
+### Added
+- Kernel heap: `kmalloc`, `kzalloc`, `kfree`, `krealloc`.
+- `heapstat` shell command: heap usage and, in debug builds, every
+  outstanding allocation grouped by the code that made it.
+- `test heap` self-test and three corruption tests
+  (`test exceptions fl|waf|df`).
+
+### Changed
+- The desktop's pixel buffers and the memory manager's records now come
+  from the heap.
+
 ## 0.4.0 — 2026-10-03 (security release)
 
 Spec phase 4, virtual memory, is complete.

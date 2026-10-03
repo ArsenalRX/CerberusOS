@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.4.0).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.5.0).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,25 +27,26 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 5
+## Right now: waiting for the owner's go-ahead on phase 6
 
-Version **0.4.0** (phase 4, virtual memory) was released on 2026-10-03 (tag
-`v0.4.0`); all 11 integration tests pass in QEMU/KVM. The tree is on `0.4.1`
+Version **0.5.0** (phase 5, kernel heap) was released on 2026-10-03 (tag
+`v0.5.0`); all 15 integration tests pass in QEMU/KVM. The tree is on `0.5.1`
 development builds. The owner approves each phase's contents before work
-starts, so **do not start phase 5 until the owner says so**.
+starts, so **do not start phase 6 until the owner says so**.
 
 Open items carried over:
 
-- **VirtualBox was not re-verified.** The headless "Lumen-dev" VM is in a
-  *saved* state from an earlier run; booting a new ISO means discarding that
-  state — ask the owner first. Then: discard the saved state, boot
-  "Lumen-dev" headless with `build/lumen.iso`, type a shell command, read
-  `logs/vbox-dev-serial.log`. Two things need checking there: the spin-idle
-  change from 0.3.0, and that the boot-time hardening and CPU parking from
-  0.4.0 behave on the Hyper-V backend.
+- **VirtualBox was not re-verified** for 0.3.0, 0.4.0 or 0.5.0. The headless
+  "Lumen-dev" VM is in a *saved* state from an earlier run; booting a new
+  ISO means discarding that state — ask the owner first. Then: discard the
+  saved state, boot "Lumen-dev" headless with `build/lumen.iso`, type a
+  shell command, read `logs/vbox-dev-serial.log`. Check the spin-idle change
+  (0.3.0) and the boot-time hardening and CPU parking (0.4.0) on the Hyper-V
+  backend.
 - **`tools/qemu-probe.py --uefi` hangs** the guest in `serial_putc`; UEFI
   itself boots fine when QEMU is run directly. Find out why before relying
   on UEFI in the automated tests.
+- **Owner decision on libc** (in-tree or mlibc) is best made before phase 7.
 
 ---
 
@@ -76,6 +77,11 @@ Open items carried over:
   zero-initialised locals and a UBSAN subset; `test vmm`,
   `test exceptions so|ub`. File-backed regions deferred to phase 9; boot and
   IST stacks get guard pages in phase 6.
+- **Phase 5 — Kernel heap. Release 0.5.0 (2026-10-03).** Slab caches 16–2048
+  bytes, whole pages above; `kmalloc/kzalloc/kfree/krealloc/kfree_sensitive`;
+  encoded and validated free lists; debug red zones, poisoning and call-site
+  tracking; `heapstat`; `test heap`, `test exceptions fl|waf|df`. Desktop
+  pixel buffers and VMM records moved onto it.
 
 ---
 
@@ -89,11 +95,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 5 — Kernel heap.** Slab allocator, `kmalloc/kzalloc/kfree/
-  krealloc`, red zones + poison + leak tracking, `heapstat`. `test heap`.
-  Move the desktop's static pixel pools onto it.
-  **+v2:** encoded free-list pointers with corruption detection;
-  `kfree_sensitive`.
 - [ ] **Phase 6 — Threads and scheduling.** `Thread`/`Process`, context
   switch, round-robin with 4 priorities, preemption, sleep/wake, sync
   primitives, kernel threads. `test sched`. **Give the compositor its own
@@ -173,7 +174,7 @@ output.
 
 ---
 
-## Waiting on the owner (does not block phases 5–13)
+## Waiting on the owner (does not block phase 6)
 
 Details in `docs/DECISIONS.md`, entry 2026-10-03.
 

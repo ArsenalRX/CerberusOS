@@ -519,3 +519,50 @@ first desktop frame, varied between 21 and 29 ms from run to run with and
 without it. Revisit when `make bench` exists (phase 6).
 
 Cost accepted: debug kernel text roughly doubles (22 → 43 pages).
+
+## 2026-10-03 — Phase 5: kernel heap design
+
+- **Slabs are single pages in the direct map**, with a 32-byte header at the
+  start of the page. `kfree` finds the slab by rounding the pointer down to
+  the page. No per-frame metadata table.
+  Cost: the 1024-byte class holds 3 objects per page and the 2048-byte class
+  holds 1, because the header takes the space of one. Rejected: an
+  out-of-band table with one descriptor per physical frame (about 0.6% of
+  all RAM, paid whether or not the heap is used); multi-page slabs (the
+  frame allocator cannot hand out aligned runs, so the header could not be
+  found from a pointer). Revisit if allocations of 1–2 KiB turn out to be
+  common.
+- **Large allocations (over 2048 bytes) are whole pages**, physically
+  contiguous through the direct map when the frame allocator has a run,
+  otherwise a VMM mapping. SPEC phase 5 says "direct page allocation"; the
+  direct map also keeps the desktop's multi-megabyte pixel buffers on 2 MiB
+  TLB entries, exactly as before they moved to the heap. Their bookkeeping
+  is a small node from the 64-byte slab on a linked list, looked up
+  linearly at free; fine for tens of large allocations, to be indexed when
+  there are thousands.
+- **`kmalloc` returns a plain pointer, nullptr on failure** (marked
+  `[[nodiscard]]`). SPEC §4 says a nullable pointer's type should say so;
+  the spec also names these functions with their conventional signatures.
+  Every kernel caller checks the result. Rejected: `Result<void*>` at every
+  call site.
+- **Free-list hardening:** the link in a free object is stored XORed with a
+  per-boot secret and the link's own address, and every pointer taken off a
+  list is checked to be an object boundary inside the same slab. The secret
+  comes from RDRAND when present, mixed with the time-stamp counter; the
+  kernel CSPRNG replaces that source in phase 7.
+- **One empty slab per size class is kept**, the rest go back to the frame
+  allocator, so a cache that hovers around empty does not thrash it. Idle
+  cost: at most 8 pages.
+- **Debug overhead is 48 bytes per object** (16-byte record of call site,
+  requested size and state; 16-byte red zone each side). Slack between the
+  requested size and the class size is red zone too, so an overrun of one
+  byte is caught even inside the size class.
+- **Lock order for phase 8:** the VMM allocates its VMAs from the slab path,
+  and the heap's large path calls the VMM. The slab path must therefore
+  never call the VMM, and the large path must not hold the heap lock while
+  it does.
+
+Measured on 2026-10-03 (QEMU/KVM, one CPU active, `test heap`): a
+`kmalloc(64)`+`kfree` pair takes 74–83 ns in the debug build and 13–19 ns
+with `DEBUG=0`; the SPEC §20.1 budget is 100 ns. 100,000 random
+allocate/free pairs with fill and verify take about 270 ms (debug).
