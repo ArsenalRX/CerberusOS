@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03.
+Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.4.0).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,24 +27,25 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 4
+## Right now: waiting for the owner's go-ahead on phase 5
 
-Version **0.3.0** was released on 2026-10-03 (tag `v0.3.0`); all 8
-integration tests pass in QEMU/KVM. The tree is on `0.3.1` development
-builds. The owner asked (2026-10-03) to be shown what each phase adds and to
-approve it before work starts, so **do not start phase 4 until the owner
-says so**.
+Version **0.4.0** (phase 4, virtual memory) was released on 2026-10-03 (tag
+`v0.4.0`); all 11 integration tests pass in QEMU/KVM. The tree is on `0.4.1`
+development builds. The owner approves each phase's contents before work
+starts, so **do not start phase 5 until the owner says so**.
 
-Open item carried over: **VirtualBox was not re-verified.** The spin-idle
-change in `kernel/lib/console.cpp` exists for VirtualBox on the Hyper-V
-backend (a halted vCPU there stops receiving the timer interrupt, so the
-desktop froze). It passes in QEMU, but the headless "Lumen-dev" VM is in a
-*saved* state from an earlier run, and booting the new ISO means discarding
-that saved state — ask the owner before doing so. To verify once allowed:
-discard the saved state, boot "Lumen-dev" headless with `build/lumen.iso`,
-type a shell command, and read `logs/vbox-dev-serial.log`. The stopgap goes
-away in phase 6, when the compositor gets its own thread and the idle thread
-halts again.
+Open items carried over:
+
+- **VirtualBox was not re-verified.** The headless "Lumen-dev" VM is in a
+  *saved* state from an earlier run; booting a new ISO means discarding that
+  state — ask the owner first. Then: discard the saved state, boot
+  "Lumen-dev" headless with `build/lumen.iso`, type a shell command, read
+  `logs/vbox-dev-serial.log`. Two things need checking there: the spin-idle
+  change from 0.3.0, and that the boot-time hardening and CPU parking from
+  0.4.0 behave on the Hyper-V backend.
+- **`tools/qemu-probe.py --uefi` hangs** the guest in `serial_putc`; UEFI
+  itself boots fine when QEMU is run directly. Find out why before relying
+  on UEFI in the automated tests.
 
 ---
 
@@ -67,6 +68,14 @@ halts again.
 - **Release 0.3.0 (2026-10-03).** Shared PS/2 drain routine, spin-idle under
   the desktop, `gui`/`irqs` shell commands, version scheme (`VERSION` file,
   `docs/CHANGELOG.md`, spec §23), spec v2.
+- **Phase 4 — Virtual memory. Release 0.4.0 (2026-10-03).** `AddressSpace`
+  (map/unmap/protect/translate), VMAs (anonymous, device, guard),
+  `mmap`/`munmap`/`mprotect`, demand paging, COW clone, guarded kernel
+  stacks, 2 MiB kernel leaves; W^X, NX outside kernel text, image mapped by
+  section, zeroed frames, null guard; other CPUs parked in kernel text;
+  zero-initialised locals and a UBSAN subset; `test vmm`,
+  `test exceptions so|ub`. File-backed regions deferred to phase 9; boot and
+  IST stacks get guard pages in phase 6.
 
 ---
 
@@ -80,13 +89,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 4 — Virtual memory.** 4-level paging `AddressSpace`,
-  map/unmap/protect, VMA list, COW clone, demand paging, guard pages.
-  `test vmm`. Adopt the tables `early_map` already built.
-  **+v2:** W^X enforced by `map()`; kernel image remapped by section (text
-  RX, rodata R, data RW+NX); NX on HHDM and heap; frames zeroed before
-  reuse; null guard (first 64 KiB); 2 MiB pages for the HHDM;
-  `-ftrivial-auto-var-init=zero` and UBSAN (debug) in the kernel build.
 - [ ] **Phase 5 — Kernel heap.** Slab allocator, `kmalloc/kzalloc/kfree/
   krealloc`, red zones + poison + leak tracking, `heapstat`. `test heap`.
   Move the desktop's static pixel pools onto it.
@@ -96,7 +98,8 @@ output.
   switch, round-robin with 4 priorities, preemption, sleep/wake, sync
   primitives, kernel threads. `test sched`. **Give the compositor its own
   thread; restore `hlt` in the idle thread.**
-  **+v2:** guard page under every kernel stack; interactive wake-up latency
+  **+v2:** guard page under every kernel stack (including the bootstrap and
+  IST stacks, which phase 4 left unguarded); interactive wake-up latency
   targets; `make bench` and `docs/BENCH.md` start here.
 - [ ] **Phase 7 — Userland and syscalls.** Ring 3, `syscall`/`sysret`,
   dispatch table from `table.def`, argument validation, ELF64 loader, minimal
@@ -109,7 +112,10 @@ output.
   starts here. *Owner decision on libc (in-tree vs mlibc) is best made
   before this phase.*
 - [ ] **Phase 8 — SMP.** Start APs, per-CPU data, per-CPU run queues, work
-  stealing, TLB shootdown. Audit every lock. `test smp`.
+  stealing, TLB shootdown. Audit every lock. `test smp`. The APs already
+  wait in `ap_park` (kernel text) since 0.4.0: release them from there
+  rather than through Limine's `goto_address` (DECISIONS 2026-10-03), and
+  give the VMM a per-address-space lock.
   **+v2:** lock-rank checker; per-CPU slab caches.
 - [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **lumfs**
   (on-disk, journal) + `mkfs.lumfs`. Dentry cache. Acceptance: format,
@@ -167,7 +173,7 @@ output.
 
 ---
 
-## Waiting on the owner (does not block phases 4–13)
+## Waiting on the owner (does not block phases 5–13)
 
 Details in `docs/DECISIONS.md`, entry 2026-10-03.
 

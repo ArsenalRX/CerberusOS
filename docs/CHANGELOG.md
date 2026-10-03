@@ -17,6 +17,37 @@ completed spec phase.
 
 ## Unreleased
 
+## 0.4.0 — 2026-10-03 (security release)
+
+Spec phase 4, virtual memory, is complete.
+
+### Security
+- No memory can be both writable and executable; every request for such a
+  mapping is refused.
+- All memory outside the kernel's code is now non-executable. Before this
+  release the bootloader's mapping left all of RAM executable.
+- Kernel code and read-only data can no longer be written; kernel data can
+  no longer be executed.
+- Memory handed to an address space is always zeroed first, so nothing left
+  behind by a previous owner can be read.
+- The first 64 KiB of an address space can never be mapped, so a null
+  pointer always faults.
+- A stack overflow on a guarded kernel stack is reported and stops the
+  system instead of overwriting other memory.
+- Stack variables are zero-initialised by the compiler; debug builds stop
+  with the source line on undefined behaviour such as signed overflow.
+
+### Added
+- Virtual memory manager: private address spaces, memory regions, memory
+  allocated on first use, copy-on-write copies of an address space, 2 MiB
+  pages for large kernel mappings.
+- `test vmm` self-test; `test exceptions so` (stack overflow) and
+  `test exceptions ub` (undefined behaviour).
+
+### Changed
+- The other CPUs now wait inside the kernel instead of inside the
+  bootloader's code.
+
 ## 0.3.0 — 2026-10-03
 
 First release under the `0.PHASE.PATCH` scheme: spec phases 0–3 are complete.

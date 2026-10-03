@@ -405,3 +405,117 @@ unprompted on a timer, because the integration tests match on that log.
 
 Rejected: loosening the tests to tolerate interleaved output (they would
 stop proving that typed input is echoed intact).
+
+## 2026-10-03 — Phase 4: the VMM adopts and hardens the bootloader's page tables
+
+As planned on 2026-09-14 ("Early MMIO/ACPI mapping extends the bootloader
+page tables"), `vmm_init` keeps Limine's PML4 as the kernel address space
+instead of building a new one, then hardens it in place:
+- every leaf in the kernel half outside the kernel image gets NX;
+- the kernel image is re-permissioned page by page from the linker symbols
+  (text r-x, data/bss rw-, everything else r--);
+- the lower half is emptied; CR0.WP and EFER.NXE are forced on;
+- all 256 kernel PML4 slots are populated, so a user address space is a copy
+  of those 256 entries and never goes stale.
+
+**Finding:** Limine maps the whole direct map writable *and executable*
+(entries were `P|W` with no NX). Until `vmm_init` runs, every byte of RAM is
+executable kernel memory. This is why the hardening walk exists and why it
+runs as early as the IDT allows.
+
+Why adopt rather than rebuild: the direct map already uses 2 MiB leaves
+(255 of them at 512 MiB) and the framebuffer keeps the bootloader's cache
+attributes; rebuilding would have to reproduce both.
+
+Other choices made in phase 4:
+- **Kernel memory is never demand-paged.** `mmap` on the kernel space always
+  populates. A fault inside an interrupt handler must not depend on the
+  allocator.
+- **`mmap` with FIXED never replaces an existing mapping** (returns Exists).
+  POSIX replaces silently; that is a classic way to clobber a live mapping.
+- **Copy-on-write marks every owned page**, including pages in read-only
+  regions, so a later `mprotect` to writable cannot make two address spaces
+  share a writable frame.
+- **Frames carry a reference count only while the VMM owns them** (anonymous
+  memory). Raw `map()` and device mappings are tagged not-owned in the PTE
+  and are never freed by unmapping.
+- **VMA nodes and AddressSpace objects come from small page-backed pools**
+  until the heap exists (phase 5); pool pages are kept for reuse.
+- **Fault-safe probes** (`kernel/mm/probe.*`): three labelled instructions
+  that may fault, with fixups. The self-tests use them now; phase 7's
+  `copy_from_user`/`copy_to_user` are built on the same mechanism.
+
+**Deviation from SPEC phase 4:** the spec lists VMA backing as "anonymous,
+file, or device". File backing needs the VFS and page cache (phase 9) and is
+added there; phase 4 implements anonymous, device, and guard regions.
+
+**Not covered yet:** the bootstrap stack (provided by the bootloader) and the
+static IST stacks have no guard page. Guarded stacks exist
+(`vmm_alloc_kernel_stack`) and every thread stack gets one in phase 6, which
+is also where SPEC §5A lists that row.
+
+Rejected: building fresh kernel tables (see above); a recursive page-table
+mapping (the direct map already reaches every table); per-VMA red-black tree
+(a sorted list is enough until processes have hundreds of regions; revisit
+with `make bench`).
+
+## 2026-10-03 — The other CPUs are parked in kernel text before hardening
+
+Symptom: with NX applied to the direct map, boot slowed to a crawl under
+QEMU/KVM (seconds per line of output) but was fine under TCG. Bisecting the
+hardening walk showed that only the 4 KiB leaves below 2 MiB mattered.
+
+Cause: Limine leaves the application processors spinning in its own code,
+which under BIOS boot lives in bootloader-reclaimable memory below 1 MiB and
+is reached through the direct map. Making that memory non-executable made
+all three APs fault with no usable IDT, over and over, which starved the
+bootstrap CPU. (TCG kept the stale executable translations cached, so it did
+not show.)
+
+Fix: `boot_park_aps()` (`kernel/boot/limine_requests.cpp`) writes each AP's
+`goto_address` so it jumps into `ap_park`, a `pause` loop in kernel text,
+and waits until all have arrived before any permission is changed.
+
+Consequences for phase 8 (SMP): the APs have already consumed Limine's
+`goto_address`. Phase 8 does not start them from the bootloader as the spec
+text says; it releases them from `ap_park` (the loop gains a per-CPU "go"
+word that points at the AP initialisation path). No real-mode trampoline is
+needed. They still burn host CPU while parked, exactly as they did inside
+Limine; halting them needs a per-CPU IDT/TSS so an NMI can wake them, which
+is phase 8 work.
+
+Rule learned (SPEC §21 "when fixing a bug"): before removing a permission
+from memory, ask who else is still executing or writing through it — other
+CPUs included.
+
+Rejected: leaving bootloader-reclaimable memory executable until phase 8
+(keeps several hundred KiB of writable+executable memory, the exact thing
+W^X forbids); marking it read-only+executable (the bootloader's wait loop
+writes to its own data).
+
+## 2026-10-03 — Compiler hardening: zero-initialised locals, a subset of UBSAN
+
+The kernel is now built with `-ftrivial-auto-var-init=zero` (always) and, in
+debug builds, `-fsanitize=undefined` with handlers in `kernel/lib/ubsan.cpp`
+that panic with the source location.
+
+SPEC §5A says "the undefined-behaviour sanitizer"; these checks are left out,
+for the reasons given:
+- `vptr` — needs RTTI, which the kernel does not have.
+- `float-cast-overflow`, `float-divide-by-zero` — no FPU use in the kernel.
+- `alignment`, `null`, `object-size` — one check per pointer dereference.
+  With them kernel text grew from 22 to 73 pages; without them, to 43. x86
+  permits unaligned access and ACPI tables are unaligned by design (the
+  first boot with `alignment` on stopped in `acpi.cpp`); a null dereference
+  already faults cleanly because nothing is mapped in the low half.
+
+What remains on: signed overflow, shifts, array bounds, division, invalid
+bool/enum loads, pointer overflow, unreachable code, missing return,
+non-null violations, VLA bounds.
+
+`kernel/gfx/` (the pixel loops) is built without the sanitizer as a
+precaution. The cost could not be measured: the only timing available, the
+first desktop frame, varied between 21 and 29 ms from run to run with and
+without it. Revisit when `make bench` exists (phase 6).
+
+Cost accepted: debug kernel text roughly doubles (22 → 43 pages).
