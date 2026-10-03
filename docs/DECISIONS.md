@@ -566,3 +566,53 @@ Measured on 2026-10-03 (QEMU/KVM, one CPU active, `test heap`): a
 `kmalloc(64)`+`kfree` pair takes 74–83 ns in the debug build and 13–19 ns
 with `DEBUG=0`; the SPEC §20.1 budget is 100 ns. 100,000 random
 allocate/free pairs with fill and verify take about 270 ms (debug).
+
+## 2026-10-03 — Parked CPUs halt instead of spinning (fixes the keyboard on VirtualBox)
+
+Supersedes the "they still burn host CPU while parked" part of "The other
+CPUs are parked in kernel text before hardening" (same date).
+
+Symptom (0.5.0 on VirtualBox 7.2.6, Hyper-V backend, 3–4 virtual CPUs): the
+desktop came up, the first typed command worked, then the keyboard stopped
+after about eight keys. The kernel was alive (same idle RIP on every sample,
+interrupts enabled, nothing pending in the APIC), and VirtualBox's own
+`info ps2k` showed the typed bytes piling up in its keyboard queue (18, then
+45 items) with the controller's output buffer empty.
+
+Cause: VirtualBox hands the guest one keyboard byte at a time, driven by an
+internal timer. Three virtual CPUs spinning in `pause` at 100% starved that
+timer on the Hyper-V backend. With the VM set to one CPU the same ISO typed
+and ran `test vmm` normally, which isolated it.
+
+Fix: `ap_park` is now `cli; hlt` in a loop. A halted virtual CPU costs the
+host nothing. Verified on VirtualBox with 4 CPUs after the change.
+
+Consequence for phase 8: the parked CPUs cannot be released by setting a
+flag (they are halted with interrupts off). Phase 8 restarts them with the
+standard INIT/SIPI sequence and a small real-mode trampoline. This replaces
+both the spec's "start APs via Limine's goto_address" and the earlier note
+that no trampoline would be needed.
+
+Likely related, to re-test in phase 6: the 2026-09-14 finding that "a halted
+vCPU stops receiving the timer interrupt" on this backend was observed while
+the other CPUs were spinning inside the bootloader. The idle thread's `hlt`
+may simply work now.
+
+Rule learned: an idle CPU must halt. A busy-wait that is harmless on real
+hardware and on KVM can break a hypervisor that multiplexes device timers
+onto the same host threads.
+
+## 2026-10-03 — dist/ holds one ISO; the VirtualBox VM is "Lumen"
+
+Owner direction: a new release replaces the old ISO instead of piling up
+next to it. `make dist` now deletes `dist/lumen*.iso` before copying the new
+`dist/lumen-<version>.iso`, and re-points the DVD drive of the VirtualBox VM
+`Lumen` at it when that VM exists and is powered off. Old versions remain
+reproducible from their git tags.
+
+The VM `Lumen` was created on 2026-10-03 (the owner's earlier VMs had been
+removed and a hand-made one had been created as 32-bit "Other", which hides
+64-bit mode from the guest; Limine then reports that the CPU is not 64-bit).
+Settings that matter: OS type Other (64-bit), BIOS firmware, I/O APIC and
+HPET on, PS/2 keyboard and mouse, VMSVGA with 64 MB, COM1 to
+`logs/vbox-serial.log`. `make vbox` creates the same VM if it is missing.

@@ -255,7 +255,7 @@ $(ISO): $(KERNEL_ELF) $(LIMINE_BIN) $(ROOT)/limine.conf
 # Works from WSL by calling the Windows VBoxManage.exe.
 # ---------------------------------------------------------------------------
 VBOXMANAGE ?= /mnt/c/Program\ Files/Oracle/VirtualBox/VBoxManage.exe
-VBOX_VM    ?= Lumen 0.0.1
+VBOX_VM    ?= Lumen
 LOGS       := $(ROOT)/logs
 VBOX_LOG   := $(LOGS)/vbox-serial.log
 
@@ -268,7 +268,7 @@ vbox: $(ISO)
 	if ! $(VBOXMANAGE) showvminfo "$(VBOX_VM)" >/dev/null 2>&1; then \
 	    echo "creating VirtualBox VM '$(VBOX_VM)'"; \
 	    $(VBOXMANAGE) createvm --name "$(VBOX_VM)" --ostype Other_64 --register; \
-	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 1024 --cpus 4 --firmware efi \
+	    $(VBOXMANAGE) modifyvm "$(VBOX_VM)" --memory 2048 --cpus 4 --firmware bios --x86-long-mode on \
 	        --graphicscontroller vmsvga --vram 64 --uart1 0x3F8 4 --hpet on \
 	        --boot1 dvd --boot2 none --boot3 none --boot4 none --mouse ps2 --keyboard ps2; \
 	    $(VBOXMANAGE) storagectl "$(VBOX_VM)" --name IDE --add ide; \
@@ -286,11 +286,20 @@ vbox: $(ISO)
 vbox-log:
 	@$(PYTHON) -c "import re,sys; t=open('$(VBOX_LOG)',errors='replace').read(); print(re.sub(r'\x1b\[[0-9;?]*[A-Za-z]','',t))"
 
-# Snapshot ISO for trying out in a VM (dist/ is not cleaned by `make clean`).
+# The ISO to try in a VM (dist/ is not cleaned by `make clean`). dist/ holds
+# exactly one ISO: a new one replaces whatever was there (owner's rule,
+# 2026-10-03). If the VirtualBox VM exists and is powered off, its DVD drive
+# is pointed at the new file so it keeps booting after the old one is gone.
+DIST_VM ?= $(VBOX_VM)
 dist: $(ISO)
 	@mkdir -p $(ROOT)/dist
+	@rm -f $(ROOT)/dist/lumen*.iso
 	cp $(ISO) $(ROOT)/dist/lumen-$(VERSION).iso
 	@echo "snapshot: $(ROOT)/dist/lumen-$(VERSION).iso"
+	@if [ -x $(VBOXMANAGE) ] && $(VBOXMANAGE) showvminfo "$(DIST_VM)" --machinereadable 2>/dev/null | grep -q '^VMState="poweroff"'; then \
+	    $(VBOXMANAGE) storageattach "$(DIST_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive \
+	        --medium "$$(wslpath -w $(ROOT)/dist/lumen-$(VERSION).iso)" && echo "VirtualBox VM '$(DIST_VM)' now boots lumen-$(VERSION).iso"; \
+	else echo "VirtualBox VM '$(DIST_VM)' not updated (missing or running); attach dist/lumen-$(VERSION).iso by hand"; fi
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)

@@ -2182,7 +2182,9 @@ behaviour adds its line there in the same commit.
    `## <version> — <date>`, adding a fresh empty `## Unreleased` above it.
 3. Update `docs/STATUS.md`. Commit as `release: <version>`.
 4. Tag the commit `v<version>`. Build from the tag with
-   `make RELEASE=1 dist`, which writes `dist/lumen-<version>.iso`.
+   `make RELEASE=1 dist`, which writes `dist/lumen-<version>.iso`, deletes
+   the previous ISO from `dist/` (it holds exactly one), and points the
+   VirtualBox VM "Lumen" at the new file.
 5. Bump `VERSION` to the next patch number in a following commit
    (`release: begin <next>`), so development builds are labelled correctly.
 

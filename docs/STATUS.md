@@ -22,8 +22,9 @@ Last updated: **2026-10-03**.
 
 ## Version
 
-Released: **0.5.0** (2026-10-03, tag `v0.5.0`, `dist/lumen-0.5.0.iso`).
-The tree now builds as `0.5.1-dev+<commit>`. Scheme: docs/SPEC.md §23;
+Released: **0.5.1** (2026-10-03, tag `v0.5.1`, `dist/lumen-0.5.1.iso`; `dist/` holds
+only the newest ISO).
+The tree now builds as `0.5.2-dev+<commit>`. Scheme: docs/SPEC.md §23;
 history: docs/CHANGELOG.md.
 
 ---
@@ -56,9 +57,15 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
   blocks in `serial_putc` waiting for the UART, with both 0.3.0 and 0.4.0.
   The same ISO under the same firmware with QEMU's serial on stdout boots
   fine, so this is a probe problem, not a kernel one. Not yet investigated.
-- **VirtualBox: not re-verified on 2026-10-03.** The "Lumen-dev" VM is in a
-  saved state; booting the new ISO would discard it, which needs the
-  owner's permission. Last VirtualBox observations are from 2026-09-14.
+- **VirtualBox 7.2.6 (Hyper-V backend), VM "Lumen", 4 CPUs, BIOS: verified
+  on 2026-10-03 with 0.5.1.** Boots to the desktop; typed commands work;
+  `test vmm`, `test heap` and `test idle` pass (timer delivered to a halted
+  CPU at 99.8 Hz). 0.5.0 and earlier lose the keyboard after a few keys
+  there when the VM has more than one CPU (fixed in 0.5.1).
+- One run of `shell-tests` on the 0.5.1 release ISO failed in `test idle`
+  (tick rate measured 107–119 Hz against the HPET); three immediate re-runs
+  of the same ISO passed. The host was also running VirtualBox at the time.
+  Treat as timing noise under host load until it recurs.
 
 ## What changed on 2026-10-03
 
@@ -92,15 +99,19 @@ installer/updates/encryption 18, stretch 19). See docs/DECISIONS.md.
   inside WSL2, window on the desktop via WSLg, serial log in
   `logs/qemu-serial.log`. `run-lumen.cmd uefi` boots through OVMF;
   `run-lumen.cmd build` rebuilds first. This is the fast, accurate path.
-- `dist/lumen-0.5.0.iso`: the release ISO for any VM (`make RELEASE=1 dist`
-  writes `dist/lumen-<version>.iso`; the older `lumen-0.0.1.iso` snapshot is
-  still there).
-- VirtualBox: the owner's VM is "Lumen 0.0.1" (COM1 → `logs/vbox-serial.log`,
-  HPET on, PS/2 mouse+keyboard). **Caveat:** on this host VirtualBox runs on
-  the Hyper-V backend ("AMD-V is not available" in VBox.log, because
-  WSL2/Docker keep Hyper-V on), which makes the guest laggy and its clock run
-  ~3x slow while idle. See docs/DECISIONS.md. "Lumen-dev" is a headless VM
-  used for automated VirtualBox checks (log `logs/vbox-dev-serial.log`).
+- `dist/lumen-0.5.1.iso`: the release ISO for any VM (`make RELEASE=1 dist`
+  writes `dist/lumen-<version>.iso`, deletes the previous one, and re-points
+  the VirtualBox VM at it).
+- VirtualBox: the VM is **"Lumen"** (created 2026-10-03: Other 64-bit, BIOS,
+  4 CPUs, 2 GiB, HPET and I/O APIC on, PS/2 keyboard and mouse, COM1 →
+  `logs/vbox-serial.log`). Start it from the VirtualBox window. A VM made by
+  hand must use OS type "Other/Unknown (64-bit)": the 32-bit "Other" type
+  hides 64-bit mode and the bootloader then refuses to start the kernel.
+  On this host VirtualBox runs on the Hyper-V backend ("AMD-V is not
+  available" in VBox.log, because WSL2/Docker keep Hyper-V on), so it is
+  slower than `run-lumen.cmd`. The earlier VMs "Lumen 0.0.1" and "Lumen-dev"
+  no longer exist in VirtualBox (an unregistered "Lumen-dev" folder is left
+  under `VirtualBox VMs`).
 
 ## What works (verified 2026-10-03 by `make test` in QEMU/KVM)
 
@@ -205,7 +216,13 @@ issues:
 
 ## Half-done
 
-- VirtualBox re-verification of the spin-idle change (see "Last verified").
+- **Phase 6 is started, not built.** `kernel/sched/sched.h`, `sched.cpp` and
+  `switch.asm` (threads, run queues, sleep list, wait queues, processes) are
+  written but have never been compiled; nothing calls them yet. They are in
+  the working tree, uncommitted.
+- The spin-instead-of-halt idle from 0.3.0 is still in `console.cpp`; with
+  the parked CPUs halted the timer does reach a halted CPU on VirtualBox
+  (`test idle`, 0.5.1), so phase 6's idle thread can halt there too.
 - `early_map` still hands out kernel virtual addresses on its own (first GiB
   of the vmalloc region); drivers can move to `mmap_device` when convenient.
 - File-backed memory regions wait for the VFS (phase 9).
@@ -232,8 +249,8 @@ question (2) should be answered before phase 7.
 
 ## Next
 
-1. Get the owner's go-ahead for phase 6 (the owner approves each phase's
-   contents before it starts), and permission to reset the "Lumen-dev" VM.
+1. Phase 6 was approved by the owner on 2026-10-03 and is in progress (see
+   "Half-done" and docs/TO_FINISH.md).
 2. Phase 6: threads and the scheduler; compositor thread; idle `hlt`;
    guard pages under every kernel stack; `make bench` and docs/BENCH.md
    begin.

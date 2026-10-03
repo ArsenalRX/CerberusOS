@@ -17,6 +17,18 @@ completed spec phase.
 
 ## Unreleased
 
+## 0.5.1 — 2026-10-03
+
+### Fixed
+- VirtualBox: the keyboard no longer stops responding after a few keys when
+  the VM has more than one CPU. The CPUs the kernel is not using yet now
+  sleep instead of spinning, which also stops them using a full host core
+  each.
+
+### Changed
+- `dist/` now holds only the newest ISO; making a release replaces the old
+  one and points the VirtualBox VM "Lumen" at the new file.
+
 ## 0.5.0 — 2026-10-03 (security release)
 
 Spec phase 5, the kernel heap, is complete.

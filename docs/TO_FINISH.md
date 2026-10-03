@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.5.0).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.5.1).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,26 +27,42 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 6
+## Right now: phase 6 (threads and scheduling) is in progress
 
-Version **0.5.0** (phase 5, kernel heap) was released on 2026-10-03 (tag
-`v0.5.0`); all 15 integration tests pass in QEMU/KVM. The tree is on `0.5.1`
-development builds. The owner approves each phase's contents before work
-starts, so **do not start phase 6 until the owner says so**.
+The owner approved phase 6 on 2026-10-03. Version **0.5.1** (a VirtualBox
+keyboard fix) was released the same day; all 15 integration tests pass in
+QEMU/KVM and the ISO is verified on VirtualBox with 4 CPUs.
+
+State of phase 6:
+
+- Written, never compiled, uncommitted: `kernel/sched/sched.h`, `sched.cpp`,
+  `switch.asm` (threads, four-level run queues, sleep list, wait queues,
+  processes, idle and reaper threads, `sched_start`).
+- Still to do, in this order:
+  1. `kernel/sched/sync.h/.cpp`: spinlock, mutex, semaphore, condition
+     variable, reader-writer lock.
+  2. Hook-up: `sched_irq_enter/exit` in `interrupt_dispatch`; atomic
+     `kprintf`; `console_idle` sleeps instead of spinning; `idle` shell
+     command switches the idle policy; `ps` command; thread name in the
+     fatal-exception dump.
+  3. Boot: guarded IST stacks, `sched_start` from `kernel_main`, the rest of
+     boot (desktop, shell) in the first thread; compositor in its own
+     INTERACTIVE thread woken by PS/2 input and the tick.
+  4. `test sched` (five preempting threads, 10 s producer/consumer, sleep
+     accuracy, mutex/semaphore/rwlock, wake-up latency, context-switch time,
+     two processes with separate address spaces), the stack-overflow test
+     moved onto a real thread, the desktop staying live during the test.
+  5. `make bench` and `docs/BENCH.md`.
+  6. VirtualBox check with 4 CPUs (the idle thread halts), then release
+     0.6.0 with `make RELEASE=1 dist`.
 
 Open items carried over:
 
-- **VirtualBox was not re-verified** for 0.3.0, 0.4.0 or 0.5.0. The headless
-  "Lumen-dev" VM is in a *saved* state from an earlier run; booting a new
-  ISO means discarding that state — ask the owner first. Then: discard the
-  saved state, boot "Lumen-dev" headless with `build/lumen.iso`, type a
-  shell command, read `logs/vbox-dev-serial.log`. Check the spin-idle change
-  (0.3.0) and the boot-time hardening and CPU parking (0.4.0) on the Hyper-V
-  backend.
 - **`tools/qemu-probe.py --uefi` hangs** the guest in `serial_putc`; UEFI
-  itself boots fine when QEMU is run directly. Find out why before relying
-  on UEFI in the automated tests.
+  itself boots fine when QEMU is run directly.
 - **Owner decision on libc** (in-tree or mlibc) is best made before phase 7.
+- One unexplained `test idle` failure under host load (see docs/STATUS.md,
+  "Last verified").
 
 ---
 
@@ -114,8 +130,8 @@ output.
   before this phase.*
 - [ ] **Phase 8 — SMP.** Start APs, per-CPU data, per-CPU run queues, work
   stealing, TLB shootdown. Audit every lock. `test smp`. The APs already
-  wait in `ap_park` (kernel text) since 0.4.0: release them from there
-  rather than through Limine's `goto_address` (DECISIONS 2026-10-03), and
+  are halted in `ap_park` (kernel text) since 0.5.1: restart them with
+  INIT/SIPI and a real-mode trampoline (DECISIONS 2026-10-03), and
   give the VMM a per-address-space lock.
   **+v2:** lock-rank checker; per-CPU slab caches.
 - [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **lumfs**

@@ -177,11 +177,15 @@ namespace {
 volatile u32 g_aps_parked = 0;
 
 // Where every application processor waits until SMP bring-up (phase 8).
-// Runs on the bootloader-provided stack with interrupts off and touches
-// nothing but this loop and the counter.
+// Runs on the bootloader-provided stack and touches nothing but this loop
+// and the counter. It halts with interrupts off rather than spinning: a
+// spinning virtual CPU costs the host a whole core, and on VirtualBox's
+// Hyper-V backend three of them starved the device timers until the
+// keyboard stopped delivering keys. Nothing sends these CPUs an interrupt;
+// phase 8 restarts them with INIT/SIPI.
 [[noreturn]] void ap_park(limine_mp_info*) {
     __atomic_fetch_add(&g_aps_parked, 1, __ATOMIC_SEQ_CST);
-    for (;;) asm volatile("pause");
+    for (;;) asm volatile("cli; hlt");
 }
 
 } // namespace
