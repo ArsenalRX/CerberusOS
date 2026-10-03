@@ -9,6 +9,7 @@
 #include <lib/string.h>
 #include <lib/symbols.h>
 #include <mm/vmm.h>
+#include <sched/sched.h>
 
 extern "C" const u64 isr_stub_table[256];
 
@@ -137,6 +138,7 @@ void decode_error_code(const InterruptFrame& f) {
     interrupts_disable();
     console_emergency_text_mode();
     kprintf("\n*** EXCEPTION %lu: %s ***\n", (unsigned long)f->vector, exception_name((u8)f->vector));
+    if (Thread* t = thread_current()) kprintf("thread: %s (id %u)\n", t->name, t->id);
     decode_error_code(*f);
     dump_frame(*f);
     kprintf("System halted.\n");
@@ -171,14 +173,20 @@ u64 interrupt_count(u8 vector) { return g_interrupt_counts[vector]; }
 extern "C" void interrupt_dispatch(InterruptFrame* f) {
     g_interrupt_counts[f->vector]++;
     Registration& r = g_handlers[f->vector];
-    if (r.fn) {
-        r.fn(f, r.ctx);
+    if (f->vector < 32) {
+        // CPU exception: handled in place (page faults), or fatal.
+        if (r.fn) r.fn(f, r.ctx);
+        else exception_fatal(f);
         return;
     }
-    if (f->vector < 32) exception_fatal(f);
-    // Spurious or unclaimed IRQ: report the first few occurrences, then stay quiet.
-    if (g_unhandled_irq_count[f->vector]++ < 3)
+    // Device interrupt. The scheduler is told so that a wake-up or the end
+    // of a time slice inside the handler turns into a thread switch on the
+    // way out, after the handler has acknowledged the interrupt.
+    sched_irq_enter();
+    if (r.fn) r.fn(f, r.ctx);
+    else if (g_unhandled_irq_count[f->vector]++ < 3)   // spurious or unclaimed: report the first few
         kprintf("interrupt: unhandled vector %lu (no handler registered)\n", (unsigned long)f->vector);
+    sched_irq_exit();
 }
 
 void dump_frame(const InterruptFrame& f) {

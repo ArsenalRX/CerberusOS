@@ -1,6 +1,6 @@
-// Kernel entry point. Phase 2: after the console is up, install the GDT/TSS
-// and IDT, bring up the interrupt controllers and the APIC timer, then drop
-// into the kernel shell.
+// Kernel entry point: console, CPU tables, memory management, interrupt
+// controllers and the timer, then the scheduler. The desktop and the kernel
+// shell run as threads.
 #include <arch/x86_64/acpi.h>
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
@@ -25,7 +25,9 @@
 #include <lib/version.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <lib/string.h>
 #include <mm/vmm.h>
+#include <sched/sched.h>
 
 namespace {
 
@@ -71,6 +73,13 @@ void print_banner() {
             (unsigned long)(bi.usable_bytes() / MIB), (unsigned long)(bi.total_bytes() / MIB));
 }
 
+// The first thread: brings up the desktop, then becomes the kernel shell.
+void init_thread(void*) {
+    strlcpy(thread_current()->name, "shell", sizeof thread_current()->name);
+    if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
+    shell_run();
+}
+
 } // namespace
 
 extern "C" [[noreturn]] void kernel_main() {
@@ -98,6 +107,13 @@ extern "C" [[noreturn]] void kernel_main() {
     kprintf("idt: 256 gates loaded, IST for #DF/#NMI/#MC\n");
     vmm_init();
     kheap_init();
+    // The exception stacks used so far are plain static arrays. Now that the
+    // VMM exists, move them onto stacks with a guard page below.
+    for (u8 slot = 1; slot <= ist::COUNT; slot++) {
+        Result<vaddr_t> stack = vmm_alloc_kernel_stack(IST_STACK_SIZE);
+        if (!stack.ok()) PANIC("out of memory for exception stack %u", slot);
+        tss_set_ist(0, slot, stack.value());
+    }
 
     pic_init();
     kprintf("pic: remapped to 0x20-0x2f and masked\n");
@@ -127,6 +143,7 @@ extern "C" [[noreturn]] void kernel_main() {
             hpet_available() ? "hpet" : "no-hpet", TIMER_HZ, (unsigned long)(measured_hz_x10 / 10),
             (unsigned long)(measured_hz_x10 % 10), mouse ? "mouse" : "no-mouse");
 
-    gui_init();
-    shell_run();
+    // From here on everything runs as threads on guarded stacks; the
+    // bootloader's stack this function runs on is left behind.
+    sched_start(init_thread, nullptr);
 }

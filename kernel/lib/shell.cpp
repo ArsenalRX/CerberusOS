@@ -7,6 +7,8 @@
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
 #include <mm/kheap.h>
+#include <sched/sched.h>
+#include <kernel/kbench.h>
 #include <kernel/ktest.h>
 #include <lib/console.h>
 #include <lib/kprintf.h>
@@ -31,11 +33,11 @@ int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
 int cmd_irqs(int argc, char** argv);
 int cmd_heapstat(int, char**);
+int cmd_ps(int, char**);
+int cmd_bench(int, char**);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
-
-bool g_idle_spin = false;       // shell waits with pause instead of hlt (diagnostic)
 
 const ShellCommandEntry COMMANDS[] = {
     {"help", "list commands", cmd_help},
@@ -43,7 +45,9 @@ const ShellCommandEntry COMMANDS[] = {
     {"mem", "print the boot memory map", cmd_mem},
     {"sym", "sym <hex-address>: resolve an address to a symbol", cmd_sym},
     {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
-    {"idle", "idle hlt|spin: how the shell waits for input (diagnostic)", cmd_idle},
+    {"ps", "list threads: state, priority level, CPU time, switches", cmd_ps},
+    {"bench", "run the micro-benchmarks behind `make bench`", cmd_bench},
+    {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
     {"gui", "compositor statistics", cmd_gui},
@@ -78,9 +82,16 @@ int cmd_gui(int, char**) {
 }
 
 int cmd_idle(int argc, char** argv) {
-    if (argc > 1 && strcmp(argv[1], "spin") == 0) g_idle_spin = true;
-    else if (argc > 1 && strcmp(argv[1], "hlt") == 0) g_idle_spin = false;
-    kprintf("idle: %s\n", g_idle_spin ? "spin" : "hlt");
+    if (argc > 1 && strcmp(argv[1], "spin") == 0) sched_set_idle_spin(true);
+    else if (argc > 1 && strcmp(argv[1], "hlt") == 0) sched_set_idle_spin(false);
+    kprintf("idle: %s\n", sched_idle_spin() ? "spin" : "hlt");
+    return 0;
+}
+
+int cmd_bench(int, char**) { return kbench_run(); }
+
+int cmd_ps(int, char**) {
+    sched_print_threads();
     return 0;
 }
 
@@ -210,7 +221,7 @@ int read_line(char* buf, usize cap) {
     for (;;) {
         int c = console_getc();
         if (c < 0) {
-            console_idle(g_idle_spin);      // presents frames, then waits for an interrupt
+            console_idle();     // sleeps until the next tick
             continue;
         }
         if (c == '\r' || c == '\n') {

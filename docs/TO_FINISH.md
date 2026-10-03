@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.5.1).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.6.0).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,42 +27,23 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: phase 6 (threads and scheduling) is in progress
+## Right now: waiting for the owner's go-ahead on phase 7
 
-The owner approved phase 6 on 2026-10-03. Version **0.5.1** (a VirtualBox
-keyboard fix) was released the same day; all 15 integration tests pass in
-QEMU/KVM and the ISO is verified on VirtualBox with 4 CPUs.
+Version **0.6.0** (phase 6, threads and scheduling) was released on
+2026-10-03 (tag `v0.6.0`); all 16 integration tests pass in QEMU/KVM, and the
+build was checked on VirtualBox with 4 CPUs. The tree is on `0.6.1`
+development builds. The owner approves each phase's contents before work
+starts, so **do not start phase 7 until the owner says so**.
 
-State of phase 6:
-
-- Written, never compiled, uncommitted: `kernel/sched/sched.h`, `sched.cpp`,
-  `switch.asm` (threads, four-level run queues, sleep list, wait queues,
-  processes, idle and reaper threads, `sched_start`).
-- Still to do, in this order:
-  1. `kernel/sched/sync.h/.cpp`: spinlock, mutex, semaphore, condition
-     variable, reader-writer lock.
-  2. Hook-up: `sched_irq_enter/exit` in `interrupt_dispatch`; atomic
-     `kprintf`; `console_idle` sleeps instead of spinning; `idle` shell
-     command switches the idle policy; `ps` command; thread name in the
-     fatal-exception dump.
-  3. Boot: guarded IST stacks, `sched_start` from `kernel_main`, the rest of
-     boot (desktop, shell) in the first thread; compositor in its own
-     INTERACTIVE thread woken by PS/2 input and the tick.
-  4. `test sched` (five preempting threads, 10 s producer/consumer, sleep
-     accuracy, mutex/semaphore/rwlock, wake-up latency, context-switch time,
-     two processes with separate address spaces), the stack-overflow test
-     moved onto a real thread, the desktop staying live during the test.
-  5. `make bench` and `docs/BENCH.md`.
-  6. VirtualBox check with 4 CPUs (the idle thread halts), then release
-     0.6.0 with `make RELEASE=1 dist`.
+Needed from the owner before phase 7: **the libc decision** (grow the
+in-tree libc, or port mlibc). Phase 7 writes the first libc code.
 
 Open items carried over:
 
-- **`tools/qemu-probe.py --uefi` hangs** the guest in `serial_putc`; UEFI
-  itself boots fine when QEMU is run directly.
-- **Owner decision on libc** (in-tree or mlibc) is best made before phase 7.
-- One unexplained `test idle` failure under host load (see docs/STATUS.md,
-  "Last verified").
+- **Minor page fault is over budget** (4.1 µs against 2 µs, docs/BENCH.md).
+  Profile it before changing anything.
+- Frame pacing is tied to the 10 ms tick (docs/DECISIONS.md, phase 6); a
+  one-shot timer belongs with phase 8.
 
 ---
 
@@ -98,6 +79,15 @@ Open items carried over:
   encoded and validated free lists; debug red zones, poisoning and call-site
   tracking; `heapstat`; `test heap`, `test exceptions fl|waf|df`. Desktop
   pixel buffers and VMM records moved onto it.
+- **Release 0.5.1 (2026-10-03).** Parked CPUs halt instead of spinning (fixes
+  the keyboard on VirtualBox with several CPUs); `dist/` keeps one ISO.
+- **Phase 6 — Threads and scheduling. Release 0.6.0 (2026-10-03).** Threads,
+  processes, four-level preemptive scheduler, sleep and wait queues,
+  spinlock/mutex/semaphore/condition variable/reader-writer lock, idle and
+  reaper threads; compositor thread; idle `hlt`; guard pages under every
+  stack; atomic `kprintf`; `ps`, `bench`, `make bench`, `docs/BENCH.md`;
+  `test sched`; the test probe waits for output instead of fixed times.
+  `Process` gets its file table and working directory in phase 9.
 
 ---
 
@@ -111,13 +101,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 6 — Threads and scheduling.** `Thread`/`Process`, context
-  switch, round-robin with 4 priorities, preemption, sleep/wake, sync
-  primitives, kernel threads. `test sched`. **Give the compositor its own
-  thread; restore `hlt` in the idle thread.**
-  **+v2:** guard page under every kernel stack (including the bootstrap and
-  IST stacks, which phase 4 left unguarded); interactive wake-up latency
-  targets; `make bench` and `docs/BENCH.md` start here.
 - [ ] **Phase 7 — Userland and syscalls.** Ring 3, `syscall`/`sysret`,
   dispatch table from `table.def`, argument validation, ELF64 loader, minimal
   libc, `init`. Acceptance: userland `hello`, `fork`+`execve`+`waitpid`,
@@ -190,7 +173,7 @@ output.
 
 ---
 
-## Waiting on the owner (does not block phase 6)
+## Waiting on the owner
 
 Details in `docs/DECISIONS.md`, entry 2026-10-03.
 
@@ -216,7 +199,7 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
   §5A rows; checklist in §19.12.
 - [ ] **Smooth, memory- and hardware-efficient (owner, 2026-10-03).** Spec
   §20 budgets, measured by `make bench` from phase 6.
-- [ ] **Smoothness on VirtualBox.** Partly handled (console shadow buffer,
+- [x] **Smoothness on VirtualBox.** Handled as far as the kernel can (console shadow buffer,
   plain-store framebuffer copies, spin-idle). Fundamentally limited by the
   Hyper-V backend; `run-lumen.cmd` (QEMU+KVM) is the smooth path. Revisit
   once the compositor has its own thread (phase 6).
@@ -239,7 +222,7 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
   real terminal, is phase 13).
 - [ ] `make` on the Windows-mounted tree occasionally warns "Clock skew
   detected" (drvfs timestamps). Harmless.
-- [ ] Remove the phase-2/3 diagnostics (`idle`, `timermode`, `gui`, `irqs`
+- [ ] Remove the phase-2/3 diagnostics (`timermode`, `gui`, `irqs`
   shell commands) once no longer needed, or fold them into a proper
   `Gauge`/`test` surface. (`gui_diag_line` and its timer hook were removed
   on 2026-10-03.)

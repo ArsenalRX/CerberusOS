@@ -17,6 +17,38 @@ completed spec phase.
 
 ## Unreleased
 
+## 0.6.0 — 2026-10-03
+
+Spec phase 6, threads and scheduling, is complete.
+
+### Security
+- Every kernel stack now has a guard page below it, including the stacks
+  used for fatal errors. A runaway thread is reported as "kernel stack
+  overflow" with its name instead of overwriting other memory.
+
+### Performance
+- The desktop stays responsive while long commands run: the compositor has
+  its own high-priority thread and is woken the moment a key or mouse
+  movement arrives.
+- An idle desktop now uses almost no CPU (0% of timer ticks busy in a
+  3-second sample); before, it spun a full core.
+
+### Added
+- Threads and processes, a four-level preemptive scheduler, sleeping and
+  wait queues, and locks: spinlock, mutex, semaphore, condition variable,
+  reader-writer lock.
+- Shell commands `ps` (thread list) and `bench` (micro-benchmarks);
+  `make bench`; `docs/BENCH.md` with the first recorded numbers.
+- `test sched` self-test.
+
+### Changed
+- The kernel shell and the desktop run as threads. `idle hlt|spin` now sets
+  what the idle thread does.
+
+### Fixed
+- The automated tests no longer fail on a busy host, and UEFI boots work in
+  the test tool.
+
 ## 0.5.1 — 2026-10-03
 
 ### Fixed

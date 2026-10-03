@@ -1,0 +1,7 @@
+# Driven by `make bench`: runs the kernel's micro-benchmarks once.
+lumen kernel shell
+!send bench
+!wait 12
+bench: context_switch=
+bench: kmalloc_kfree_pair=
+bench: done

@@ -22,8 +22,10 @@
 #include <lib/panic.h>
 #include <lib/string.h>
 #include <lib/version.h>
+#include <drivers/ps2.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <sched/sched.h>
 
 extern "C" const u8 _binary_font_8x16_start[];
 extern "C" const u8 _binary_font_16x32_start[];
@@ -555,10 +557,12 @@ void paint_window_content(Window& w) {
     int idx = window_index(&w);
     Rect cr = content_rect(w);
     if (w.kind == Kind::Terminal) {
+        // Clear the flag before painting: output that arrives from another
+        // thread while this paint runs sets it again and is drawn next frame.
+        g.term_dirty = false;
         Rect d = g.term.paint(view, g.focus == idx, w.needs_paint);
         if (!d.empty()) damage(d.translated(cr.x, cr.y));
         w.needs_paint = false;
-        g.term_dirty = false;
         return;
     }
     if (!w.needs_paint) return;
@@ -1169,6 +1173,33 @@ void gui_pump() {
         if (w.needs_paint || (w.kind == Kind::Terminal && g.term_dirty)) paint_window_content(w);
     }
     if (g.damage_all || g.damage_count) flush_frame();
+}
+
+namespace {
+
+WaitQueue g_compositor_wake;
+
+// PS/2 interrupt context: new key or mouse data is waiting.
+void input_arrived() { g_compositor_wake.wake_one(); }
+
+// The compositor's own thread. It sleeps until input arrives or the next
+// timer tick, whichever is first, so an idle desktop costs one cheap pass
+// per tick and input is handled as soon as its interrupt returns.
+void compositor_main(void*) {
+    for (;;) {
+        gui_pump();
+        g_compositor_wake.wait_ticks(1);
+    }
+}
+
+} // namespace
+
+bool gui_start_compositor() {
+    Result<Thread*> t = kthread_create(compositor_main, nullptr, "compositor", prio::INTERACTIVE);
+    if (!t.ok()) return false;
+    thread_detach(t.value());
+    ps2_set_input_hook(input_arrived);
+    return true;
 }
 
 GuiStats gui_stats() {

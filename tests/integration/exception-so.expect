@@ -1,13 +1,15 @@
-# Phase 4: a kernel stack overflow runs into the guard page and is reported
-# cleanly (double fault on its own stack, with the guard page named).
+# Phase 6: a thread that overflows its kernel stack runs into the guard page
+# and is reported cleanly (double fault on its own stack, with the thread and
+# the guard page named).
 lumen kernel shell
 !send test exceptions so
 !wait 2
 test exceptions: triggering so
-recursing without end on a 16 KiB stack
+starting a thread that recurses without end
 *** EXCEPTION 8: #DF Double Fault ***
+thread: runaway
 double fault; last page-fault address
-stack overflow:
+kernel stack overflow:
 is in the guard page below the stack at
 RIP=
 recurse_forever

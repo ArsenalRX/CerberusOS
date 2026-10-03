@@ -1,11 +1,12 @@
-// Fan-out to the serial driver and the active screen console. Lock-free at
-// this stage; a lock arrives with the scheduler in phase 6.
+// Fan-out to the serial driver and the active screen console. Output is
+// made atomic per kprintf call by kprintf itself; input is polled.
 #include <arch/x86_64/cpu.h>
 #include <drivers/fbconsole.h>
 #include <drivers/ps2kbd.h>
 #include <drivers/serial.h>
 #include <gui/desktop.h>
 #include <lib/console.h>
+#include <sched/sched.h>
 
 void console_putc(char c) {
     serial_putc(c);
@@ -24,26 +25,16 @@ void console_puts(const char* s) {
 int console_getc() {
     int c = serial_getc();
     if (c >= 0) return c;
-    if (gui_active()) {
-        gui_pump();
-        return gui_terminal_getc();
-    }
+    if (gui_active()) return gui_terminal_getc();
     return ps2kbd_getc();
 }
 
-void console_idle(bool spin) {
-    if (gui_active()) {
-        // While the desktop is up we poll rather than halt: some hypervisor
-        // backends (VirtualBox on Hyper-V) stop delivering the periodic timer
-        // interrupt to a halted vCPU, which would freeze the compositor and
-        // input. Spinning keeps it responsive. The scheduler (phase 6) gives
-        // the compositor its own thread and restores hlt in the idle thread.
-        gui_pump();
-        cpu_relax();
-        return;
-    }
-    fbconsole_flush();
-    if (spin) cpu_relax();
+void console_idle() {
+    if (!gui_active()) fbconsole_flush();
+    // The serial port is polled, so wake once per timer tick to look at it.
+    // Before the scheduler runs there is nothing to yield to: just wait for
+    // the next interrupt.
+    if (sched_running()) thread_sleep_ticks(1);
     else cpu_halt();
 }
 

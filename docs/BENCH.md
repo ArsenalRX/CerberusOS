@@ -1,0 +1,80 @@
+# Benchmarks
+
+Measured performance over time, against the budgets in docs/SPEC.md §20.1.
+
+**What this file is for.** A regression is only visible against recorded
+numbers. This is the record.
+
+**When to update it.** At the end of every phase (from phase 6), and whenever
+a change touches a path that has a budget.
+
+**How to update it.** Run `make bench` on an otherwise idle host (twice; take
+the second run) and append a dated block: version, commit, where it ran, one
+row per metric with the budget next to it. Never edit an old block. If a
+number is worse than the previous block by more than 10%, or over budget,
+say why in the block and, if it is being accepted, add a docs/DECISIONS.md
+entry.
+
+**Why the environment matters.** These are virtual machines on a desktop
+that is doing other things. Nested virtualisation (QEMU/KVM inside WSL2
+inside Hyper-V) makes anything that traps to the hypervisor — clock reads,
+page-table changes, port I/O — far slower than on real hardware, and other
+load on the host shows up as outliers. Compare like with like: same
+environment, same build type.
+
+---
+
+## 0.6.0 — 2026-10-03 (phase 6: threads and scheduling)
+
+Commit: the `v0.6.0` tag. Debug build (red zones, poisoning, UBSAN subset).
+The host was also running VirtualBox during these runs.
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs (1 active), 512 MiB — `make bench`
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch (two threads yielding) | 13 ns | 2,000 ns | within |
+| Wake-up latency, interactive thread, average | 6 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 13 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 85 ns | 100 ns | within (13–19 ns with `DEBUG=0`, measured for 0.5.0) |
+| Minor page fault (first touch of an anonymous page) | 4,107 ns | 2,000 ns | **over** |
+| Idle desktop CPU use (3 s sample) | 0 % of ticks | under 1 % | within |
+| Last composite (partial frame; not the 10-window budget case) | 147 µs | 8,000 µs | not comparable yet |
+
+Notes:
+- **Minor page fault is over budget.** The path is: fault, VMA lookup,
+  frame allocation, zeroing 4 KiB, page-table walk with up to three table
+  allocations, return. Not yet profiled; the debug build's checks and the
+  bitmap allocator's scan are the first suspects. To be examined with the
+  sampling profiler SPEC §20.9 calls for; no code was changed for it.
+- One earlier run of `test sched` saw a single wake-up sample above 1 ms out
+  of 200 (average still single-digit microseconds). The test checks the
+  average and reports the worst.
+- The context-switch figure divides elapsed time by switches that actually
+  happened, with no address-space change. It is plausible for a switch that
+  saves six registers on a 5 GHz core, but it has not been cross-checked
+  against a cycle counter.
+
+### VirtualBox 7.2.6 (Hyper-V backend), VM "Lumen", 4 CPUs, 2 GiB — `bench` typed in the shell
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 13 ns | 2,000 ns | within |
+| Wake-up latency, average | 28 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 810 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 99 ns | 100 ns | within, barely |
+| Minor page fault | 19,315 ns | 2,000 ns | **over** (the budgets are defined for QEMU/KVM) |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+
+Note: on VirtualBox `test sched` printed a context-switch time of 2 ns for a
+shorter run, which is not believable; the guest's reference clock (HPET
+there) appears to lag while the guest is busy. Treat sub-millisecond timings
+from VirtualBox as rough.
+
+### Not measured yet
+
+Cold boot to desktop, input-to-pixels latency, a 10-window composite, null
+system call, application start, page-cache read rate and TCP throughput have
+budgets but no benchmark, because the features they measure do not exist or
+the benchmark has not been written. First-frame time at boot varies between
+21 and 39 ms from run to run and is not used as a benchmark.

@@ -10,11 +10,11 @@ void console_putc(char c);
 void console_write(const char* s, usize n);
 void console_puts(const char* s);
 
-// Next input byte from any source, or -1. Pumps the desktop when it is active.
+// Next input byte from any source, or -1. Never blocks.
 int console_getc();
-// Called by the shell when there is nothing to do: presents pending desktop
-// frames or flushes the text console, then halts until the next interrupt.
-void console_idle(bool spin);
+// Called by the shell when there is no input: flushes the text console and
+// sleeps until the next timer tick (thread context once the scheduler runs).
+void console_idle();
 
 // Switches the screen back to the text console for panic and exception
 // dumps; a no-op when the desktop is not running.

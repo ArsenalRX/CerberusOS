@@ -1,0 +1,27 @@
+# Phase 6: threads, preemption, synchronisation, the 10-second
+# producer/consumer run, latency, separate address spaces; then the thread
+# list. The desktop must keep presenting frames while this runs.
+sched: started
+lumen kernel shell
+!send test sched
+!wait 18
+worker 1: count
+worker 5: count
+preemption: 5 busy threads interleaved
+sleep: asked for 100 ms
+mutex: 4 threads made 200000 increments, none lost
+semaphore and reader-writer lock: correct
+producer/consumer: 10 s
+sums match, no deadlock
+address spaces: two processes switched 4000 times, each always read its own value
+wake-up latency: average
+desktop: the compositor presented
+cleanup:
+test sched: PASS
+!send ps
+!wait 1
+idle
+reaper
+shell
+compositor
+context switches

@@ -140,3 +140,8 @@ void gdt_init_bsp() {
 }
 
 void tss_set_kernel_stack(usize cpu, vaddr_t stack_top) { g_tables[cpu].tss.rsp[0] = stack_top; }
+
+void tss_set_ist(usize cpu, u8 slot, vaddr_t stack_top) {
+    ASSERT_ALWAYS(cpu < BootInfo::MAX_CPUS && slot >= 1 && slot <= ist::COUNT);
+    g_tables[cpu].tss.ist[slot - 1] = stack_top;
+}

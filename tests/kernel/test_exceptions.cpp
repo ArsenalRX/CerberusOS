@@ -8,6 +8,7 @@
 #include <lib/string.h>
 #include <mm/kheap.h>
 #include <mm/vmm.h>
+#include <sched/sched.h>
 
 namespace {
 
@@ -61,20 +62,18 @@ __attribute__((noinline)) u64 recurse_forever(u64 depth) {
 }
 #pragma GCC diagnostic pop
 
+void runaway_thread(void*) { recurse_forever(0); }
+
+// A thread that recurses without end must run into the guard page below its
+// stack and be reported, not silently overwrite whatever lies below.
 __attribute__((noinline)) void fault_stack_overflow() {
-    Result<vaddr_t> stack = vmm_alloc_kernel_stack(16 * KIB);
-    if (!stack.ok()) {
-        kprintf("  could not allocate a test stack: %s\n", error_name(stack.error()));
+    kprintf("  starting a thread that recurses without end\n");
+    Result<Thread*> t = kthread_create(runaway_thread, nullptr, "runaway");
+    if (!t.ok()) {
+        kprintf("  could not create the thread: %s\n", error_name(t.error()));
         return;
     }
-    kprintf("  recursing without end on a 16 KiB stack below %p\n", (void*)stack.value());
-    // Switch to the guarded stack and never come back: the recursion runs
-    // into the guard page, which must be reported instead of silently
-    // overwriting whatever lies below.
-    asm volatile("mov %0, %%rsp\n"
-                 "xor %%edi, %%edi\n"
-                 "call *%1\n"
-                 "ud2\n" ::"r"(stack.value()), "r"((void*)recurse_forever) : "memory");
+    thread_join(t.value());
 }
 
 #ifdef LUMEN_DEBUG

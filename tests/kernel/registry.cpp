@@ -9,6 +9,7 @@ int ktest_idle(int argc, char** argv);
 int ktest_pmm(int argc, char** argv);
 int ktest_vmm(int argc, char** argv);
 int ktest_heap(int argc, char** argv);
+int ktest_sched(int argc, char** argv);
 
 namespace {
 const KernelTest TESTS[] = {
@@ -16,6 +17,7 @@ const KernelTest TESTS[] = {
     {"pmm", "physical frame allocator: random alloc/free, exhaustion", ktest_pmm, false},
     {"vmm", "virtual memory: mapping, W^X, demand paging, copy-on-write, guard pages", ktest_vmm, false},
     {"heap", "kernel heap: 100,000 random alloc/free pairs, red zones, realloc, leaks", ktest_heap, false},
+    {"sched", "sched [seconds]: threads, preemption, locks, producer/consumer, latency", ktest_sched, false},
     {"timer", "APIC timer advances at 100 Hz", ktest_timer, false},
     {"idle", "timer ticks keep arriving while the CPU is halted", ktest_idle, false},
     {"exceptions", "exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df>: trigger a fatal error (halts)", ktest_exceptions,

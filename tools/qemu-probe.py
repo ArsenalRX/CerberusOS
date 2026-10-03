@@ -16,7 +16,7 @@ Usage: qemu-probe.py <iso> [--uefi OVMF_CODE.fd] [--wait SECONDS] [--smp N]
                 Directives execute after the initial --wait, in file order.
 Exit status: 0 if RIP is in the kernel's higher half and all expectations hold.
 """
-import argparse, json, os, re, socket, subprocess, sys, tempfile, time
+import argparse, json, os, re, socket, subprocess, sys, tempfile, threading, time
 
 KERNEL_BASE = 0xFFFFFFFF80000000
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -133,9 +133,66 @@ def main():
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={a.uefi}"]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
-    time.sleep(a.wait)
+
+    # Drain the serial pipe continuously. Left unread it fills up (firmware
+    # output alone can do it), QEMU stops accepting serial bytes, and the
+    # guest then blocks in its serial driver.
+    captured = bytearray()
+    def drain():
+        while True:
+            chunk = proc.stdout.read1(65536)
+            if not chunk:
+                return
+            captured.extend(chunk)
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+
+    def seen(texts):
+        """True once every string in texts has appeared, in order, in the serial output."""
+        clean = ANSI.sub("", captured.decode(errors="replace"))
+        pos = 0
+        for t in texts:
+            idx = clean.find(t, pos)
+            if idx < 0:
+                return False
+            pos = idx + len(t)
+        return True
+
+    def expects_before(index):
+        """The expect lines that precede step `index`, back to the start."""
+        return [arg for kind, arg in steps[:index] if kind == "expect"]
+
+    def expects_until_next_directive(index):
+        """Every expect line up to the next directive after step `index`."""
+        out = expects_before(index + 1)
+        for kind, arg in steps[index + 1:]:
+            if kind != "expect":
+                break
+            out.append(arg)
+        return out
+
+    def wait_until(texts, limit):
+        deadline = time.time() + limit
+        while time.time() < deadline and proc.poll() is None:
+            if seen(texts):
+                return True
+            time.sleep(0.1)
+        return seen(texts)
+
+    # Wait for the guest to get as far as the test expects before the first
+    # action, rather than for a fixed time: boot speed depends on host load,
+    # and input typed too early lands in the bootloader's menu.
+    first_action = next((i for i, (kind, _) in enumerate(steps) if kind != "expect"), None)
+    boot_limit = max(90.0, a.wait * 10)
+    if first_action is not None and expects_before(first_action):
+        wait_until(expects_before(first_action), boot_limit)
+        time.sleep(0.5)
+    elif first_action is None and steps:
+        wait_until([arg for _, arg in steps], boot_limit)   # output-only test: wait for all of it
+    else:
+        time.sleep(a.wait)
     q = Qmp(sock)
-    for kind, arg in steps:
+    for index, (kind, arg) in enumerate(steps):
         if kind == "send":
             proc.stdin.write((arg + "\n").encode()); proc.stdin.flush()
             time.sleep(0.3)
@@ -156,8 +213,12 @@ def main():
             q.cmd("screendump", filename=os.path.abspath(arg), format="png")
             time.sleep(0.3)
         elif kind == "wait":
+            # The stated time is how long the step normally takes; on a busy
+            # host allow up to four times that for the expected output.
             time.sleep(arg)
+            wait_until(expects_until_next_directive(index), arg * 3)
 
+    time.sleep(0.2)
     regs = q.hmp("info registers")
     extra = [(h, q.hmp(h)) for h in a.hmp]
     if a.screenshot:
@@ -165,9 +226,11 @@ def main():
         time.sleep(0.5)
     q.cmd("quit")
     try:
-        out = proc.communicate(timeout=5)[0].decode(errors="replace")
+        proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill(); out = proc.communicate()[0].decode(errors="replace")
+        proc.kill(); proc.wait()
+    reader.join(timeout=5)
+    out = captured.decode(errors="replace")
 
     # OVMF probes TPM/flash addresses that -d guest_errors reports; drop that noise.
     out = "\n".join(l for l in out.splitlines() if not l.startswith("Invalid "))

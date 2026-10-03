@@ -616,3 +616,73 @@ removed and a hand-made one had been created as 32-bit "Other", which hides
 Settings that matter: OS type Other (64-bit), BIOS firmware, I/O APIC and
 HPET on, PS/2 keyboard and mouse, VMSVGA with 64 MB, COM1 to
 `logs/vbox-serial.log`. `make vbox` creates the same VM if it is missing.
+
+## 2026-10-03 — Phase 6: scheduler design
+
+- **Four levels, one FIFO queue each, one 10 ms tick per slice.** A thread
+  that uses its whole slice drops one level; a thread that blocks returns to
+  its base level; every second all threads return to base so nothing
+  starves. A thread made ready above the running one's level preempts at
+  once, including from an interrupt handler (the switch happens on the way
+  out of the interrupt, after the handler has acknowledged it).
+- **The boot stack is abandoned.** `sched_start` creates the idle, reaper
+  and first threads on guarded stacks and switches away from the
+  bootloader's stack for good; the exception (IST) stacks are moved onto
+  guarded stacks as soon as the heap exists. From then on every stack in
+  use has a guard page (SPEC §5A phase 6).
+- **Each thread carries the address space it runs in**, and the switch
+  reloads CR3 only when the incoming thread's differs. Simple and correct
+  for kernel threads that temporarily enter a user address space (the VMM
+  test does); it gives up the "lazy" optimisation of letting kernel threads
+  borrow whatever space is loaded. Revisit with PCID in phase 8.
+- **Exited threads are freed by whoever joins them, or by a reaper thread
+  if detached**, because a thread cannot free the stack it is standing on.
+- **Synchronisation primitives use "interrupts off" as their internal
+  lock.** Exact on one CPU; phase 8 puts a spinlock inside each.
+- **`kprintf` is atomic per call** (interrupts off for the duration), so
+  output from different threads cannot interleave within a line.
+- **The compositor is an INTERACTIVE thread** that sleeps on a wait queue,
+  woken by PS/2 input and by the next tick. The shell is a NORMAL thread
+  that polls the serial port once per tick. The idle thread halts.
+
+Deviations from SPEC phase 6, for the owner to see:
+- `Process` has pid, name, address space, thread list, parent, exit status
+  and credentials, but **no file-descriptor table or working directory
+  yet**; those types do not exist until the VFS (phase 9).
+- **Frame pacing follows the 10 ms tick**, not a dedicated 60 Hz timer
+  (SPEC §9): with nothing happening the compositor wakes 100 times a second
+  and presents at most every 16.7 ms, so continuous animation lands on
+  20 ms boundaries (50 frames per second) unless input wakes it sooner. A
+  one-shot high-resolution timer would fix this; it belongs with tickless
+  idle in phase 8.
+- Sleep resolution is one tick: `thread_sleep_ms` never returns early and
+  may be up to 10 ms late.
+
+Measured (docs/BENCH.md, 2026-10-03): context switch 13 ns, wake-up latency
+6 µs average, idle desktop 0% busy. **Minor page fault is 4.1 µs against a
+2 µs budget**; recorded as over budget, not yet investigated.
+
+Rejected: a single run queue with priorities as weights (more arithmetic for
+no benefit at this scale); a tickless design now (needs per-CPU one-shot
+timer management that phase 8 has to redo anyway); switching stacks inside
+the timer handler itself (the switch at interrupt exit keeps every handler
+ordinary code).
+
+## 2026-10-03 — The test probe waits for output instead of for a fixed time
+
+`tools/qemu-probe.py` used to sleep a fixed number of seconds before typing
+and read the serial pipe only at the end. Two failures followed from that on
+2026-10-03: with the host busy the guest had not booted when the probe typed
+(the keys landed in the bootloader's menu), and under UEFI the unread pipe
+filled with firmware output until QEMU stopped accepting serial bytes and the
+guest blocked in `serial_putc` (the "`--uefi` hangs" bug).
+
+Now a thread drains the pipe continuously; before the first action the probe
+waits until the expect lines that precede it have appeared (up to 90 s);
+after each `!wait` it allows up to three times longer if the expected output
+has not arrived; an expect file with no actions waits for all of its lines.
+A healthy run is as fast as before; a slow host no longer fails tests.
+
+This also explains the one unexplained `test idle` failure recorded for
+0.5.1: the host was running VirtualBox at the time and the guest's timer
+measurement was disturbed. It has not recurred.

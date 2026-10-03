@@ -17,6 +17,11 @@ constexpr u8 PS2_STATUS_FROM_AUX = 1 << 5;
 // Reads every pending byte and dispatches it. Safe from interrupt context.
 void ps2_drain();
 
+// Called (from interrupt context) after input bytes were decoded, so whoever
+// consumes key and mouse events can be woken instead of polling. One hook;
+// nullptr removes it.
+void ps2_set_input_hook(void (*hook)());
+
 // Decoders implemented by the two drivers.
 void ps2kbd_handle_byte(u8 b);
 void ps2mouse_handle_byte(u8 b);

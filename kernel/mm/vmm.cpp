@@ -791,7 +791,8 @@ bool vmm_fault_note(vaddr_t addr) {
         const Vma* v = as->find_vma(addr);
         if (!v || v->kind != VmaKind::Guard) continue;
         const Vma* stack = v->next;
-        kprintf("stack overflow: %#lx is in the guard page below the stack at %#lx-%#lx\n", (unsigned long)addr,
+        kprintf("%sstack overflow: %#lx is in the guard page below the stack at %#lx-%#lx\n", as->is_kernel() ? "kernel " : "",
+                (unsigned long)addr,
                 (unsigned long)(stack ? stack->start : v->end), (unsigned long)(stack ? stack->end : v->end));
         return true;
     }

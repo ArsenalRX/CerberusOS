@@ -121,7 +121,7 @@ QEMU_DISPLAY ?= -display gtk,zoom-to-fit=on
 # ---------------------------------------------------------------------------
 # Top-level targets
 # ---------------------------------------------------------------------------
-.PHONY: all kernel iso run run-headless run-uefi debug gdb test clean check-tools vbox vbox-log dist help
+.PHONY: all kernel iso run run-headless run-uefi debug gdb test bench clean check-tools vbox vbox-log dist help
 
 all: check-tools kernel
 
@@ -165,11 +165,19 @@ test: $(ISO)
 	done; \
 	exit $$fail
 
+# Micro-benchmarks for the budgets in docs/SPEC.md §20.1: boots headless, runs
+# the kernel's `bench` command and prints one line per metric. Record the
+# numbers in docs/BENCH.md at the end of each phase.
+bench: $(ISO)
+	@$(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 6 --expect $(ROOT)/tests/bench/bench.expect > $(BUILD)/bench.log 2>&1; rc=$$?; \
+	 grep -a '^bench: ' $(BUILD)/bench.log | grep -v 'bench: done'; \
+	 [ $$rc -eq 0 ] || echo "bench: FAILED (see build/bench.log)"; exit $$rc
+
 clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test clean vbox vbox-log dist check-tools"
+	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test bench clean vbox vbox-log dist check-tools"
 
 # ---------------------------------------------------------------------------
 # Kernel build rules

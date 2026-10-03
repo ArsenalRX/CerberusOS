@@ -41,3 +41,7 @@ void gdt_init_bsp();
 
 // Changes the ring-0 stack for a CPU (the scheduler does this per thread).
 void tss_set_kernel_stack(usize cpu, vaddr_t stack_top);
+// Replaces one IST stack (slot is 1-based, as in namespace ist). Used once
+// the VMM can supply stacks with guard pages; the static ones only cover the
+// first moments of boot.
+void tss_set_ist(usize cpu, u8 slot, vaddr_t stack_top);

@@ -1,4 +1,5 @@
 // printf-style formatting without a heap, floating point, or locale.
+#include <arch/x86_64/cpu.h>
 #include <lib/console.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -210,7 +211,15 @@ void buf_sink(char c, void* ctx) {
 }
 } // namespace
 
-int kvprintf(const char* fmt, va_list ap) { return kvformat(console_sink, nullptr, fmt, ap); }
+// One call is one uninterrupted piece of output: with interrupts off no other
+// thread can run in the middle of it, so lines from different threads never
+// interleave character by character. (Phase 8 adds a lock for other CPUs.)
+int kvprintf(const char* fmt, va_list ap) {
+    u64 irq = interrupts_save();
+    int n = kvformat(console_sink, nullptr, fmt, ap);
+    interrupts_restore(irq);
+    return n;
+}
 
 int kprintf(const char* fmt, ...) {
     va_list ap;
