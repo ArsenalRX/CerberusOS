@@ -7,6 +7,7 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <mm/early_map.h>
+#include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <mm/probe.h>
 #include <mm/vmm.h>
@@ -49,6 +50,7 @@ int ktest_vmm(int, char**) {
     AddressSpace& k = vmm_kernel();
     PmmStats pm0 = pmm_stats();
     VmmStats vs0 = vmm_stats();
+    KheapStats hs0 = kheap_stats();
     u8 byte = 0;
 
     Result<AddressSpace*> made = AddressSpace::create();
@@ -217,10 +219,12 @@ int ktest_vmm(int, char**) {
     as->destroy();
     PmmStats pm1 = pmm_stats();
     VmmStats vs1 = vmm_stats();
-    u64 kept = (vs1.table_frames - vs0.table_frames) + (vs1.pool_frames - vs0.pool_frames);
+    KheapStats hs1 = kheap_stats();
+    u64 kept = (vs1.table_frames - vs0.table_frames) + (hs1.slab_pages - hs0.slab_pages);
     KTEST_CHECK(vs1.anon_frames == vs0.anon_frames);
+    KTEST_CHECK(hs1.live_objects == hs0.live_objects);      // every VMA and address space was freed
     KTEST_CHECK(pm1.used_frames - pm0.used_frames == kept);
-    kprintf("  teardown: all user frames freed; %lu frame(s) kept as kernel page tables and pools\n",
+    kprintf("  teardown: all user frames freed; %lu frame(s) kept as kernel page tables and heap slabs\n",
             (unsigned long)kept);
     return 0;
 }

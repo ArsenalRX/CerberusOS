@@ -22,7 +22,7 @@
 #include <lib/panic.h>
 #include <lib/string.h>
 #include <lib/version.h>
-#include <mm/early_map.h>
+#include <mm/kheap.h>
 #include <mm/pmm.h>
 
 extern "C" const u8 _binary_font_8x16_start[];
@@ -89,12 +89,8 @@ struct Window {
     Rect restore{0, 0, 0, 0};
     bool maximised = false, minimised = false;
     u32* pixels = nullptr;
-    paddr_t phys = 0;
-    usize frames = 0;
     Surface content;            // full screen-sized buffer; view via content_view()
     u32* shadow = nullptr;
-    paddr_t shadow_phys = 0;
-    usize shadow_frames = 0;
     int shadow_w = 0, shadow_h = 0;
     bool needs_paint = true;
     int min_w = 240, min_h = 140;
@@ -189,16 +185,12 @@ u32 g_cursor_px[CURSOR_W * CURSOR_H];
 Surface g_cursor;
 
 // ------------------------------------------------------------ allocation --
-u32* alloc_pixels(usize count, paddr_t* phys, usize* frames) {
-    *frames = align_up(count * 4, PAGE_SIZE) / PAGE_SIZE;
-    *phys = pmm_alloc(*frames);
-    if (*phys == PMM_NO_MEMORY) return nullptr;
-    return (u32*)hhdm_virt(*phys);
-}
+// Pixel buffers come from the kernel heap. Buffers this size take its large
+// path, which prefers contiguous frames in the direct map, so they keep the
+// 2 MiB TLB entries they had when they were carved from the frame allocator.
+u32* alloc_pixels(usize count) { return (u32*)kmalloc(count * 4); }
 
-void free_pixels(paddr_t phys, usize frames) {
-    if (phys) pmm_free(phys, frames);
-}
+void free_pixels(u32* pixels) { kfree(pixels); }
 
 // ---------------------------------------------------------------- damage --
 void damage(const Rect& r) {
@@ -319,7 +311,7 @@ int create_window(Kind kind, const char* title, Rect frame) {
     if (idx < 0) return -1;
     Window& w = g.windows[idx];
     w = Window{};
-    w.pixels = alloc_pixels((usize)g.W * g.H, &w.phys, &w.frames);
+    w.pixels = alloc_pixels((usize)g.W * g.H);
     if (!w.pixels) return -1;
     w.content = Surface(w.pixels, g.W, g.H, g.W);
     w.used = true;
@@ -344,8 +336,8 @@ void destroy_window(int idx) {
     if (!w.used) return;
     damage(visual_bounds(w));
     damage(panel_rect());
-    free_pixels(w.phys, w.frames);
-    free_pixels(w.shadow_phys, w.shadow_frames);
+    free_pixels(w.pixels);
+    free_pixels(w.shadow);
     w.used = false;
     for (int i = 0; i < g.order_count; i++) {
         if (g.order[i] == idx) {
@@ -434,11 +426,11 @@ void open_kind(Kind kind) {
 void build_shadow(Window& w) {
     int sw = w.frame.w + 2 * theme::SHADOW_PAD, sh = w.frame.h + 2 * theme::SHADOW_PAD;
     if (w.shadow && (w.shadow_w != sw || w.shadow_h != sh)) {
-        free_pixels(w.shadow_phys, w.shadow_frames);
+        free_pixels(w.shadow);
         w.shadow = nullptr;
     }
     if (!w.shadow) {
-        w.shadow = alloc_pixels((usize)sw * sh, &w.shadow_phys, &w.shadow_frames);
+        w.shadow = alloc_pixels((usize)sw * sh);
         if (!w.shadow) return;
         w.shadow_w = sw;
         w.shadow_h = sh;
@@ -1108,22 +1100,21 @@ bool gui_init() {
         return false;
     }
 
-    paddr_t phys;
-    usize frames;
-    u32* back = alloc_pixels((usize)g.W * g.H, &phys, &frames);
-    u32* wall = alloc_pixels((usize)g.W * g.H, &phys, &frames);
+    u32* back = alloc_pixels((usize)g.W * g.H);
+    u32* wall = alloc_pixels((usize)g.W * g.H);
     usize scratch_px = (usize)(g.W + 2 * theme::SHADOW_PAD) * (g.H + 2 * theme::SHADOW_PAD);
-    u32* scratch = alloc_pixels(scratch_px, &phys, &frames);
-    paddr_t cells_phys = pmm_alloc(2);
-    if (!back || !wall || !scratch || cells_phys == PMM_NO_MEMORY) {
+    u32* scratch = alloc_pixels(scratch_px);
+    constexpr int TERM_COLS = 200, TERM_ROWS = 40;
+    u8* cells = (u8*)kmalloc((usize)TERM_COLS * TERM_ROWS);
+    if (!back || !wall || !scratch || !cells) {
         kprintf("gui: out of memory for screen buffers\n");
         return false;
     }
     g.back = Surface(back, g.W, g.H, g.W);
     g.wall = Surface(wall, g.W, g.H, g.W);
     g.scratch = Surface(scratch, g.W + 2 * theme::SHADOW_PAD, g.H + 2 * theme::SHADOW_PAD, g.W + 2 * theme::SHADOW_PAD);
-    g.term_cells = (u8*)hhdm_virt(cells_phys);
-    g.term.init(g.term_cells, 200, 40, g.font);
+    g.term_cells = cells;
+    g.term.init(g.term_cells, TERM_COLS, TERM_ROWS, g.font);
 
     build_wallpaper();
     build_cursor();

@@ -1,0 +1,8 @@
+# Phase 5 (debug builds): a write to freed memory is detected when the
+# object is next handed out.
+lumen kernel shell
+!send test exceptions waf
+!wait 2
+writing to a 64-byte object after freeing it
+KERNEL PANIC at
+heap: write after free detected in a 64-byte object

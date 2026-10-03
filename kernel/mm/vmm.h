@@ -66,7 +66,6 @@ struct Vma {
 struct VmmStats {
     u64 table_frames;       // page-table pages allocated by the VMM
     u64 anon_frames;        // frames backing anonymous memory
-    u64 pool_frames;        // frames held by the VMA / AddressSpace pools
     u64 demand_faults;      // not-present faults resolved by allocating a page
     u64 cow_faults;         // write faults resolved by copy-on-write
     u64 cow_copies;         // of those, how many had to copy the page

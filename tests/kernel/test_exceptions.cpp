@@ -6,6 +6,7 @@
 #include <kernel/ktest.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
+#include <mm/kheap.h>
 #include <mm/vmm.h>
 
 namespace {
@@ -76,7 +77,9 @@ __attribute__((noinline)) void fault_stack_overflow() {
                  "ud2\n" ::"r"(stack.value()), "r"((void*)recurse_forever) : "memory");
 }
 
+#ifdef LUMEN_DEBUG
 __attribute__((noinline)) int add_ints(int a, int b) { return a + b; }
+#endif
 
 // Signed overflow is undefined behaviour; debug builds must stop on it.
 __attribute__((noinline)) void fault_undefined_behaviour() {
@@ -90,6 +93,41 @@ __attribute__((noinline)) void fault_undefined_behaviour() {
 #endif
 }
 
+// Overwrites the free-list link inside a freed object, as a heap overflow or
+// use-after-free would; the allocator must refuse to follow it.
+__attribute__((noinline)) void fault_heap_free_list() {
+    u8* p = (u8*)kmalloc(64);
+    if (!p) return;
+    kfree(p);
+    kprintf("  overwriting the free-list link of a freed 64-byte object\n");
+    *(volatile u64*)(p - KHEAP_PAYLOAD_OFFSET) = 0x4141414141414141ull;
+    void* again = kmalloc(64);
+    void* next = kmalloc(64);
+    kprintf("unexpectedly allocated %p and %p\n", again, next);
+}
+
+__attribute__((noinline)) void fault_heap_write_after_free() {
+#ifdef LUMEN_DEBUG
+    u8* p = (u8*)kmalloc(64);
+    if (!p) return;
+    kfree(p);
+    kprintf("  writing to a 64-byte object after freeing it\n");
+    ((volatile u8*)p)[10] = 0x41;
+    void* again = kmalloc(64);
+    kprintf("unexpectedly allocated %p\n", again);
+#else
+    kprintf("  write-after-free detection is only built into debug kernels\n");
+#endif
+}
+
+__attribute__((noinline)) void fault_heap_double_free() {
+    void* p = kmalloc(64);
+    if (!p) return;
+    kfree(p);
+    kprintf("  freeing the same 64-byte object twice\n");
+    kfree(p);
+}
+
 __attribute__((noinline)) void trampoline(void (*fn)()) {
     kprintf("  raising...\n");
     fn();
@@ -100,7 +138,7 @@ __attribute__((noinline)) void trampoline(void (*fn)()) {
 
 int ktest_exceptions(int argc, char** argv) {
     if (argc < 2) {
-        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp|so|ub>\n");
+        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df>\n");
         return 1;
     }
     const char* which = argv[1];
@@ -113,6 +151,9 @@ int ktest_exceptions(int argc, char** argv) {
     else if (strcmp(which, "bp") == 0) fn = fault_bp;
     else if (strcmp(which, "so") == 0) fn = fault_stack_overflow;
     else if (strcmp(which, "ub") == 0) fn = fault_undefined_behaviour;
+    else if (strcmp(which, "fl") == 0) fn = fault_heap_free_list;
+    else if (strcmp(which, "waf") == 0) fn = fault_heap_write_after_free;
+    else if (strcmp(which, "df") == 0) fn = fault_heap_double_free;
     if (!fn) {
         kprintf("unknown exception '%s'\n", which);
         return 1;

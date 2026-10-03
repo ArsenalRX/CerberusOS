@@ -17,6 +17,7 @@
 #include <lib/panic.h>
 #include <lib/string.h>
 #include <mm/early_map.h>
+#include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <mm/probe.h>
 #include <mm/vmm.h>
@@ -66,42 +67,6 @@ u32* g_refs = nullptr;          // per-frame count of address spaces mapping an 
 u64 g_ref_frames = 0;
 bool g_need_flush = false;      // a huge leaf was split; the whole TLB must be flushed
 
-// ------------------------------------------------------------------ pools --
-// Fixed-size object pools carved out of whole frames. Frames are kept for
-// reuse rather than returned, so the pool is bounded by its peak use.
-template <typename T> struct Pool {
-    struct Node {
-        Node* next;
-    };
-    Node* free_list = nullptr;
-
-    T* take() {
-        if (!free_list) {
-            paddr_t p = pmm_alloc(1);
-            if (p == PMM_NO_MEMORY) return nullptr;
-            g_stats.pool_frames++;
-            u8* base = (u8*)hhdm_virt(p);
-            usize size = align_up(max(sizeof(T), sizeof(Node)), 8);
-            for (usize off = 0; off + size <= PAGE_SIZE; off += size) {
-                Node* n = (Node*)(base + off);
-                n->next = free_list;
-                free_list = n;
-            }
-        }
-        Node* n = free_list;
-        free_list = n->next;
-        memset(n, 0, sizeof(T));
-        return (T*)n;
-    }
-    void give(T* t) {
-        Node* n = (Node*)t;
-        n->next = free_list;
-        free_list = n;
-    }
-};
-
-Pool<Vma> g_vma_pool;
-Pool<AddressSpace> g_space_pool;
 
 // ------------------------------------------------------- table primitives --
 inline u64 level_size(int level) { return 1ull << (12 + 9 * (level - 1)); }
@@ -338,10 +303,10 @@ void harden_table(u64* table, int level, vaddr_t base, usize first, HardenCounts
 
 Result<AddressSpace*> AddressSpace::create() {
     u64 irq = interrupts_save();
-    AddressSpace* as = g_space_pool.take();
+    AddressSpace* as = (AddressSpace*)kzalloc(sizeof(AddressSpace));
     paddr_t root = as ? alloc_table() : PMM_NO_MEMORY;
     if (root == PMM_NO_MEMORY) {
-        if (as) g_space_pool.give(as);
+        if (as) kfree(as);
         interrupts_restore(irq);
         return Error::NoMemory;
     }
@@ -365,10 +330,10 @@ void AddressSpace::destroy() {
     free_table(root_);
     for (Vma* v = vmas_; v;) {
         Vma* next = v->next;
-        g_vma_pool.give(v);
+        kfree(v);
         v = next;
     }
-    g_space_pool.give(this);
+    kfree(this);
     interrupts_restore(irq);
 }
 
@@ -488,7 +453,7 @@ bool AddressSpace::range_free(vaddr_t start, vaddr_t end) const {
 }
 
 Result<void> AddressSpace::insert_vma(vaddr_t start, vaddr_t end, u32 prot, VmaKind kind, paddr_t phys) {
-    Vma* n = g_vma_pool.take();
+    Vma* n = (Vma*)kzalloc(sizeof(Vma));
     if (!n) return Error::NoMemory;
     n->start = start;
     n->end = end;
@@ -507,7 +472,7 @@ Result<void> AddressSpace::insert_vma(vaddr_t start, vaddr_t end, u32 prot, VmaK
 Result<void> AddressSpace::split_vma_at(vaddr_t addr) {
     Vma* v = find_vma_mut(addr);
     if (!v || v->start == addr) return {};
-    Vma* n = g_vma_pool.take();
+    Vma* n = (Vma*)kzalloc(sizeof(Vma));
     if (!n) return Error::NoMemory;
     *n = *v;
     n->start = addr;
@@ -544,7 +509,7 @@ void AddressSpace::release_range(vaddr_t start, vaddr_t end) {
         Vma* v = *link;
         if (v->start >= start && v->end <= end) {
             *link = v->next;
-            g_vma_pool.give(v);
+            kfree(v);
         } else {
             link = &v->next;
         }

@@ -23,6 +23,7 @@
 #include <lib/shell.h>
 #include <lib/symbols.h>
 #include <lib/version.h>
+#include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 
@@ -96,6 +97,7 @@ extern "C" [[noreturn]] void kernel_main() {
     interrupts_init();
     kprintf("idt: 256 gates loaded, IST for #DF/#NMI/#MC\n");
     vmm_init();
+    kheap_init();
 
     pic_init();
     kprintf("pic: remapped to 0x20-0x2f and masked\n");

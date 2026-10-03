@@ -6,6 +6,7 @@
 #include <drivers/lapic.h>
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
+#include <mm/kheap.h>
 #include <kernel/ktest.h>
 #include <lib/console.h>
 #include <lib/kprintf.h>
@@ -29,6 +30,7 @@ int cmd_idle(int argc, char** argv);
 int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
 int cmd_irqs(int argc, char** argv);
+int cmd_heapstat(int, char**);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -43,6 +45,7 @@ const ShellCommandEntry COMMANDS[] = {
     {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
     {"idle", "idle hlt|spin: how the shell waits for input (diagnostic)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
+    {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
     {"gui", "compositor statistics", cmd_gui},
     {"irqs", "interrupt counts per vector", cmd_irqs},
     {"panic", "trigger a kernel panic", cmd_panic},
@@ -55,6 +58,11 @@ int cmd_irqs(int, char**) {
         u64 n = interrupt_count((u8)v);
         if (n) kprintf("  vector %3u (%#04x): %lu\n", v, v, (unsigned long)n);
     }
+    return 0;
+}
+
+int cmd_heapstat(int, char**) {
+    kheap_report();
     return 0;
 }
 

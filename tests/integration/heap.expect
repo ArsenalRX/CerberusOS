@@ -1,0 +1,24 @@
+# Phase 5: the kernel heap passes its self-test twice (nothing leaks between
+# runs) and heapstat reports its state.
+kheap: slab classes 16-2048 bytes
+lumen kernel shell
+!send test heap
+!wait 8
+red zones:
+krealloc: grows in place within a size class
+kfree_sensitive: the old contents are gone
+large allocation: 3 MiB taken as whole pages and returned
+100000 random allocate/free pairs
+every buffer intact
+per kmalloc(64)+kfree pair
+leaks: 0
+test heap: PASS
+!send test heap
+!wait 8
+leaks: 0
+0 slab page(s) kept for reuse
+test heap: PASS
+!send heapstat
+!wait 1
+kernel heap:
+live allocation(s)

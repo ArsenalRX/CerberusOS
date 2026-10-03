@@ -1,0 +1,7 @@
+# Phase 5: freeing the same object twice is refused.
+lumen kernel shell
+!send test exceptions df
+!wait 2
+freeing the same 64-byte object twice
+KERNEL PANIC at
+kfree: double free
