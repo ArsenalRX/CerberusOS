@@ -66,14 +66,17 @@ performance are requirements. See docs/DECISIONS.md.
   inside WSL2, window on the desktop via WSLg, serial log in
   `logs/qemu-serial.log`. `run-lumen.cmd uefi` boots through OVMF;
   `run-lumen.cmd build` rebuilds first. This is the fast, accurate path.
-- VirtualBox: start the VM **"Lumen"** from the VirtualBox window (created
-  2026-10-03: Other 64-bit, BIOS, 4 CPUs, 2 GiB, HPET and I/O APIC on, PS/2
-  keyboard and mouse, COM1 → `logs/vbox-serial.log`). Each release points
-  it at the new ISO. A VM made by hand must use OS type "Other/Unknown
-  (64-bit)": the 32-bit "Other" type hides 64-bit mode and the bootloader
-  then refuses to start the kernel. VirtualBox runs on the Hyper-V backend
-  on this host (WSL2 keeps Hyper-V on), so it is slower than
-  `run-lumen.cmd`.
+- VirtualBox: the owner creates VMs in the VirtualBox window; as of
+  2026-10-03 the one in use is **"h"** (BIOS, 2 CPUs, about 3 GiB, DVD drive
+  on `dist/lumen-0.6.0.iso`), verified booting 0.6.0 to the desktop. The
+  wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
+  hides 64-bit mode, and the bootloader then reports that the CPU is not
+  64-bit. `make dist` (via `tools/vbox-attach.sh`) fixes that and re-points
+  the DVD drive for every powered-off VM that boots an ISO from `dist/`.
+  If the boot menu stays on screen, press Enter. VirtualBox runs on the
+  Hyper-V backend on this host (WSL2 keeps Hyper-V on), so it is slower
+  than `run-lumen.cmd`. The VM "Lumen" created earlier that day was
+  unregistered again by the owner; its folder remains.
 - `dist/lumen-<version>.iso`: the release ISO for any VM.
   `make RELEASE=1 dist` writes it, deletes the previous one and re-points
   the VirtualBox VM.
@@ -178,8 +181,8 @@ Known limits:
   directory in `Process`, wait for the VFS (phase 9).
 - One terminal window (one kernel shell). No text selection, scrollback, or
   escape sequences in the terminal.
-- An unregistered "Lumen-dev" folder is left under `VirtualBox VMs` from the
-  VM that was removed; it is not used.
+- Unregistered "Lumen-dev" and "Lumen" folders are left under `VirtualBox VMs` from
+  VMs that were removed; they are not used.
 
 ## Open decisions waiting on the owner
 

@@ -686,3 +686,26 @@ A healthy run is as fast as before; a slow host no longer fails tests.
 This also explains the one unexplained `test idle` failure recorded for
 0.5.1: the host was running VirtualBox at the time and the guest's timer
 measurement was disturbed. It has not recurred.
+
+## 2026-10-03 — `make dist` repairs and re-points any VirtualBox VM that boots Lumen
+
+Supersedes the "the VirtualBox VM is 'Lumen'" part of the entry "dist/ holds
+one ISO" (same date).
+
+The owner creates and deletes VirtualBox VMs through its wizard rather than
+keeping one fixed VM, and twice in one day the new VM could not boot: the
+wizard cannot recognise the Lumen ISO, so it picks OS type "Other/Unknown",
+which is 32-bit and disables long mode; Limine then says the CPU does not
+support 64-bit.
+
+So `make dist` no longer targets a VM by name. `tools/vbox-attach.sh` looks
+at every registered VM, and for each powered-off one whose DVD drive already
+points at an ISO in `dist/` it attaches the new ISO and, if long mode is off,
+switches the VM to "Other (64-bit)" with long mode, PAE, I/O APIC and HPET
+on. Running or saved VMs are left alone and reported. Nothing is created or
+deleted.
+
+Rejected: keeping a VM that the build owns (the owner removed it); printing
+instructions only (the same mistake had already happened twice); shipping a
+32-bit stub that explains the problem on screen (Limine prints its own
+message first, and it is a lot of code for a VM setting).

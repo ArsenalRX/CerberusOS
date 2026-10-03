@@ -296,18 +296,15 @@ vbox-log:
 
 # The ISO to try in a VM (dist/ is not cleaned by `make clean`). dist/ holds
 # exactly one ISO: a new one replaces whatever was there (owner's rule,
-# 2026-10-03). If the VirtualBox VM exists and is powered off, its DVD drive
-# is pointed at the new file so it keeps booting after the old one is gone.
-DIST_VM ?= $(VBOX_VM)
+# 2026-10-03). Every powered-off VirtualBox VM that boots an ISO from dist/
+# is pointed at the new file and, if it was created 32-bit, switched to
+# 64-bit (tools/vbox-attach.sh).
 dist: $(ISO)
 	@mkdir -p $(ROOT)/dist
 	@rm -f $(ROOT)/dist/lumen*.iso
 	cp $(ISO) $(ROOT)/dist/lumen-$(VERSION).iso
 	@echo "snapshot: $(ROOT)/dist/lumen-$(VERSION).iso"
-	@if [ -x $(VBOXMANAGE) ] && $(VBOXMANAGE) showvminfo "$(DIST_VM)" --machinereadable 2>/dev/null | grep -q '^VMState="poweroff"'; then \
-	    $(VBOXMANAGE) storageattach "$(DIST_VM)" --storagectl IDE --port 0 --device 0 --type dvddrive \
-	        --medium "$$(wslpath -w $(ROOT)/dist/lumen-$(VERSION).iso)" && echo "VirtualBox VM '$(DIST_VM)' now boots lumen-$(VERSION).iso"; \
-	else echo "VirtualBox VM '$(DIST_VM)' not updated (missing or running); attach dist/lumen-$(VERSION).iso by hand"; fi
+	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/lumen-$(VERSION).iso
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)
