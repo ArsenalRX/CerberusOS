@@ -3,6 +3,35 @@
 Dated entries. Each records the choice, the reasoning, and the alternatives
 rejected. Newest at the bottom.
 
+**What this file is for.** It records why the system is the way it is, so a
+later session does not re-decide, undo, or contradict a choice without
+knowing the reasoning (docs/SPEC.md §0 rule 7 and §22).
+
+**When to add an entry.**
+- Any design choice that is not obvious from the spec.
+- Any deviation from docs/SPEC.md, and any change to the spec itself.
+- Any direction or requirement from the owner.
+- Any security bug that crossed a trust boundary: the class of bug and the
+  rule or check that now prevents the class.
+- Any change to a performance budget (SPEC §20.1), and any benchmark
+  regression over 10% that is being accepted.
+- Any dependency proposed or approved.
+- Any open question that needs the owner's answer (mark it **OPEN**).
+
+**How to write an entry.** Append at the bottom, never in the middle. Title
+is `## YYYY-MM-DD — one-line summary`. The body states: what was decided,
+why, what it affects (files, phases), and a `Rejected:` line with the
+alternatives and why each lost. Keep it short enough to read in a minute.
+
+**Never rewrite an old entry.** If a decision changes, add a new entry that
+names the one it supersedes and says why; add a one-line
+`Superseded by YYYY-MM-DD — title` note under the old title and leave the
+rest intact. The history of why something changed is as useful as the
+current answer.
+
+**When an OPEN question is answered**, add a new dated entry with the
+answer and mark the question `Answered YYYY-MM-DD` where it was asked.
+
 ---
 
 ## 2026-09-14 — The language is called Spec, not Glint
@@ -23,6 +52,9 @@ owner named it **Spec**. Everywhere the spec says Glint, read Spec:
 
 Rejected: editing the spec document itself. It is the owner's document and is
 kept verbatim; this table is the single translation point.
+
+*Partly superseded by 2026-10-03 — Spec v2: the owner asked for the spec to
+be updated, so it is no longer verbatim v1. The naming table still applies.*
 
 ## 2026-09-14 — Host is Windows 11; build happens in WSL2 Ubuntu 24.04
 
@@ -246,3 +278,130 @@ brought forward in a form that does not have to be rewritten:
   temporary limitation.
 Phases 4-11 continue afterwards in order; the GUI is not a reason to skip
 them.
+
+## 2026-10-03 — Spec v2: security, privacy, networking and performance become requirements
+
+**Owner direction (2026-10-03):** a large overhaul so the OS runs real
+programs and connects to the internet; "keeping this OS privacy and security
+for the users is the most important"; the OS must run "extremely smoothly
+with minimal lag" and use memory and hardware efficiently; and every file in
+docs/ must say how, when and why it is updated and describe how to implement
+things effectively and safely.
+
+**What changed in docs/SPEC.md (v1 → v2):**
+
+| Area | v1 | v2 |
+|---|---|---|
+| Security | Non-goal beyond user/kernel separation and pointer validation | Requirement. New §19 (principles, threat model, kernel protections, identity, sandbox, window-server privacy, network security, privacy rules, cryptography, supply chain, fuzzing, checklist) |
+| Privacy | Not mentioned | Requirement. §19.8: no telemetry, no identifiers, no user content in logs, local-only crash dumps; permanent non-goal to ever add telemetry |
+| Users and permissions | Non-goal | Enforced in the VFS from phase 9; users, login, sandbox in phase 15 |
+| Performance | "No optimisation before phase 14" | New §20: budgets, rules, per-subsystem design, measurement with `make bench` and docs/BENCH.md from phase 6 |
+| Networking | Phase 15 stretch | Phase 14, required, with firewall and per-app permission |
+| Running real programs | Minimal libc only | Phase 17: dynamic linking, POSIX subset, ports, signed packages |
+| Installer, updates, disk encryption | Absent | Phase 18 |
+| Phases 4–13 | Functional deliverables only | Extra security and performance rows per phase (§5A) |
+| Buffer cache | Separate from file cache | One unified page cache (phase 9) |
+| Syscalls | 0–65 | Added 66 `getrandom`, 70–83 sockets, 90–92 events, 100–111 credentials and `restrict`, 120–125 files; existing numbers unchanged |
+| Working agreement | 10 rules | Rules 11–14 added (security first, budgets, procedure, no unapproved dependency) |
+| Process | §18 checklist | New §21 implementation procedure, §22 document maintenance |
+
+**Phase renumbering:** old 14 (language backend) → 16; old 15 (stretch) →
+19; new 14 networking, 15 security model, 17 software platform, 18
+installer/updates/encryption. Phases 0–13 keep their numbers. This matches
+the 2026-09-14 entry that scheduled networking after phase 13.
+
+**Why security is built into each phase rather than added at the end:**
+research on 2026-10-03 (Linux kernel self-protection documentation and
+SerenityOS's mitigation history) shows the baseline — W^X, never executing
+or casually touching user memory (SMEP/SMAP), UMIP, stack protectors,
+compiler hardening, then pledge/unveil-style sandboxing — is cheap when
+built with the mechanism and expensive to retrofit. Lumen has no VMM or
+syscall layer yet, so it can be designed in from the start.
+
+**Design choices made here (not in v1, not from the owner verbatim):**
+- **No setuid binaries;** elevation through a broker service (`authd`).
+  Rejected: classic setuid (historic source of local privilege escalation).
+- **Self-restriction sandbox** (`restrict`, like OpenBSD pledge/unveil).
+  Rejected: syscall-filter programs (seccomp-BPF style) — far more
+  machinery for a small system; mandatory access control frameworks — too
+  large for now.
+- **Window-server client isolation and user-mediated capture** as protocol
+  rules. Rejected: X11-style trust between clients (any client can log
+  keys and read the screen).
+- **Network stack stays in userland** (`netd`), as decided 2026-09-14.
+- **Event multiplexing moved into phase 11**, before the window server
+  leaves the kernel. Reason: ToaruOS's first userland compositor performed
+  badly mainly because its kernel could not wait on many clients at once.
+- **KASLR, KPTI, Secure Boot** deferred to phase 19 or later: each needs
+  groundwork (relocatable kernel, signing infrastructure) that would stall
+  everything else.
+- **Budgets in §20.1** are initial targets chosen from what comparable
+  systems achieve under KVM; they are not yet measured on Lumen and will
+  be revised by dated entries once `make bench` exists.
+
+**OPEN — needs the owner's answer (SPEC §0 rule 14):**
+1. **TLS/cryptography source.** Port Mbed TLS (recommended: has TLS 1.3,
+   takes I/O callbacks, insists on a real entropy source), port BearSSL
+   (smaller, no heap, but TLS 1.2 only and lightly maintained), or write
+   in-tree (not recommended). Needed before phase 15.
+2. **libc.** Grow the in-tree libc, or port mlibc (its porting guide needs
+   only paging, an ELF loader, syscalls and text output from the kernel;
+   other independent OSes run large software on it). Needed by phase 17;
+   best decided before phase 7.
+3. **TCP/IP stack.** Write in-tree (current plan), or port lwIP into
+   `netd`. Other independent OSes report hand-written TCP staying
+   incomplete for a long time. Needed before phase 14.
+4. **Confirm the v2 phase order and non-goals**, in particular: no own web
+   browser (porting one later is possible), and offensive network tools
+   remain declined (see docs/TO_FINISH.md).
+
+**Evidence limits:** the research verified claims about libc porting, TLS
+library porting, kernel hardening and compositor IPC. It found no verified
+sources on filesystems, drivers, ASLR, permissions models, disk encryption,
+update mechanisms or service management; those parts of v2 follow general
+operating-system practice and should be treated as proposals.
+
+*Still OPEN after this session: questions 1–4 above.*
+
+Rejected: keeping v1 verbatim and layering changes only in this file (the
+owner asked for the docs themselves to be updated; a spec that says
+"security is a non-goal" contradicts the owner's top priority); writing a
+separate SECURITY.md and PERFORMANCE.md (the spec is meant to be read top
+to bottom as one document; §19 and §20 keep it that way).
+
+## 2026-10-03 — Version scheme: 0.PHASE.PATCH, numbers only (owner approved)
+
+The owner asked how updates are labelled and approved this scheme the same
+day. Before 1.0 the version is `0.PHASE.PATCH`: PHASE is the last completed
+spec phase, PATCH counts every release in between (bug, performance and
+security fixes) and resets when PHASE advances. From 1.0 it is
+MAJOR.MINOR.PATCH with MAJOR for compatibility breaks. The kind of change is
+carried by `docs/CHANGELOG.md` headings (Security first), not by the number.
+Full rules: docs/SPEC.md §23.
+
+Mechanics: the number lives in `./VERSION`; `make RELEASE=1` builds a release,
+any other build is labelled `<version>-dev+<commit>`; only
+`kernel/lib/version.cpp` sees the string, so a version change rebuilds one
+object. The first release under the scheme is 0.3.0 (phases 0–3 complete);
+the earlier snapshot keeps its 0.0.1 label.
+
+Rejected: letter suffixes (a/b/rc) — ambiguous ordering and nothing the
+changelog does not say better; date-based versions — do not show how far the
+OS is through the plan; detecting a release from git tag and tree cleanliness
+automatically — the repository is edited from Windows and built from WSL,
+where file-mode and line-ending differences make "clean" unreliable, so the
+release build is an explicit `RELEASE=1`.
+
+## 2026-10-03 — Periodic desktop diagnostic removed; it broke the tests
+
+The uncommitted work from 2026-09-14 included a timer hook that printed a
+`diag:` line to serial every 5 seconds. On 2026-10-03 `make test` failed
+`keyboard` and `desktop`: the line landed between the shell prompt and the
+typed command, so the expected `lumen> <command>` text never appeared
+contiguously. The keyboard itself worked. The hook, `gui_diag_line` and the
+`g_diag_*` counters were removed; the on-demand `gui` and `irqs` shell
+commands remain. Rule going forward: nothing prints to the serial log
+unprompted on a timer, because the integration tests match on that log.
+
+Rejected: loosening the tests to tolerate interleaved output (they would
+stop proving that typed input is echoed intact).

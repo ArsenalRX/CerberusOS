@@ -5,6 +5,21 @@
 complete operating system with a graphical desktop and a systems programming
 language that targets it.
 
+**Version 2 (2026-10-03).** v1 treated security, privacy, networking and
+performance as non-goals or stretch goals. v2 makes them requirements: the
+owner's priorities are, in order, (1) the privacy and security of the person
+using the machine, (2) a system that feels smooth and uses memory and hardware
+efficiently, (3) real working programs and internet access. What changed and
+why is recorded in `docs/DECISIONS.md` (entry dated 2026-10-03).
+
+**Naming.** This document says "Glint" for the language. The owner named it
+**Spec**; the translation table is the first entry in `docs/DECISIONS.md`.
+
+**How this document is maintained.** §22 says when, how and why each file in
+`docs/` is updated. Read §19 (security and privacy), §20 (performance) and §21
+(implementation procedure) before implementing anything; they apply to every
+phase.
+
 ---
 
 # 0. Working agreement (read this first, every session)
@@ -38,6 +53,20 @@ lines that don't boot. Avoid it as follows:
    substitute a different design.
 10. **No placeholder code.** No `// TODO: implement`. If something isn't
     implemented yet, it isn't in the tree yet.
+11. **Security and privacy come first.** When a design choice trades the
+    user's privacy or security against convenience, speed, or less code, the
+    user's privacy and security win. Every change is checked against the
+    rules in §19 before it is committed. A feature that cannot be built
+    safely yet is not built yet.
+12. **Smoothness is a requirement, not a later optimisation.** Every
+    subsystem has a budget in §20. A change that breaks a budget is a bug,
+    found by measurement (`make bench`), not by feel.
+13. **Follow the implementation procedure in §21** for every change: read,
+    threat-check, design, test first, implement, verify, measure, document,
+    commit.
+14. **No new dependency without the owner's approval.** That includes
+    vendored source. Propose it in `docs/DECISIONS.md` as an open question
+    and wait.
 
 ---
 
@@ -63,8 +92,14 @@ violate the hardware's access rules.
   libstdc++, `-ffreestanding -fno-stack-protector -fno-pic -mno-red-zone
   -mcmodel=kernel -mno-sse -mno-mmx` (SSE re-enabled only in userland).
 - Kernel is preemptive and SMP-aware from phase 8 onward.
-- Everything must run in QEMU. Real hardware is a phase-14 stretch goal.
-- No external runtime dependencies in the final image except Limine.
+- Everything must run in QEMU. Real hardware is a phase-19 stretch goal.
+- No external runtime dependencies in the final image except Limine, and any
+  the owner approves in `docs/DECISIONS.md` (see §19.9 on cryptography, the
+  one place where porting audited code is safer than writing our own).
+- The user/kernel boundary and the boundary between processes are security
+  boundaries. Nothing crosses them without validation (§19).
+- The OS never sends data off the machine unless the user asked for that
+  specific connection. No telemetry, no analytics, no "phone home" (§19.8).
 
 ---
 
@@ -77,6 +112,8 @@ lumen/
 │   ├── SPEC.md               # this document
 │   ├── DECISIONS.md          # dated design decisions + rationale
 │   ├── STATUS.md             # current state, updated every session
+│   ├── TO_FINISH.md          # checklist of remaining work, phase by phase
+│   ├── BENCH.md              # benchmark results per phase (from phase 6)
 │   ├── SYSCALLS.md           # generated from kernel/syscall/table.def
 │   └── PROTOCOL.md           # Pane window protocol wire format
 ├── toolchain/
@@ -138,6 +175,8 @@ The Makefile checks for each and prints a clear install hint if missing.
 | `make debug` | Same, with `-s -S`, waits for GDB |
 | `make gdb` | Attach GDB with `kernel.sym`, source dirs preloaded |
 | `make test` | Run kernel unit tests + integration + Glint tests, exit nonzero on failure |
+| `make bench` | Run the benchmarks in §20.9 and print results (from phase 6) |
+| `make fuzz` | Run the fuzz harnesses in §19.11 with a time budget (from phase 7) |
 | `make clean` | Remove `build/` |
 
 ## QEMU invocation (exact)
@@ -181,6 +220,11 @@ Serial port `0x3F8` is the kernel log. `-display none` variant for CI.
 
 Each phase lists its **deliverables** and its **acceptance criteria**. The
 acceptance criteria are literal: you must demonstrate each one.
+
+**v2:** phases 4–13 each have additional security and performance
+deliverables and acceptance criteria, listed in §5A directly after phase 13.
+They are part of the phase: a phase is not done until its §5A rows pass too.
+Phases 14 onward were renumbered in v2 (old 14 is now 16, old 15 is now 19).
 
 ---
 
@@ -476,7 +520,271 @@ keyboard only.
 
 ---
 
-## Phase 14 — Glint native backend and retarget
+## 5A. Security and performance additions to phases 4–13 (v2)
+
+Each row is a deliverable with its own acceptance test, added to the phase
+named. The reasoning for every item is in §19 (security) or §20
+(performance). Build the item in the phase where its mechanism is built;
+retrofitting protection later is how holes are left behind.
+
+### Phase 4 — Virtual memory
+
+- **W^X everywhere.** `map()` rejects any request that is both writable and
+  executable (`Error::Invalid`). Enable `EFER.NXE`. The kernel image is
+  remapped by section: `.text` read+execute, `.rodata` read-only+NX,
+  `.data`/`.bss` read-write+NX. The HHDM and the kernel heap are NX.
+- **Zero before handing out.** Every frame mapped into a user address space
+  or returned by a kernel allocation that may reach userland is zeroed first,
+  so one process never sees another's old data.
+- **Null guard.** The first 64 KiB of every user address space is never
+  mappable.
+- **2 MiB pages** for the HHDM and for any aligned kernel mapping of 2 MiB or
+  more; fewer TLB misses and fewer page-table frames.
+- **Compiler hardening turned on now** (needs only small runtime support, so
+  it does not wait for userland): `-ftrivial-auto-var-init=zero` so no stack
+  variable is ever uninitialised, and the undefined-behaviour sanitizer
+  (`-fsanitize=undefined` with in-kernel handlers that panic with the source
+  location) in debug builds.
+- **Accept:** `test vmm` additionally shows: a W+X map request fails; a write
+  to `.rodata` and a write to `.text` each fault; a jump into a data page
+  faults with the instruction-fetch bit set; a freshly mapped user page reads
+  as all zeroes after the frame previously held a known pattern.
+
+### Phase 5 — Kernel heap
+
+- Freed objects are poisoned in debug builds (already specified) and the
+  slab free list stores its next-pointers XORed with a per-boot secret so a
+  heap overflow cannot trivially redirect an allocation.
+- `kfree_sensitive(ptr, size)` zeroes before freeing; mandatory for keys,
+  passwords, and buffers that held user file data.
+- Allocation fast path takes one lock and touches one cache line; measured
+  by `make bench` (§20.9).
+- **Accept:** `test heap` additionally shows a corrupted free-list pointer is
+  detected (panic with the slab name) rather than followed.
+
+### Phase 6 — Threads and scheduling
+
+- Every kernel stack has an unmapped guard page below it; overflow produces
+  a clean #DF dump on the IST stack, never silent corruption.
+- The compositor gets its own kernel thread at interactive priority; the
+  idle thread halts again (removes the spin-idle stopgap).
+- A thread that wakes from input or a timer runs within 1 ms on an idle CPU
+  and within one time slice (10 ms) on a busy one.
+- `make bench` exists from this phase: context-switch time and wake-up
+  latency, recorded in `docs/BENCH.md`.
+- **Accept:** the desktop stays responsive (cursor moves, windows drag) while
+  `test idle` or any long shell command runs. A deliberately recursive kernel
+  thread reports "kernel stack overflow" with a backtrace.
+
+### Phase 7 — Userland and syscalls
+
+- **SMEP, SMAP, UMIP** enabled when CPUID reports them. All user-memory
+  access goes through `copy_from_user`/`copy_to_user`/`strncpy_from_user`,
+  which are the only functions that execute `stac`/`clac`.
+- **Syscall entry hardening:** number bounds-checked before the table lookup;
+  every length checked for overflow (`ptr + len` must not wrap or leave the
+  user half); every flag word rejects unknown bits; every struct copied to
+  userland is fully initialised, padding included.
+- **No kernel addresses to userland.** `%p` output, `sysinfo`, and error
+  paths never reveal kernel pointers to an unprivileged process.
+- **ASLR for userland:** randomised stack top, `mmap` base, and load base
+  for position-independent executables. The libc and all shipped binaries
+  are built as PIE.
+- **Stack protector:** userland is built with `-fstack-protector-strong`
+  from the first binary. The kernel switches from `-fno-stack-protector` to
+  `-fstack-protector-strong` once the per-CPU canary is set up from the
+  CSPRNG.
+- **CSPRNG:** ChaCha20-based generator seeded from RDSEED/RDRAND when
+  present, mixed with interrupt timing and the HPET counter; reseeded
+  periodically. Exposed as `getrandom` (syscall 66) and `/dev/random`. It is
+  the only source of randomness for ASLR, canaries, and (later) keys.
+- **ELF loader is hostile-input code:** every offset, size and count is
+  validated against the file size and against overflow; segments that are
+  writable and executable are refused; fuzzed under `make fuzz`.
+- **Accept:** a user program that passes a kernel address, a wrapping
+  length, or an unmapped pointer to each syscall gets `-EFAULT`/`-EINVAL`
+  (a test program walks the whole table). With SMAP on, a deliberate direct
+  dereference of a user pointer in a test syscall faults. Two runs of the
+  same binary print different stack and `mmap` addresses. `make fuzz` runs
+  the ELF loader harness for 60 s with no crash.
+
+### Phase 8 — SMP
+
+- Lock ordering is documented in one header (`kernel/lib/lock_order.h`) and
+  checked in debug builds (each lock has a rank; taking a lower rank while
+  holding a higher one panics).
+- Per-CPU slab caches and per-CPU run queues so the common path takes no
+  shared lock.
+- **Accept:** `test smp` additionally runs the heap and scheduler benchmarks
+  on 4 CPUs with the lock-rank checker enabled and no violation.
+
+### Phase 9 — Filesystem
+
+- **Permissions enforced** in the VFS on every operation: owner/group/other
+  mode bits, uid/gid from the process credentials (§19.4). Until phase 15
+  everything runs as uid 0, but the checks exist and are tested with a
+  synthetic non-root credential.
+- **Mount flags** `nosuid`, `nodev`, `noexec`, `ro`. `/tmp` and removable
+  media mount `nodev,nosuid`.
+- **Race-free path handling:** `openat`-style resolution relative to a
+  directory fd, `O_NOFOLLOW`, `O_CLOEXEC`; symlink loop limit 40.
+- **lumfs is hostile-input code:** every on-disk field is range-checked at
+  mount and on read; a corrupted image yields `Error::IO`, never a panic.
+  Metadata blocks carry a checksum (CRC32C).
+- **One page cache** shared by file reads, file-backed `mmap`, and block
+  I/O (replaces v1's separate buffer cache); read-ahead for sequential
+  access; write-back by a kernel thread; `fsync` flushes one file.
+- **Accept:** a non-root credential cannot read a mode-0600 root file;
+  `mount -o noexec` refuses `execve`; `make fuzz` mutates a lumfs image for
+  60 s and the kernel never panics; reading a 64 MB file sequentially twice
+  shows the second read served from cache (counter in `sysinfo`).
+
+### Phase 10 — Drivers
+
+- **virtio-blk** alongside AHCI (QEMU's fast path), and the **virtio**
+  transport (PCI modern) written once for reuse by virtio-net in phase 14.
+- Every value read from a device (lengths, indices, counts) is treated as
+  untrusted and bounds-checked before use.
+- `/dev/input/*` and `/dev/fb0` are openable only by the window server's
+  credential; no other process can read keystrokes or the screen directly.
+- ACPI shutdown and reboot (not the QEMU debug port).
+- **Accept:** an unprivileged test process gets `-EACCES` opening
+  `/dev/input/kbd0` and `/dev/fb0`; `poweroff` powers off QEMU via ACPI.
+
+### Phase 11 — IPC
+
+- **Port access control:** `port_create` takes a mode; `port_connect` is
+  checked against it. The receiver learns the sender's pid/uid from the
+  kernel (unforgeable), not from the message.
+- Message sizes and fd counts are bounded and validated; a full queue blocks
+  or returns `-EAGAIN`, never drops or grows without limit.
+- **Event multiplexing** (`event_create`/`event_ctl`/`event_wait`, syscalls
+  90–92) over fds, ports, timers and child exit, so servers sleep instead
+  of polling.
+- **Accept:** a process without permission cannot connect to a protected
+  port; a server blocked in `event_wait` uses 0% CPU while idle and wakes
+  within 1 ms of a message.
+
+### Phase 12 — Pane
+
+- **Client isolation.** A client can read only its own buffers, receives
+  only input addressed to its own windows, and cannot synthesise input,
+  move other clients' windows, or learn their titles or contents.
+- **Mediated capture.** Screenshot, screen recording, global hotkey
+  registration and clipboard history are privileged requests granted per
+  application by the user (§19.5); denied by default.
+- **Clipboard** content is delivered only to the focused window on an
+  explicit paste, not broadcast.
+- **Secure entry:** while a password field has focus, no other client
+  receives key events and capture requests are refused.
+- Every protocol message is length- and range-checked; a malformed message
+  disconnects the client, never crashes the server. Fuzzed.
+- Frame budget: composite in under 8 ms at 1920×1080 with 10 windows;
+  no work when nothing is damaged; zero-copy shm buffers.
+- **Accept:** a test client that requests another window's buffer, injects
+  a key, or grabs the screen without permission is refused and logged;
+  `make fuzz` on the protocol for 60 s leaves Pane running; the frame-time
+  counter meets the budget under the phase-12 drag test.
+
+### Phase 13 — Toolkit, shell, applications
+
+- Applications declare the permissions they need in their `.desktop` entry
+  (`Permissions=files:home,network,…`); the session starts each with
+  exactly those (enforced by `restrict`, phase 15; declared from phase 13).
+- File dialogs run in the trusted shell process and hand the application a
+  file descriptor, so an application without filesystem permission can
+  still open the one file the user picked.
+- Every parser for external data (PNG, BMP, TGA, TTF, tar, `.desktop`,
+  `.conf`) is bounds-checked and fuzzed.
+- **Accept:** `make fuzz` covers every listed parser for 60 s each with no
+  crash; a cold-boot to an interactive desktop takes under 3 s in QEMU/KVM.
+
+---
+
+## Phase 14 — Networking
+
+Design in §19.7 (security) and §20.7 (performance).
+
+**Deliverables:**
+- **virtio-net** driver (primary) and **e1000** driver (VirtualBox and QEMU
+  default), each exposed to userland as a packet device (`/dev/net/eth0`)
+  with zero-copy receive rings where the device allows.
+- **`netd`**, the userland network server (hybrid-kernel rule, §6.2):
+  Ethernet framing; ARP with a bounded, expiring cache; IPv4 with fragment
+  reassembly bounded by size and time; ICMP echo; UDP; TCP with the full
+  state machine, retransmission with RTT estimation (RFC 6298), fast
+  retransmit and recovery (NewReno), window scaling, randomised initial
+  sequence numbers (RFC 6528) and randomised ephemeral ports; loopback.
+- **DHCP client**, **DNS resolver** (randomised query IDs and source ports,
+  bounded cache honouring TTLs).
+- **Open owner decision:** write the stack in-tree (the default in this
+  spec; full control, but other independent OSes report TCP staying
+  incomplete for years) or port **lwIP** into `netd` (less work, a
+  dependency needing approval under §0 rule 14). Either way the drivers,
+  `netd`, the socket syscalls and the firewall are ours.
+- **Socket API** (syscalls 70–83): `socket bind connect listen accept send
+  recv sendto recvfrom shutdown getsockopt setsockopt getsockname
+  getpeername`, usable with `event_wait` and `O_NONBLOCK`.
+- **Firewall:** inbound connections denied by default; rules by
+  port/protocol/direction in `/etc/lumen/firewall.conf`.
+- **Per-application network permission** (§19.5): a process without it gets
+  `-EACCES` from `socket`.
+- Tools: `ping`, `ifconfig`, `nslookup`, `fetch` (HTTP/1.1 GET), `netstat`.
+- Network page in Dial; panel indicator showing connection state.
+- All packet parsers fuzzed.
+
+**Accept:** under QEMU user networking, DHCP obtains 10.0.2.15; `ping
+10.0.2.2` gets replies; `nslookup example.com` resolves; `fetch
+http://example.com/` prints the page; a 100 MB TCP transfer to and from a
+host listener matches by SHA-256; an inbound connection to a closed port is
+dropped and logged; a process without network permission cannot open a
+socket; `make fuzz` on the packet parsers runs 60 s with no crash; no packet
+leaves the machine at boot other than DHCP and what the user started
+(verified with `-object filter-dump`).
+
+---
+
+## Phase 15 — Security model, users, and encrypted transport
+
+Design in §19.
+
+**Deliverables:**
+- **Users and groups:** `/etc/passwd`, `/etc/group`, `/etc/shadow`
+  (mode 0600); passwords hashed with Argon2id (RFC 9106) with a per-user
+  salt, verified against the RFC test vectors.
+- **Credentials** on every process: real/effective uid and gid,
+  supplementary groups (syscalls 100–111). **No setuid binaries.**
+  Privilege elevation goes through `authd`, a small privileged service
+  reached over a port, which authenticates the user and performs a
+  named, audited operation.
+- **Login screen and lock screen** (Super+L, idle timeout); auto-login is
+  off by default.
+- **`restrict(flags, paths)`** (syscall 110): a process irrevocably drops
+  abilities — network, filesystem outside listed paths, spawning, raw
+  devices. Inherited across `fork`/`execve`. The session applies the
+  `.desktop` permission list with it.
+- **Permission prompts** for capture, clipboard history, and network, shown
+  by the shell (trusted path), remembered per application in
+  `/etc/lumen/permissions.conf`.
+- **Secrets store** (`keyring` service): per-user secrets encrypted with a
+  key derived from the login password; unlocked at login, wiped at lock.
+- **TLS client** (1.3 preferred, 1.2 the minimum) for `fetch` and the
+  package manager, with a root certificate store. Implementation source is
+  an open owner decision (§19.9).
+- **Audit log:** logins, failed authentications, privilege elevation,
+  permission grants and denials, to `/var/log/audit` (root-readable only).
+
+**Accept:** a second user cannot read the first user's home; a wrong
+password is rejected and logged, with a growing delay; Argon2id output
+matches the RFC 9106 vectors; a sandboxed process that tries the network,
+a file outside its paths, or `fork` gets `-EACCES`; the lock screen cannot
+be bypassed by killing the client (Pane holds the lock state); `fetch
+https://example.com/` succeeds and a connection to a host with a bad
+certificate is refused.
+
+---
+
+## Phase 16 — Glint native backend and retarget
 
 See §13. Deliverables: x86-64 code generation, ELF output, the Glint standard
 library, Lumen syscall bindings, and at least three applications rewritten in
@@ -488,11 +796,65 @@ desktop.
 
 ---
 
-## Phase 15 — Stretch goals (only after 14)
+## Phase 17 — Software platform: running real programs
 
-Networking (e1000 + a minimal TCP/IP stack), USB (XHCI), audio (AC'97 or
-Intel HDA), real-hardware boot, self-hosting the Glint compiler, a Glint
-package manager, ARM64 port.
+**Deliverables:**
+- **Dynamic linking:** shared libraries, `/lib/ld-lumen.so`, lazy binding
+  off (full RELRO: the GOT is read-only after relocation), `dlopen`.
+- **libc grown to a documented POSIX subset** (listed in
+  `docs/LIBC.md`) sufficient to build unmodified third-party C software.
+  Proof ports: `zlib`, `lua`, `tinycc`, `make`.
+  **Open owner decision:** grow the in-tree libc, or port **mlibc**
+  (a portable libc with a per-OS "sysdeps" layer, used by other
+  independent OSes to run large software). Porting is far less work and
+  more compatible; it is a dependency and needs approval (§0 rule 14).
+- **Pseudo-terminals** with line discipline, job control, the full signal
+  set with `sigaction` semantics.
+- **Package manager `pkg`:** package = tar + manifest (name, version,
+  dependencies, files, hashes). Every package and repository index is
+  **signed (Ed25519)**; unsigned or mismatching packages are refused.
+  Install scripts run sandboxed. `pkg install|remove|list|search|upgrade`.
+- `make bench` extended with process-spawn and dynamic-link start-up time.
+
+**Accept:** `lua` and `tcc` built from upstream source run on Lumen; `tcc`
+compiles and runs a C hello world on Lumen; `pkg install` of a tampered
+package fails with a signature error; a 50-library GUI application starts
+in under 200 ms.
+
+---
+
+## Phase 18 — Installer, updates, storage encryption, recovery
+
+**Deliverables:**
+- **Installer:** boot the ISO to a live desktop; partition (GPT), format
+  (lumfs + FAT32 EFI), copy the system, install Limine, create a user,
+  reboot into the installed system. FAT32 read/write and GPT parsing are
+  deliverables of this phase.
+- **Full-disk encryption** as an install option: AES-256-XTS (or
+  XChaCha20 per sector), key derived from a passphrase with Argon2id,
+  unlocked at boot before the root filesystem mounts. Verified against
+  published test vectors.
+- **Updates:** `pkg upgrade` with signed indexes; kernel updates keep the
+  previous kernel as a boot menu entry; updates are never applied without
+  the user starting them.
+- **Recovery:** a boot entry that reaches a root shell with the disk
+  mounted read-only; `fsck.lumfs` that repairs.
+- Service manager (`init` with unit files: dependencies, restart policy,
+  per-service `restrict` profile and resource limits); `svc` CLI; log
+  capture with a viewer.
+
+**Accept:** install to a blank QEMU disk and boot from it without the ISO;
+the encrypted install shows only ciphertext when the disk image is searched
+on the host for a known file's contents; an interrupted update leaves a
+bootable system; recovery mode repairs a deliberately damaged lumfs.
+
+---
+
+## Phase 19 — Stretch goals (only after 18)
+
+USB (XHCI, HID, mass storage), audio (Intel HDA, mixing server), IPv6,
+KASLR, real-hardware boot, self-hosting the Glint compiler, a Glint package
+ecosystem, HiDPI scaling, accessibility features beyond §10, ARM64 port.
 
 ---
 
@@ -609,9 +971,56 @@ SYSCALL(62,  uname,       (struct utsname* out))
 SYSCALL(63,  sysinfo,     (struct sysinfo* out))
 SYSCALL(64,  reboot,      (int cmd))
 SYSCALL(65,  log,         (int level, const char* msg))
+SYSCALL(66,  getrandom,   (void* buf, size_t n, unsigned flags))
+
+// v2: networking (phase 14)
+SYSCALL(70,  socket,      (int domain, int type, int protocol))
+SYSCALL(71,  bind,        (int fd, const struct sockaddr* addr, size_t len))
+SYSCALL(72,  connect,     (int fd, const struct sockaddr* addr, size_t len))
+SYSCALL(73,  listen,      (int fd, int backlog))
+SYSCALL(74,  accept,      (int fd, struct sockaddr* addr, size_t* len, int flags))
+SYSCALL(75,  send,        (int fd, const void* buf, size_t n, int flags))
+SYSCALL(76,  recv,        (int fd, void* buf, size_t n, int flags))
+SYSCALL(77,  sendto,      (int fd, const void* buf, size_t n, int flags, const struct sockaddr* addr, size_t len))
+SYSCALL(78,  recvfrom,    (int fd, void* buf, size_t n, int flags, struct sockaddr* addr, size_t* len))
+SYSCALL(79,  shutdown,    (int fd, int how))
+SYSCALL(80,  getsockopt,  (int fd, int level, int opt, void* val, size_t* len))
+SYSCALL(81,  setsockopt,  (int fd, int level, int opt, const void* val, size_t len))
+SYSCALL(82,  getsockname, (int fd, struct sockaddr* addr, size_t* len))
+SYSCALL(83,  getpeername, (int fd, struct sockaddr* addr, size_t* len))
+
+// v2: event multiplexing (phase 11)
+SYSCALL(90,  event_create,(int flags))
+SYSCALL(91,  event_ctl,   (int ev, int op, int fd, const struct event* e))
+SYSCALL(92,  event_wait,  (int ev, struct event* out, int max, uint64_t timeout_ms))
+
+// v2: credentials and sandboxing (phases 9 and 15)
+SYSCALL(100, getuid,      (void))
+SYSCALL(101, geteuid,     (void))
+SYSCALL(102, getgid,      (void))
+SYSCALL(103, getegid,     (void))
+SYSCALL(104, setuid,      (int uid))
+SYSCALL(105, setgid,      (int gid))
+SYSCALL(106, getgroups,   (int* list, int n))
+SYSCALL(107, setgroups,   (const int* list, int n))
+SYSCALL(108, chmod,       (const char* path, int mode))
+SYSCALL(109, chown,       (const char* path, int uid, int gid))
+SYSCALL(110, restrict,    (uint64_t flags, const char* const paths[]))
+SYSCALL(111, umask,       (int mask))
+
+// v2: files, extended (phase 9)
+SYSCALL(120, fsync,       (int fd))
+SYSCALL(121, openat,      (int dirfd, const char* path, int flags, int mode))
+SYSCALL(122, symlink,     (const char* target, const char* path))
+SYSCALL(123, readlink,    (const char* path, char* buf, size_t n))
+SYSCALL(124, link,        (const char* from, const char* to))
+SYSCALL(125, fcntl,       (int fd, int cmd, uint64_t arg))
 ```
 
-Keep the numbers stable. Add new calls at the end of their block.
+Keep the numbers stable. Add new calls at the end of their block. `setuid`,
+`setgid` and `setgroups` succeed only for uid 0 and only ever drop privilege
+for the calling process; there is no way to gain privilege by executing a
+file (§19.4).
 
 ---
 
@@ -713,7 +1122,7 @@ tail; every message begins with `{ uint32 type; uint32 length; uint32 serial; }`
 
 # 10. Facet — GUI toolkit
 
-C++ first. Ported to Glint in phase 14.
+C++ first. Ported to Glint in phase 16.
 
 ## Architecture
 
@@ -935,7 +1344,7 @@ with laps, countdown timer with a notification on completion, alarms.
 
 A small game proving the toolkit can drive something non-trivial: a tile-based
 map, keyboard movement, an inventory panel, dialogue boxes, save/load to disk.
-Written in **Glint** once phase 14 lands — this is the flagship demonstration
+Written in **Glint** once phase 16 lands — this is the flagship demonstration
 that the language works.
 
 ## 12.11 lsh — the shell (CLI)
@@ -1158,6 +1567,15 @@ The project is complete when, in QEMU, from a cold boot:
 10. `make test` passes.
 11. `docs/STATUS.md` reflects reality and `docs/DECISIONS.md` explains why the
     system looks the way it does.
+12. The system is installed to a virtual disk by its own installer and boots
+    from that disk, with a login screen and at least two user accounts that
+    cannot read each other's files.
+13. The machine gets an address by DHCP, resolves names, and fetches a page
+    over HTTPS; a capture of the virtual NIC shows no traffic the user did
+    not initiate.
+14. A third-party C program built from unmodified upstream source (Lua) runs.
+15. Every item in the §19.12 security checklist is demonstrated, `make fuzz`
+    passes, and every budget in §20.1 is met in `docs/BENCH.md`.
 
 ---
 
@@ -1165,15 +1583,28 @@ The project is complete when, in QEMU, from a cold boot:
 
 Do not build these, and do not spend time discussing them:
 
-- POSIX compliance. We borrow ideas, not the standard.
+- Full POSIX compliance or certification. v2 does require a documented
+  POSIX *subset* large enough to port real C software (phase 17).
 - Binary compatibility with Linux or anything else.
-- Security hardening beyond basic user/kernel separation and pointer
-  validation. No KASLR, no SMEP/SMAP juggling, no seccomp.
-- Multi-user accounts, permissions beyond a mode field, or authentication.
-- A web browser.
+- Writing our own web browser. Porting one is a possibility after phase 18.
 - Backwards compatibility with anything.
-- Performance optimisation before phase 14. Correctness first. The only
-  exception is the compositor, which must not tear.
+- Inventing cryptography. Only published, standard algorithms, verified
+  against official test vectors (§19.9).
+- Telemetry, analytics, advertising identifiers, or any background
+  connection the user did not ask for. Permanently.
+- Tools for attacking other people's machines or networks (password
+  cracking against others' accounts, Wi-Fi intrusion). Diagnostics for the
+  user's own machines and networks are fine.
+- Secure Boot signing, TPM-based attestation, GPU acceleration, Bluetooth,
+  printing, webcams: out of scope until after phase 19.
+- Micro-optimisation without a measurement. v1 said "no performance work
+  before phase 14"; v2 replaces that with §20: design each subsystem to its
+  budget from the start, and change code for speed only when `make bench`
+  shows a budget is missed. Correctness and security still come first.
+
+*Removed in v2 (now requirements):* security hardening (was "no KASLR, no
+SMEP/SMAP, no seccomp" — see §19; KASLR itself is phase 19), and multi-user
+accounts, permissions and authentication (phases 9 and 15).
 
 ---
 
@@ -1189,3 +1620,578 @@ At the beginning of every session, before writing code:
 5. Work. Commit in small pieces.
 6. Before ending: run `make test`, update `docs/STATUS.md` and, if any design
    decision was made, `docs/DECISIONS.md`.
+
+v2 additions (details in §21 and §22):
+
+- At step 1, also read `docs/TO_FINISH.md` and the newest entries of
+  `docs/DECISIONS.md`.
+- At step 4, name the §5A rows and the §19/§20 rules the session's work
+  touches.
+- At step 6, also run `make bench` (from phase 6) and `make fuzz` (from
+  phase 7) when the session touched a measured or hostile-input path, update
+  `docs/TO_FINISH.md`, and update `docs/BENCH.md` if numbers changed.
+
+---
+
+# 19. Security and privacy
+
+This section overrides convenience everywhere else in the document. The
+person at the keyboard must be able to trust that the OS keeps their data
+theirs.
+
+## 19.1 Principles
+
+1. **Least privilege.** Every process, service and driver gets only the
+   access it needs. The default answer to "may this code do X" is no.
+2. **Deny by default.** Inbound network connections, device access, screen
+   capture, and access to other users' files are refused unless explicitly
+   granted.
+3. **Validate at every boundary.** Userland → kernel (syscalls), device →
+   driver, network → stack, disk → filesystem, client → server (ports),
+   file → parser. Data from the far side is hostile until checked.
+4. **Fail closed.** On any error in a security check, deny. Never fall back
+   to "allow" because a lookup failed.
+5. **Defence in depth.** No single mechanism is trusted alone: isolation,
+   plus W^X, plus ASLR, plus canaries, plus sandboxing.
+6. **Small trusted base.** Code that runs in ring 0 or as root is kept as
+   small as possible; that is the reason for the hybrid-kernel rule (§6.2)
+   and for moving the compositor out of the kernel at phase 12.
+7. **Privacy by default.** Nothing leaves the machine, and no application
+   observes the user (keys, screen, clipboard, files, location on the
+   network), without the user asking for it.
+8. **Honest state.** The UI always shows the truth: whether the disk is
+   encrypted, whether a connection is encrypted, which application holds
+   which permission.
+
+## 19.2 Threat model
+
+In scope — the OS must defend against:
+- A malicious or buggy **unprivileged program** trying to read other
+  processes' memory, other users' files, the keyboard, the screen, or to
+  crash or take over the kernel.
+- **Hostile data**: a crafted file, disk image, font, image, archive, or
+  network packet.
+- A **network attacker** on the same LAN or on the path: spoofing,
+  injection, scanning, malformed packets, a forged server.
+- **Another local user** of the same machine.
+- A **stolen or copied disk** (when the user chose encryption at install).
+
+Out of scope for now (stated honestly, not ignored): physical attacks on a
+running machine, malicious hardware and firmware, side channels beyond the
+basic Spectre/Meltdown measures in §19.3, and a compromised build host.
+
+## 19.3 Kernel protections
+
+| Mechanism | Rule | Phase |
+|---|---|---|
+| Ring separation | Only the kernel runs in ring 0; from phase 12 no GUI code does | 7, 12 |
+| Address-space isolation | One PML4 per process; user pages never shared unless via shm | 4, 7 |
+| NX + W^X | No page is ever writable and executable, kernel or user | 4 |
+| Kernel image permissions | text RX, rodata R, data RW+NX | 4 |
+| Guard pages | Below every kernel and user stack | 4, 6 |
+| Page zeroing | Frames are zeroed before reuse across a trust boundary | 4 |
+| SMEP / SMAP / UMIP | Enabled when present; user access only via usercopy | 7 |
+| User-pointer validation | Range, overflow, mapping, permission; fault-safe copy | 7 |
+| Stack canaries | Userland always; kernel after the CSPRNG is up | 7 |
+| Compiler hardening, kernel | Zero-initialised locals, UBSAN in debug builds; later `-fzero-call-used-regs` | 4 |
+| Compiler/linker hardening, userland | PIE, full RELRO, `-fstack-clash-protection`, `-z separate-code`, `-z noexecstack` | 7 |
+| ASLR | Stack, mmap, PIE base, from the CSPRNG | 7 |
+| Heap hardening | Encoded free-list pointers, red zones, poison | 5 |
+| CSPRNG | Single kernel generator; no other randomness source is used | 7 |
+| Info-leak hygiene | No kernel pointers or uninitialised bytes cross to userland | 7 |
+| Speculation | `lfence`/masking after the syscall-number bounds check and in usercopy bounds checks; kernel compiled with retpolines if the CPU needs them; Meltdown-affected CPUs detected and reported (KPTI is phase 19) | 7 |
+| Lock-rank checking | Debug builds panic on lock-order inversion | 8 |
+| KASLR | Later: requires a relocatable kernel | 19 |
+
+Rules for kernel code:
+- Never dereference a user pointer. Use `copy_from_user`, `copy_to_user`,
+  `strncpy_from_user`. Copy once, then validate the copy (no double fetch).
+- Every size calculation that involves an untrusted number uses checked
+  arithmetic (`checked_add`, `checked_mul` in `kernel/lib/checked.h`).
+- Every array index from an untrusted source is bounds-checked at the
+  point of use.
+- Every struct returned to userland is `memset` to zero before filling.
+- Every `switch` over an untrusted value has a `default` that fails.
+- No function pointers in writable memory when a `const` table will do.
+- Interrupt handlers do the minimum and defer; they never block and never
+  touch user memory.
+
+## 19.4 Identity, permissions, and privilege
+
+- Each process has real and effective uid/gid and supplementary groups,
+  inherited across `fork`, preserved across `execve`.
+- The VFS checks mode bits on every open, exec, directory search, create,
+  unlink and rename. uid 0 bypasses mode checks but not `restrict`.
+- **There are no setuid or setgid executables.** A file's mode can never
+  raise the privilege of the process that runs it. Elevation is a request
+  to `authd`, which authenticates the user through the trusted login UI
+  and performs a specific named operation on their behalf. Reason: setuid
+  programs are the classic source of local privilege escalation; a narrow
+  broker is far easier to get right.
+- Passwords are stored only as Argon2id hashes with per-user salts, in a
+  file readable only by root. Failed attempts are rate-limited with a
+  growing delay and logged.
+- Home directories are mode 0700 by default.
+
+## 19.5 Application sandbox and permissions
+
+- `restrict(flags, paths)` drops abilities for the calling process and all
+  descendants, permanently. Flags: `NET`, `FS_WRITE`, `FS_READ` (outside
+  the listed paths), `SPAWN`, `DEVICES`, `IPC_CONNECT` (to ports other than
+  Pane and those listed).
+- Applications declare needed permissions in their `.desktop` file. The
+  session launches each application already restricted to that list.
+- Sensitive abilities are granted by the user at first use, through a
+  prompt drawn by the shell that applications cannot draw over or click
+  programmatically: screen capture, clipboard history, global hotkeys,
+  network access, access to files outside the home directory.
+- File open/save dialogs are part of the trusted shell and return a file
+  descriptor, so an application needs no broad filesystem permission to
+  open what the user chose.
+- Grants are stored per user and are viewable and revocable in Dial
+  (Privacy page).
+
+## 19.6 Window server privacy
+
+The window server sees every keystroke and every pixel, so its protocol is
+a privacy boundary (§5A phase 12): no client can read another's pixels,
+receive another's input, inject input, or enumerate other windows; the
+clipboard is delivered only on paste to the focused window; password fields
+switch the server into secure-entry mode; the lock screen is enforced by
+the server itself, not by a client that could be killed.
+
+## 19.7 Network security
+
+- Inbound is default-deny. No service listens on a non-loopback address
+  unless the user enabled it.
+- The stack randomises TCP initial sequence numbers, ephemeral ports and
+  DNS query IDs from the CSPRNG.
+- All reassembly queues, ARP/DNS caches, connection tables and backlog
+  queues are bounded, with eviction, so a flood cannot exhaust memory.
+- Every header length, option length, and offset is validated against the
+  received packet length before use.
+- ICMP redirects and source-routed packets are ignored. ARP replies that
+  were not requested do not overwrite live entries.
+- The DHCP client sends no hostname or other identifying option by default.
+- Anything that carries credentials or installs software uses TLS (1.3
+  preferred, 1.2 the minimum) with certificate verification. Plain HTTP is shown as "not private" in UIs.
+- `netd` runs unprivileged, restricted to its packet device and its ports.
+
+## 19.8 Privacy rules
+
+1. **No telemetry.** The OS and the shipped applications never contact any
+   server on their own. The only automatic traffic is DHCP (and NTP, if the
+   user enables network time).
+2. **No hidden identifiers.** No machine ID, advertising ID or hardware
+   serial is exposed to applications or sent over the network.
+3. **Logs hold no user content.** The kernel log and service logs record
+   events, never keystrokes, file contents, clipboard contents, passwords,
+   or full URLs with query strings. Logs are readable only by root and the
+   owning user.
+4. **Crash dumps stay local**, are readable only by the owning user, and
+   are deleted after 30 days. Nothing is uploaded.
+5. **Recent-files lists, search history and clipboard history** are per
+   user, stored in the user's home, off for the clipboard by default, and
+   clearable from Dial.
+6. **Secrets** (saved passwords, keys) live only in the keyring, encrypted
+   at rest, and are zeroed in memory after use (`kfree_sensitive`, and a
+   userland equivalent).
+7. **Deleted means gone from view immediately**; with disk encryption on,
+   discarding the key makes the whole disk unrecoverable.
+8. **The time zone, locale and installed-font list** are not exposed to
+   network peers by any system component.
+
+## 19.9 Cryptography
+
+- Never design an algorithm or protocol. Use: ChaCha20 (CSPRNG),
+  SHA-256/SHA-512, HMAC, HKDF, Argon2id, Ed25519, X25519,
+  ChaCha20-Poly1305 and AES-256-GCM (TLS 1.3), AES-256-XTS (disk).
+- Every implementation is verified against the official test vectors (RFC
+  or NIST) by a test that runs under `make test`.
+- Comparisons of secrets and MACs are constant-time. Key material is
+  zeroed after use.
+- TLS depends on three things the OS must provide correctly first: the
+  CSPRNG (phase 7), a correct wall-clock time (certificate validity dates
+  are always checked; never build with date checks disabled), and a root
+  certificate store.
+- **Open owner decision (needs approval under §0 rule 14 before phase
+  15):** where TLS and the primitives come from.
+  (a) Port **Mbed TLS**: supports TLS 1.3, needs a modest libc, takes
+  send/receive callbacks instead of sockets, and refuses to run until the
+  OS registers a strong entropy source. Recommended.
+  (b) Port **BearSSL**: smallest, no heap, pure state machine, but TLS 1.2
+  at most and lightly maintained, so some modern servers will refuse it.
+  (c) Write TLS and the primitives in-tree: not recommended; hand-written
+  TLS and elliptic-curve code is a well-known source of subtle,
+  catastrophic bugs.
+  Until this is decided, nothing in the tree performs encryption that
+  users rely on.
+
+## 19.10 Software supply chain
+
+- Packages and repository indexes are signed with Ed25519; the public key
+  ships in the image. Unsigned or altered packages do not install.
+- Install scripts run under `restrict`.
+- Updates happen only when the user starts them; the previous kernel stays
+  bootable.
+- The build is reproducible: the same commit produces the same ISO hash.
+
+## 19.11 Fuzzing and review
+
+- `make fuzz` runs a harness for every hostile-input surface: syscall
+  arguments, the ELF loader, lumfs images, tar, PNG/BMP/TGA, TTF, the Pane
+  protocol, port messages, and every network packet parser. Harnesses are
+  built for the host with AddressSanitizer where the code is portable, and
+  as an in-kernel random-syscall test where it is not.
+- A crash found by fuzzing becomes a regression test before it is fixed.
+- Every commit that touches a boundary listed in §19.1(3) is reviewed
+  against §19.3's rules before it is committed (§21 step 2 and 7).
+
+## 19.12 Security checklist (definition of done, item 15)
+
+Each line must be demonstrated by a test with real output:
+
+1. A user process cannot read or write kernel memory or another process's
+   memory.
+2. No W+X mapping can be created; kernel text and rodata are read-only.
+3. Bad pointers, wrapping lengths and unknown flags to every syscall are
+   rejected without a kernel fault.
+4. User stack, mmap and PIE addresses differ between runs.
+5. One user cannot read another user's files.
+6. A restricted process cannot exceed its restrictions.
+7. A Pane client cannot read other windows, capture the screen, or log
+   keys without a user grant.
+8. No unsolicited network traffic at boot or idle.
+9. Inbound connections are refused by default.
+10. A bad TLS certificate is refused; a tampered package is refused.
+11. All cryptographic test vectors pass.
+12. Every fuzz harness runs its time budget with no crash.
+
+---
+
+# 20. Performance and resource efficiency
+
+The goal is a system that feels instant on modest hardware and never
+wastes the user's memory or battery. The method is: set budgets, design to
+them, measure, and only then optimise.
+
+## 20.1 Budgets
+
+Measured in QEMU with KVM, 4 CPUs, 512 MB, 1920×1080 unless stated.
+
+| Metric | Budget |
+|---|---|
+| Cold boot to interactive desktop | under 3 s |
+| Input event to pixels on screen | under 20 ms |
+| Composite one frame, 10 windows | under 8 ms |
+| Idle desktop CPU use | under 1% of one CPU |
+| Idle desktop memory after boot | under 96 MB |
+| Wake-up latency of an interactive thread | under 1 ms (idle CPU) |
+| Context switch | under 2 µs |
+| Null syscall round trip | under 300 ns |
+| Minor page fault | under 2 µs |
+| `kmalloc`/`kfree` pair, uncontended | under 100 ns |
+| Application start (small GUI app) | under 200 ms |
+| Sequential read from the page cache | over 1 GB/s |
+| TCP throughput to the host (virtio-net) | over 500 Mbit/s |
+
+Budgets are revised only by a dated entry in `docs/DECISIONS.md`.
+
+## 20.2 General rules
+
+1. **Measure before changing code for speed.** A performance commit quotes
+   the before and after numbers from `make bench`.
+2. **Sleep, never poll.** Nothing spins or wakes on a timer to check for
+   work. Use wait queues, `event_wait`, and interrupts. Idle CPUs `hlt`.
+3. **Do no work when nothing changed.** No damage, no composite; no dirty
+   pages, no write-back; no runnable threads, no tick work.
+4. **Copy at most once.** Pixels move by shared memory; file data is mapped
+   from the page cache; packets are handed over by reference where the
+   device allows.
+5. **Bound everything.** Every cache and queue has a size limit and an
+   eviction policy; unbounded growth is a memory leak with extra steps.
+6. **Keep the fast path lock-free or single-lock.** Per-CPU data first,
+   then fine-grained locks; never hold a spinlock across anything that can
+   block or take long.
+7. **Algorithmic cost first.** Choose the right data structure (hash, tree,
+   bitmap with summary levels) before tuning constants.
+8. **Security checks are not optional costs.** A budget is never met by
+   removing validation; find the time elsewhere.
+
+## 20.3 Memory
+
+- Demand paging and copy-on-write everywhere: memory is committed when
+  touched, shared until written.
+- A shared zero page backs untouched anonymous memory.
+- Read-only segments of the same executable or library are shared between
+  processes through the page cache.
+- Slab caches sized to objects, with per-CPU magazines (phase 8); empty
+  slabs are returned to the PMM under pressure.
+- The page cache uses otherwise-free memory and gives it back first:
+  watermarks (low/min), a reclaim thread with clock eviction, and only
+  then an out-of-memory policy that kills the largest non-essential
+  process with a notification — never a silent hang.
+- 2 MiB mappings for the HHDM and large kernel regions.
+- The PMM gets a summary bitmap or per-order free lists when `make bench`
+  shows first-fit scanning in the profile.
+- Per-process accounting (resident, shared, virtual) is exposed through
+  `sysinfo` so Gauge shows where memory goes.
+- Userland `malloc` returns freed pages to the kernel (`munmap`/
+  `madvise`-style) instead of holding them forever.
+
+## 20.4 CPU and scheduling
+
+- Interactive first: threads that sleep on input or IPC get a priority
+  boost and short latency; CPU-bound threads get longer slices at lower
+  priority. The compositor and the focused application's threads are
+  favoured.
+- Timer: 100 Hz periodic now; move to one-shot/tickless-idle when SMP
+  lands so idle CPUs take no interrupts.
+- Per-CPU run queues with work stealing; keep a thread on the CPU whose
+  cache it warmed unless the imbalance is significant.
+- TLB: `invlpg` for small ranges, PCID to avoid flushes on context switch
+  when the CPU supports it, batched shootdowns.
+- FPU/SSE state: save and restore with `xsave`/`xrstor` only for threads
+  that used it; the kernel stays `-mno-sse`.
+- Use `rep movsb`/`stosb` (ERMS) for kernel copies; SSE2/AVX2 blit and
+  blend routines in userland libgfx selected by CPUID at start-up.
+
+## 20.5 Storage and filesystem
+
+- One page cache (phase 9) with read-ahead for sequential access and
+  clustered write-back.
+- The journal batches metadata transactions; `fsync` forces only what the
+  file needs.
+- Dentry cache with LRU and negative entries.
+- Interrupt-driven DMA with request queueing (NCQ / virtqueue); never
+  polling I/O after boot.
+- Directory lookups in lumfs move from linked records to hashed or
+  tree-indexed directories once directories of 10,000 entries are
+  benchmarked.
+
+## 20.6 Graphics and the desktop
+
+- Never read from the framebuffer (it is write-combined; reads are
+  extremely slow). Compose in a back buffer in normal RAM, write damaged
+  rectangles out once.
+- Damage tracking end to end: widget → window → compositor → framebuffer.
+- Cache expensive results: blurred shadows, rasterised glyphs (LRU atlas),
+  scaled wallpapers, decoded icons.
+- Opaque-region tracking so windows fully hidden behind others are not
+  composited.
+- Frame pacing from a timer at the display rate; clients throttle to the
+  frame callback and never draw faster than they can be shown.
+- Animations are driven by time, not frame count, and stop scheduling
+  frames when they finish.
+- Long work never runs on a UI thread; applications use worker threads and
+  stay responsive (the toolkit warns in debug builds when an event handler
+  runs longer than 50 ms).
+
+## 20.7 Networking
+
+- virtio-net with multi-buffer receive rings; interrupt mitigation under
+  load; checksum computed once.
+- Packet buffers come from a pool, are reference-counted, and are passed
+  between the driver and `netd` by shared memory, not copied per packet.
+- Socket buffers are bounded with back-pressure; TCP uses window scaling
+  and delayed ACKs.
+
+## 20.8 Adapting to the hardware
+
+- Detect features with CPUID once at boot and record them in a
+  `CpuFeatures` struct; choose code paths from it (ERMS, SSE2/AVX2 in
+  userland, PCID, invariant TSC, x2APIC, RDRAND/RDSEED, SMEP/SMAP/UMIP).
+- Size caches and pools from the amount of RAM actually present, not from
+  constants (e.g. page-cache limits and slab magazine sizes as fractions).
+- Use every CPU the firmware reports; never assume four.
+- Prefer the fastest clock source available (invariant TSC calibrated
+  against the HPET, falling back to the HPET).
+- Prefer paravirtual devices (virtio) when present, emulated hardware
+  (AHCI, e1000) otherwise.
+- Read the framebuffer's real geometry and pixel format; never assume a
+  resolution.
+
+## 20.9 Measuring
+
+- `make bench` boots a benchmark build headless and prints one line per
+  metric in §20.1 that exists at the current phase.
+- `docs/BENCH.md` records the numbers at the end of every phase, with the
+  commit hash and the QEMU configuration. A regression of more than 10%
+  on any line must be explained in `docs/DECISIONS.md` or fixed.
+- The kernel keeps cheap counters (context switches, page faults,
+  syscalls, interrupts, compositor frame time, cache hits) exposed through
+  `sysinfo` and shown in Gauge.
+- A sampling profiler (timer interrupt records RIP, dumped by a shell
+  command and symbolised with the embedded table) is the first tool to
+  reach for; guess-driven optimisation is not allowed.
+
+---
+
+# 21. Implementation procedure
+
+Follow these steps, in order, for every feature, fix, or change.
+
+1. **Read.** `docs/STATUS.md`, `docs/TO_FINISH.md`, the phase text in §5
+   and its §5A rows, the design section for the subsystem, and any
+   `docs/DECISIONS.md` entries that mention it. Read the code you are about
+   to change and its callers.
+2. **Threat-check.** Write down (in the session, not a file) which trust
+   boundaries the change touches (§19.1 item 3), what input an attacker
+   controls there, and what the worst outcome is. If the change exposes
+   user data — keys, screen, clipboard, files, network — name which §19.8
+   rule covers it. If no rule covers it, stop and ask the owner.
+3. **Budget-check.** Name the §20.1 budgets the change can affect and how
+   it will be measured.
+4. **Design the smallest version** that meets the phase's acceptance
+   criteria. State the data structures, the locking (which lock, what
+   rank, can it sleep, interrupt-safe or not), the failure paths, and how
+   memory is bounded. If this deviates from the spec, propose it first
+   (§0 rule 9).
+5. **Write the test first** or alongside: a kernel self-test (`test
+   <name>`), an integration `.expect` file, a fuzz harness for any parser
+   or boundary, and a benchmark line for any budgeted path. Include the
+   negative tests: the bad pointer, the oversized length, the denied
+   permission.
+6. **Implement** to the coding standards in §4 and the kernel rules in
+   §19.3. Handle every error; release everything on every failure path;
+   no placeholders.
+7. **Self-review against the checklists** before building:
+   - *Memory safety:* every index bounded, every size checked for
+     overflow, every allocation checked and freed exactly once, no use
+     after free, no uninitialised data returned.
+   - *Boundaries:* nothing untrusted used before validation; copied once.
+   - *Concurrency:* which lock protects each shared field; lock order
+     respected; nothing sleeps under a spinlock; interrupt-safe where
+     called from interrupts.
+   - *Privacy:* nothing sensitive logged; secrets zeroed; no new data
+     leaves the process or machine.
+   - *Performance:* no polling, no unbounded structure, no extra copy on
+     a hot path.
+8. **Build and verify.** `make iso`, run it, and paste the real output.
+   Run the new test, then `make test`. From phase 6 run `make bench` if a
+   budgeted path changed; from phase 7 run `make fuzz` if a boundary
+   changed. When something fails twice, reduce it to the smallest
+   reproducing case and use §15 before a third attempt.
+9. **Document.** Update the files in `docs/` per §22.
+10. **Commit** one logical change with the message format in §0 rule 4.
+    Never commit with a failing test, an unmet acceptance criterion
+    claimed as met, or secrets in the tree.
+
+**When fixing a bug:** reproduce it first, add a test that fails because of
+it, fix the cause rather than the symptom, confirm the test passes, and
+check whether the same mistake exists elsewhere (search for the pattern).
+If the bug crossed a trust boundary, treat it as a security bug: record it
+in `docs/DECISIONS.md` with what class of bug it was and what rule or check
+now prevents the class.
+
+**When removing or replacing something:** search for every user, migrate
+them in the same commit or a preceding one, delete the old code completely,
+and note the replacement in `docs/DECISIONS.md` if the design changed.
+
+---
+
+# 22. Document maintenance
+
+Each file in `docs/` has one job. Read a file completely before editing it.
+Keep facts in exactly one file and link to it from the others.
+
+| File | Job | Update when | How | Why |
+|---|---|---|---|---|
+| `SPEC.md` | What is being built and the rules for building it | The owner changes a requirement, or approves a proposed change | Edit the affected sections, keep section and syscall numbers stable, bump the version line, add a `DECISIONS.md` entry describing old, new and why. Never edit silently | It is the contract; a spec that drifts from the owner's intent makes every later session wrong |
+| `DECISIONS.md` | Why the system is the way it is | Any non-obvious design choice, any deviation from the spec, any security bug class found, any budget change, any open question for the owner | Append a dated entry at the bottom: the choice, the reasoning, the alternatives rejected. Never rewrite old entries; supersede them with a new entry that names the old one | Future sessions have no memory; this file is how they avoid re-deciding or undoing a decision |
+| `STATUS.md` | What is true right now | The end of every session, without exception | Rewrite the sections in place so the file describes the present: phase, what works, half-done, next, known bugs. Only claim what was verified this session or is unchanged since it was verified | The next session starts here; a stale status file causes wasted or destructive work |
+| `TO_FINISH.md` | What remains, in order | A phase or checklist item is finished, added, re-scoped or re-ordered | Tick or move items; keep the phase list matching §5 and §5A; update the "right now" section and the date | It is the pick-up list; it must match the spec's phases and the real state |
+| `BENCH.md` | Measured performance over time | The end of each phase from phase 6, and whenever a budgeted path changes | Append a dated block: commit hash, QEMU configuration, one line per metric | Regressions are only visible against recorded numbers |
+| `SYSCALLS.md` | The syscall reference | Never by hand | Generated from `kernel/syscall/table.def` by the build | One source of truth for numbers and signatures |
+| `PROTOCOL.md` | Pane wire format | The protocol in §9 changes | Edit together with the code and bump the protocol version | Clients and server must agree byte for byte |
+
+Rules for all of them:
+- Dates are absolute (`2026-10-03`), never "yesterday" or "last session".
+- State facts that were verified, and say when something was not verified.
+- When two files disagree, the order of authority is: `SPEC.md` for
+  requirements, `DECISIONS.md` for recorded deviations from it, the code
+  and test output for what actually exists. Fix the disagreement in the
+  same session it is found.
+- A change to the code that makes any sentence in `docs/` untrue is not
+  finished until that sentence is fixed.
+
+| File | Job | Update when | How | Why |
+|---|---|---|---|---|
+| `CHANGELOG.md` | What changed in each released version | Every commit that changes behaviour adds a line under "Unreleased"; a release renames that block | §23 | Users and later sessions must be able to see what a version contains, security fixes first |
+
+---
+
+# 23. Versioning and releases
+
+## 23.1 The version number
+
+Three numbers, `MAJOR.MINOR.PATCH`. No letters.
+
+**Before 1.0: `0.PHASE.PATCH`.**
+- `PHASE` is the number of the last completed phase in §5 (all §5 and §5A
+  acceptance criteria demonstrated). Completing phase 4 produces `0.4.0`.
+- `PATCH` counts every release made between phase completions: bug fixes,
+  performance fixes, security fixes, small additions. It resets to 0 when
+  `PHASE` advances.
+- `1.0.0` is released when every item of §16 is demonstrated.
+
+**From 1.0:**
+- `MAJOR` increases when existing programs can break: an incompatible
+  change to the syscall ABI, the Pane protocol, an on-disk format without
+  an automatic upgrade, or a libc interface.
+- `MINOR` increases for new features that keep compatibility.
+- `PATCH` increases for bug, performance and security fixes only.
+
+## 23.2 Where the version lives
+
+- The file `VERSION` at the repository root holds the number and nothing
+  else. It is the only place the number is written by hand. The build reads
+  it for the boot banner, `uname`, the About window, and the ISO name
+  (`lumen-<version>.iso`).
+- `make RELEASE=1`, run on the tagged release commit with a clean working
+  tree, produces a **release build** that shows the plain number. Every
+  other build is a **development build** and shows
+  `<VERSION>-dev+<short commit hash>`, so a test build can never be mistaken
+  for a release. Between releases `VERSION` holds the next version to be
+  released.
+- Only `kernel/lib/version.cpp` is compiled with the version and build date;
+  everything else calls `lumen_version()` / `lumen_build_date()`.
+- Every release is a git tag `v<VERSION>` on the release commit.
+
+## 23.3 The changelog
+
+`docs/CHANGELOG.md`, newest version first. Each version has a date and
+entries under these headings, in this order, omitting empty ones:
+
+- **Security** — anything that fixes or hardens a trust boundary. A version
+  with a Security entry is marked `(security release)` in its title.
+- **Fixed** — bug fixes.
+- **Performance** — with the before and after numbers from `make bench`
+  once it exists.
+- **Added**, **Changed**, **Removed**.
+
+Entries are written for the person using the OS: what changed for them, in
+one line. The top block is always `## Unreleased`; a commit that changes
+behaviour adds its line there in the same commit.
+
+## 23.4 Release procedure
+
+1. `make test` passes; from phase 6 `make bench` is recorded in
+   `docs/BENCH.md`; from phase 7 `make fuzz` passes.
+2. Set `VERSION` (per §23.1) and rename `## Unreleased` in the changelog to
+   `## <version> — <date>`, adding a fresh empty `## Unreleased` above it.
+3. Update `docs/STATUS.md`. Commit as `release: <version>`.
+4. Tag the commit `v<version>`. Build from the tag with
+   `make RELEASE=1 dist`, which writes `dist/lumen-<version>.iso`.
+5. Bump `VERSION` to the next patch number in a following commit
+   (`release: begin <next>`), so development builds are labelled correctly.
+
+A security fix is released on its own as soon as it is verified; it does not
+wait for other work.
+
+## 23.5 Updates on an installed system (phase 18)
+
+`pkg upgrade` compares installed versions against the signed repository
+index, shows the changelog entries for what is new (Security first),
+installs only when the user confirms, and keeps the previous kernel as a
+boot entry. The OS never downloads or installs an update on its own.
