@@ -32,8 +32,17 @@ int console_getc() {
 }
 
 void console_idle(bool spin) {
-    if (gui_active()) gui_pump();
-    else fbconsole_flush();
+    if (gui_active()) {
+        // While the desktop is up we poll rather than halt: some hypervisor
+        // backends (VirtualBox on Hyper-V) stop delivering the periodic timer
+        // interrupt to a halted vCPU, which would freeze the compositor and
+        // input. Spinning keeps it responsive. The scheduler (phase 6) gives
+        // the compositor its own thread and restores hlt in the idle thread.
+        gui_pump();
+        cpu_relax();
+        return;
+    }
+    fbconsole_flush();
     if (spin) cpu_relax();
     else cpu_halt();
 }

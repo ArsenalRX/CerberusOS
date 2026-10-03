@@ -7,6 +7,7 @@
 #include <arch/x86_64/io.h>
 #include <drivers/ioapic.h>
 #include <drivers/lapic.h>
+#include <drivers/ps2.h>
 #include <drivers/ps2mouse.h>
 #include <lib/kprintf.h>
 
@@ -99,18 +100,15 @@ void handle_byte(u8 b) {
 bool init_locked();
 
 void irq_handler(InterruptFrame*, void*) {
-    while (true) {
-        u8 st = inb(PORT_STATUS);
-        if (!(st & STATUS_OUTPUT_FULL)) break;
-        u8 b = inb(PORT_DATA);
-        if (st & STATUS_FROM_AUX) handle_byte(b);
-        // Keyboard bytes arriving here belong to IRQ 1's handler; ignoring them
-        // is harmless because it drains its own buffer on its interrupt.
-    }
+    ps2_drain();
     lapic_eoi();
 }
 
 } // namespace
+
+void ps2mouse_handle_byte(u8 b) {
+    if (g_present) handle_byte(b);
+}
 
 bool ps2mouse_init() {
     // The keyboard IRQ handler would otherwise consume the controller's

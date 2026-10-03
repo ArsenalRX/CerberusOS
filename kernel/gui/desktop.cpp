@@ -21,6 +21,7 @@
 #include <lib/kprintf.h>
 #include <lib/panic.h>
 #include <lib/string.h>
+#include <lib/version.h>
 #include <mm/early_map.h>
 #include <mm/pmm.h>
 
@@ -476,9 +477,9 @@ void paint_about(Surface& s) {
     draw_text(s, g.font, 26, 96, "A hybrid-kernel operating system, built from scratch.", theme::TEXT_MUTED);
     char line[96];
     int y = 130;
-    ksnprintf(line, sizeof line, "%s (x86-64)", LUMEN_VERSION);
+    ksnprintf(line, sizeof line, "%s (x86-64)", lumen_version());
     y = paint_kv(s, y, "Version", line);
-    y = paint_kv(s, y, "Built", LUMEN_BUILD_DATE);
+    y = paint_kv(s, y, "Built", lumen_build_date());
     y = paint_kv(s, y, "Bootloader", g_boot_info.bootloader);
     char brand[49];
     cpuid_brand(brand);
@@ -714,6 +715,15 @@ void draw_menu(Surface& back) {
     }
 }
 
+// Framebuffer rows are copied with plain 32-bit stores, never `rep movsb`:
+// VirtualBox's Hyper-V backend emulates string instructions that touch video
+// memory one byte per exit and effectively never finishes a frame.
+inline void copy_to_fb(int x, int y, int w) {
+    const u32* src = g.back.row(y) + x;
+    u32* dst = g.fb.row(y) + x;
+    for (int i = 0; i < w; i++) dst[i] = src[i];
+}
+
 void draw_cursor_on_fb() {
     Rect cr = cursor_rect(g.mx, g.my);
     blit_alpha(g.fb, cr.x, cr.y, g_cursor);
@@ -726,7 +736,7 @@ void draw_cursor_on_fb() {
 void present(const Rect& r) {
     Rect c = r.intersect({0, 0, g.W, g.H});
     if (c.empty()) return;
-    for (int y = c.y; y < c.bottom(); y++) memcpy(g.fb.row(y) + c.x, g.back.row(y) + c.x, (usize)c.w * 4);
+    for (int y = c.y; y < c.bottom(); y++) copy_to_fb(c.x, y, c.w);
     g.stats.last_present_pixels += (u64)c.w * c.h;
     if (c.overlaps(cursor_rect(g.mx, g.my))) draw_cursor_on_fb();
 }
@@ -776,7 +786,7 @@ void move_cursor(int nx, int ny) {
     g.my = ny;
     // Restore what was under the cursor, then draw it at the new place.
     Rect c = old.intersect({0, 0, g.W, g.H});
-    for (int y = c.y; y < c.bottom(); y++) memcpy(g.fb.row(y) + c.x, g.back.row(y) + c.x, (usize)c.w * 4);
+    for (int y = c.y; y < c.bottom(); y++) copy_to_fb(c.x, y, c.w);
     draw_cursor_on_fb();
 }
 
@@ -1064,7 +1074,7 @@ void build_wallpaper() {
         x += g.font_big.width * scale;
     }
     char line[64];
-    ksnprintf(line, sizeof line, "Lumen %s  |  preview desktop", LUMEN_VERSION);
+    ksnprintf(line, sizeof line, "Lumen %s  |  preview desktop", lumen_version());
     int tw = measure_text(g.font, line);
     draw_text(s, g.font, g.W - tw - 16, g.H - theme::PANEL_H - 26, line, rgba(255, 255, 255, 70));
 }
@@ -1126,7 +1136,8 @@ bool gui_init() {
     create_window(Kind::Terminal, "Terminal", {56, 56, 740, 470});
     damage_all();
     flush_frame();
-    kprintf("gui: desktop up at %dx%d, %d windows\n", g.W, g.H, g.order_count);
+    kprintf("gui: desktop up at %dx%d, %d windows, first frame %lu us (%lu px to the framebuffer)\n", g.W, g.H,
+            g.order_count, (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_present_pixels);
     return true;
 }
 

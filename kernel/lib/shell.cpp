@@ -5,6 +5,7 @@
 #include <boot/bootinfo.h>
 #include <drivers/lapic.h>
 #include <drivers/refclock.h>
+#include <gui/desktop.h>
 #include <kernel/ktest.h>
 #include <lib/console.h>
 #include <lib/kprintf.h>
@@ -26,6 +27,8 @@ int cmd_sym(int argc, char** argv);
 int cmd_test(int argc, char** argv);
 int cmd_idle(int argc, char** argv);
 int cmd_timermode(int argc, char** argv);
+int cmd_gui(int argc, char** argv);
+int cmd_irqs(int argc, char** argv);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -40,10 +43,31 @@ const ShellCommandEntry COMMANDS[] = {
     {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
     {"idle", "idle hlt|spin: how the shell waits for input (diagnostic)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
+    {"gui", "compositor statistics", cmd_gui},
+    {"irqs", "interrupt counts per vector", cmd_irqs},
     {"panic", "trigger a kernel panic", cmd_panic},
     {"halt", "halt the CPU", cmd_halt},
     {"reboot", "reset the machine", cmd_reboot},
 };
+
+int cmd_irqs(int, char**) {
+    for (unsigned v = 0; v < 256; v++) {
+        u64 n = interrupt_count((u8)v);
+        if (n) kprintf("  vector %3u (%#04x): %lu\n", v, v, (unsigned long)n);
+    }
+    return 0;
+}
+
+int cmd_gui(int, char**) {
+    if (!gui_active()) {
+        kprintf("gui: not active\n");
+        return 1;
+    }
+    GuiStats s = gui_stats();
+    kprintf("gui: %lu frames, last frame %lu us, last present %lu px, %u windows\n", (unsigned long)s.frames,
+            (unsigned long)s.last_frame_us, (unsigned long)s.last_present_pixels, s.windows);
+    return 0;
+}
 
 int cmd_idle(int argc, char** argv) {
     if (argc > 1 && strcmp(argv[1], "spin") == 0) g_idle_spin = true;

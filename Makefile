@@ -29,7 +29,16 @@ KERNEL_SYM := $(BUILD)/kernel/kernel.sym
 ISO        := $(BUILD)/lumen.iso
 LIMINE_BIN := $(BUILD)/limine-host/limine
 
-VERSION    := 0.0.1
+# Version (docs/SPEC.md §23): the number lives in ./VERSION. `make RELEASE=1`
+# builds a release (plain number); every other build is labelled as a
+# development build with the commit it was built from.
+VERSION_BASE := $(strip $(shell cat $(ROOT)/VERSION))
+GIT_HASH     := $(shell git -c safe.directory='*' -C $(ROOT) rev-parse --short HEAD 2>/dev/null)
+ifeq ($(RELEASE),1)
+VERSION    := $(VERSION_BASE)
+else
+VERSION    := $(VERSION_BASE)-dev$(if $(GIT_HASH),+$(GIT_HASH))
+endif
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # ---------------------------------------------------------------------------
@@ -43,8 +52,7 @@ KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
              -nostdlib -nostdinc++ -fno-builtin \
              -Wall -Wextra -Werror=return-type -Wno-unused-parameter \
              -O2 -g -MMD -MP \
-             -I$(ROOT)/kernel -I$(ROOT)/tests -I$(LIMINE) \
-             -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
+             -I$(ROOT)/kernel -I$(ROOT)/tests -I$(LIMINE)
 DEBUG ?= 1
 ifeq ($(DEBUG),1)
 KCXXFLAGS += -DLUMEN_DEBUG
@@ -61,6 +69,19 @@ KERNEL_OBJS := $(patsubst $(ROOT)/%.cpp,$(BUILD)/%.o,$(KERNEL_CPP)) \
                $(patsubst $(ROOT)/%.S,$(BUILD)/%.o,$(KERNEL_S)) \
                $(patsubst $(ROOT)/%.asm,$(BUILD)/%.o,$(KERNEL_ASM))
 KERNEL_DEPS := $(KERNEL_OBJS:.o=.d)
+
+# version.o is the only object that sees the version and build date. It is
+# rebuilt when the version string changes (the stamp) or any other object
+# does, so the banner always describes the image it is linked into.
+VERSION_OBJ   := $(BUILD)/kernel/lib/version.o
+VERSION_STAMP := $(BUILD)/version.stamp
+$(VERSION_OBJ): KCXXFLAGS += -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
+$(VERSION_OBJ): $(VERSION_STAMP) $(filter-out $(VERSION_OBJ),$(KERNEL_OBJS))
+
+.PHONY: FORCE
+$(VERSION_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(VERSION)' | cmp -s - $@ || echo '$(VERSION)' > $@
 
 # ---------------------------------------------------------------------------
 # QEMU invocation (docs/SPEC.md §3, exact)

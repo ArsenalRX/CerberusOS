@@ -4,6 +4,7 @@
 #include <arch/x86_64/io.h>
 #include <drivers/ioapic.h>
 #include <drivers/lapic.h>
+#include <drivers/ps2.h>
 #include <drivers/ps2kbd.h>
 
 namespace {
@@ -126,16 +127,13 @@ void handle_scancode(u8 sc) {
 }
 
 void irq_handler(InterruptFrame*, void*) {
-    while (inb(PORT_STATUS) & 1) {
-        u8 st = inb(PORT_STATUS);
-        u8 b = inb(PORT_DATA);
-        if (st & 0x20) continue;        // aux (mouse) byte: not ours
-        handle_scancode(b);
-    }
+    ps2_drain();
     lapic_eoi();
 }
 
 } // namespace
+
+void ps2kbd_handle_byte(u8 b) { handle_scancode(b); }
 
 void ps2kbd_init() {
     // Drain anything the firmware left in the output buffer.

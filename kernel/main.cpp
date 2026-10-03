@@ -22,6 +22,7 @@
 #include <lib/panic.h>
 #include <lib/shell.h>
 #include <lib/symbols.h>
+#include <lib/version.h>
 #include <mm/pmm.h>
 
 namespace {
@@ -39,7 +40,7 @@ void print_banner() {
     kprintf(" | |__| |_| | | | | | |  __/ | | |\n");
     kprintf(" |_____\\__,_|_| |_| |_|\\___|_| |_|\n");
     kprintf("\n");
-    kprintf("Lumen %s (x86-64), built %s\n", LUMEN_VERSION, LUMEN_BUILD_DATE);
+    kprintf("Lumen %s (x86-64), built %s\n", lumen_version(), lumen_build_date());
     kprintf("bootloader: %s\n", bi.bootloader);
     kprintf("cpu: %s, %s, %lu cpu(s), bsp lapic %u\n", vendor, brand,
             (unsigned long)bi.cpu_count, bi.bsp_lapic_id);

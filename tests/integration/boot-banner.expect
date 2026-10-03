@@ -4,7 +4,8 @@ limine: Loading executable `boot():/boot/lumen.elf`
 lumen: serial console up
 lumen: boot info collected
 lumen: framebuffer console
-Lumen 0.0.1 (x86-64), built
+Lumen 0.
+(x86-64), built
 bootloader: Limine
 cpu:
 kernel: phys

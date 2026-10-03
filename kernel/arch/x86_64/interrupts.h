@@ -32,6 +32,8 @@ bool interrupt_register(u8 vector, InterruptHandler fn, void* ctx = nullptr);
 void interrupt_unregister(u8 vector);
 
 const char* exception_name(u8 vector);
+// Number of times a vector has been dispatched since boot (diagnostics).
+u64 interrupt_count(u8 vector);
 
 // Prints the full register set, decodes the error code, and walks the stack.
 void dump_frame(const InterruptFrame& f);

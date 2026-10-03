@@ -156,7 +156,12 @@ void interrupt_unregister(u8 vector) { g_handlers[vector] = {nullptr, nullptr}; 
 
 const char* exception_name(u8 vector) { return vector < 32 ? EXCEPTION_NAMES[vector] : "IRQ"; }
 
+u64 g_interrupt_counts[256];
+
+u64 interrupt_count(u8 vector) { return g_interrupt_counts[vector]; }
+
 extern "C" void interrupt_dispatch(InterruptFrame* f) {
+    g_interrupt_counts[f->vector]++;
     Registration& r = g_handlers[f->vector];
     if (r.fn) {
         r.fn(f, r.ctx);
