@@ -75,29 +75,26 @@ Result<File*> file_open_archive(const char* path) {
 }
 
 File* file_ref(File* f) {
-    u64 irq = interrupts_save();
-    f->refs++;
-    interrupts_restore(irq);
+    __atomic_add_fetch(&f->refs, 1, __ATOMIC_RELAXED);
     return f;
 }
 
 void file_unref(File* f) {
-    u64 irq = interrupts_save();
-    bool last = --f->refs == 0;
-    interrupts_restore(irq);
-    if (last) kfree(f);
+    if (__atomic_sub_fetch(&f->refs, 1, __ATOMIC_ACQ_REL) == 0) kfree(f);
 }
 
 Result<usize> file_read(File* f, void* buf, usize n) {
     if (!f->readable) return Error::BadFd;
     if (f->kind == FileKind::Console) return (usize)0;
-    u64 irq = interrupts_save();        // the offset is shared after fork
-    usize left = f->offset < f->size ? f->size - f->offset : 0;
-    usize take = n < left ? n : left;
-    const u8* from = f->data + f->offset;
-    f->offset += take;
-    interrupts_restore(irq);
-    memcpy(buf, from, take);
+    // The offset is shared after fork: claim a range with compare-and-swap
+    // so two readers on different CPUs never get the same bytes.
+    usize at = __atomic_load_n(&f->offset, __ATOMIC_RELAXED), take;
+    do {
+        usize left = at < f->size ? f->size - at : 0;
+        take = n < left ? n : left;
+    } while (take && !__atomic_compare_exchange_n(&f->offset, &at, at + take, false, __ATOMIC_ACQ_REL,
+                                                    __ATOMIC_RELAXED));
+    memcpy(buf, f->data + at, take);
     return take;
 }
 
@@ -106,8 +103,8 @@ Result<usize> file_write(File* f, const void* buf, usize n) {
     // The console is the only writable kind. Like one kprintf, one write is
     // one uninterrupted piece of output (the caller hands over at most a
     // small chunk), so a program's line is not split by another thread's.
-    u64 irq = interrupts_save();
+    console_lock();
     console_write((const char*)buf, n);
-    interrupts_restore(irq);
+    console_unlock();
     return n;
 }

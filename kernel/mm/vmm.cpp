@@ -9,9 +9,18 @@
 //                mappings); unmapping must not free it.
 // Frames the VMM owns are always mapped with 4 KiB leaves and carry a
 // reference count in g_refs (one per address space that maps them).
+//
+// Locking (lib/lock_order.h): each AddressSpace has a spinlock covering its
+// page tables and VMA list. The reference counts are shared between spaces
+// and have their own lock, taken inside a space lock. A change that removes
+// or restricts a translation is followed, before the space lock is released
+// and before any frame is given back, by a TLB shootdown to the other CPUs
+// that may have cached it.
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
 #include <arch/x86_64/interrupts.h>
+#include <arch/x86_64/percpu.h>
+#include <arch/x86_64/smp.h>
 #include <boot/bootinfo.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -63,11 +72,20 @@ constexpr u64 PF_RESERVED = 1 << 3;
 constexpr u64 PF_FETCH = 1 << 4;
 
 AddressSpace g_kernel_space;
-AddressSpace* g_current = &g_kernel_space;
-VmmStats g_stats;
+VmmStats g_stats;               // updated with atomic adds: no one lock covers every space
 u32* g_refs = nullptr;          // per-frame count of address spaces mapping an owned frame
 u64 g_ref_frames = 0;
-bool g_need_flush = false;      // a huge leaf was split; the whole TLB must be flushed
+Spinlock g_frames_lock = SPINLOCK_RANKED(lock_rank::VMM_FRAMES);   // protects g_refs
+bool g_need_flush = false;      // a huge leaf of the kernel half was split (kernel-space lock held):
+                                // every CPU must flush its whole TLB
+
+inline void stat_add(u64& field, i64 n) { __atomic_fetch_add(&field, (u64)n, __ATOMIC_RELAXED); }
+
+// The address space loaded on this CPU. Interrupts must be off.
+inline AddressSpace* current_space() {
+    AddressSpace* as = percpu()->space;
+    return as ? as : &g_kernel_space;
+}
 
 
 // ------------------------------------------------------- table primitives --
@@ -78,13 +96,13 @@ inline u64 leaf_addr_mask(int level) { return level == 1 ? ADDR_4K : level == 2 
 
 paddr_t alloc_table() {
     paddr_t p = pmm_alloc_zeroed(1);
-    if (p != PMM_NO_MEMORY) g_stats.table_frames++;
+    if (p != PMM_NO_MEMORY) stat_add(g_stats.table_frames, 1);
     return p;
 }
 
 void free_table(paddr_t p) {
     pmm_free(p, 1);
-    g_stats.table_frames--;
+    stat_add(g_stats.table_frames, -1);
 }
 
 void flush_all() {
@@ -98,8 +116,15 @@ void flush_all() {
     g_need_flush = false;
 }
 
+// This CPU's whole TLB, and everyone else's.
+void flush_everywhere() {
+    flush_all();
+    tlb_shootdown(nullptr, 0, 0);
+}
+
+// This CPU's TLB entry for v; the caller follows up with tlb_shootdown.
 inline void flush_page(const AddressSpace* as, vaddr_t v) {
-    if (as->is_kernel() || as == g_current) invlpg(v);
+    if (as->is_kernel() || as == current_space()) invlpg(v);
 }
 
 struct Slot {
@@ -190,23 +215,42 @@ inline u32& ref_of(paddr_t p) {
 paddr_t anon_alloc() {
     paddr_t p = pmm_alloc_zeroed(1);
     if (p == PMM_NO_MEMORY) return p;
-    ref_of(p) = 1;
-    g_stats.anon_frames++;
+    ref_of(p) = 1;              // nobody else can see the frame yet
+    stat_add(g_stats.anon_frames, 1);
     return p;
 }
 
 void anon_release(paddr_t p) {
+    g_frames_lock.lock();
     u32& r = ref_of(p);
     ASSERT_ALWAYS(r > 0);
-    if (--r == 0) {
+    bool last = --r == 0;
+    g_frames_lock.unlock();
+    if (last) {
         pmm_free(p, 1);
-        g_stats.anon_frames--;
+        stat_add(g_stats.anon_frames, -1);
     }
 }
 
 // Clears every mapping in [virt, virt + size), freeing frames the VMM owns.
 // Fails only if a huge leaf must be split and no table frame is available.
+// The space lock is held. Frames are given back only after the other CPUs
+// have dropped their translations: a frame that is free may be handed to
+// someone else at once, and a stale TLB entry would then reach into it.
 Result<void> clear_range(AddressSpace* as, vaddr_t virt, usize size) {
+    constexpr usize BATCH = 64;
+    paddr_t frames[BATCH];
+    usize pending = 0;
+    bool dirty = false;                 // entries cleared since the last shootdown
+    vaddr_t settled = virt;             // other CPUs have been told about everything below this
+    auto settle = [&](vaddr_t upto) {
+        if (dirty) tlb_shootdown(as, settled, upto - settled);
+        for (usize i = 0; i < pending; i++) anon_release(frames[i]);
+        pending = 0;
+        dirty = false;
+        settled = upto;
+    };
+
     vaddr_t end = virt + size;
     vaddr_t v = virt;
     while (v < end) {
@@ -220,20 +264,26 @@ Result<void> clear_range(AddressSpace* as, vaddr_t virt, usize size) {
             continue;
         }
         if (s.level > 1 && (slot_start < v || slot_end > end || slot_end <= slot_start)) {
-            if (!split_huge(s.entry, s.level)) return Error::NoMemory;
+            if (!split_huge(s.entry, s.level)) {
+                settle(v);
+                return Error::NoMemory;
+            }
             continue;
         }
         u64 e = *s.entry;
         *s.entry = 0;
+        dirty = true;
+        flush_page(as, v);
         if (!(e & PTE_NOFREE)) {
             ASSERT_ALWAYS(s.level == 1);
-            anon_release(e & ADDR_4K);
+            frames[pending++] = e & ADDR_4K;
+            if (pending == BATCH) settle(slot_end);
         }
-        flush_page(as, v);
         if (slot_end <= v) break;
         v = slot_end;
     }
-    if (g_need_flush) flush_all();
+    settle(end);
+    if (g_need_flush) flush_everywhere();
     return {};
 }
 
@@ -261,7 +311,7 @@ void page_fault(InterruptFrame* f, void*) {
     if (from_user) {
         // A user program touched memory it has not been given yet (demand
         // paging, copy-on-write) or is not allowed to touch at all.
-        if (user_addr && g_current->handle_fault(addr, f->error)) return;
+        if (user_addr && current_space()->handle_fault(addr, f->error)) return;
         user_exception(f);
     }
     if (user_addr) {
@@ -269,7 +319,7 @@ void page_fault(InterruptFrame* f, void*) {
         // only there is a fault resolved, or turned into an error return.
         // Anywhere else it is a kernel bug (and SMAP makes the CPU say so).
         if (usercopy_is_access(f->rip)) {
-            if (g_current->handle_fault(addr, f->error)) return;
+            if (current_space()->handle_fault(addr, f->error)) return;
             if (usercopy_fixup(f, addr, f->error)) return;
         }
     } else if (g_kernel_space.handle_fault(addr, f->error)) {
@@ -321,12 +371,10 @@ void harden_table(u64* table, int level, vaddr_t base, usize first, HardenCounts
 // ============================================================ AddressSpace ==
 
 Result<AddressSpace*> AddressSpace::create() {
-    u64 irq = interrupts_save();
     AddressSpace* as = (AddressSpace*)kzalloc(sizeof(AddressSpace));
     paddr_t root = as ? alloc_table() : PMM_NO_MEMORY;
     if (root == PMM_NO_MEMORY) {
         if (as) kfree(as);
-        interrupts_restore(irq);
         return Error::NoMemory;
     }
     // The kernel half is shared: every upper PML4 slot was populated at
@@ -335,14 +383,15 @@ Result<AddressSpace*> AddressSpace::create() {
     as->root_ = root;
     as->vmas_ = nullptr;
     as->kernel_ = false;
-    interrupts_restore(irq);
+    as->lock_.rank = lock_rank::VMM_USER;
     return as;
 }
 
 void AddressSpace::destroy() {
+    // Nobody else refers to the space any more, so no lock is needed; it
+    // must not be loaded on any CPU.
     ASSERT_ALWAYS(!kernel_);
-    ASSERT_ALWAYS(this != g_current);
-    u64 irq = interrupts_save();
+    for (u32 cpu = 0; cpu < MAX_CPUS; cpu++) ASSERT_ALWAYS(g_percpu[cpu].space != this);
     u64* pml4 = table_at(root_);
     for (usize i = 0; i < 256; i++)
         if (pml4[i] & PTE_P) free_user_table(pml4[i] & ADDR_4K, 3);
@@ -353,12 +402,17 @@ void AddressSpace::destroy() {
         v = next;
     }
     kfree(this);
-    interrupts_restore(irq);
 }
 
 Result<void> AddressSpace::map(vaddr_t virt, paddr_t phys, usize size, u32 flags) {
+    lock_.lock();
+    Result<void> r = map_locked(virt, phys, size, flags);
+    lock_.unlock();
+    return r;
+}
+
+Result<void> AddressSpace::map_locked(vaddr_t virt, paddr_t phys, usize size, u32 flags) {
     if (!range_valid(virt, size, flags, kernel_) || (phys & (PAGE_SIZE - 1))) return Error::Invalid;
-    u64 irq = interrupts_save();
     u64 lf = leaf_flags(flags) | PTE_NOFREE;
     usize done = 0;
     Error err = Error::None;
@@ -379,7 +433,7 @@ Result<void> AddressSpace::map(vaddr_t virt, paddr_t phys, usize size, u32 flags
         }
         if (huge) {
             *e = p | lf | PTE_HUGE;
-            g_stats.huge_mappings++;
+            stat_add(g_stats.huge_mappings, 1);
             done += SIZE_2M;
         } else {
             *e = p | lf;
@@ -387,8 +441,7 @@ Result<void> AddressSpace::map(vaddr_t virt, paddr_t phys, usize size, u32 flags
         }
     }
     if (err != Error::None && done) (void)clear_range(this, virt, done);
-    if (g_need_flush) flush_all();
-    interrupts_restore(irq);
+    if (g_need_flush) flush_everywhere();
     if (err != Error::None) return err;
     return {};
 }
@@ -396,15 +449,22 @@ Result<void> AddressSpace::map(vaddr_t virt, paddr_t phys, usize size, u32 flags
 Result<void> AddressSpace::unmap(vaddr_t virt, usize size) {
     if (!size || ((virt | size) & (PAGE_SIZE - 1)) || virt + size < virt) return Error::Invalid;
     if (kernel_ ? virt < KERNEL_HALF : virt + size > USER_MAX) return Error::Invalid;
-    u64 irq = interrupts_save();
+    lock_.lock();
     Result<void> r = clear_range(this, virt, size);
-    interrupts_restore(irq);
+    lock_.unlock();
     return r;
 }
 
 Result<void> AddressSpace::protect(vaddr_t virt, usize size, u32 flags) {
+    lock_.lock();
+    Result<void> r = protect_locked(virt, size, flags);
+    lock_.unlock();
+    return r;
+}
+
+Result<void> AddressSpace::protect_locked(vaddr_t virt, usize size, u32 flags) {
     if (!range_valid(virt, size, flags, kernel_)) return Error::Invalid;
-    u64 irq = interrupts_save();
+    bool changed = false;
     vaddr_t end = virt + size;
     vaddr_t v = virt;
     Error err = Error::None;
@@ -430,21 +490,22 @@ Result<void> AddressSpace::protect(vaddr_t virt, usize size, u32 flags) {
             if (e & PTE_COW) perm &= ~PTE_W;        // still shared: the write fault copies first
             *s.entry = keep | perm;
             flush_page(this, v);
+            changed = true;
         }
         if (slot_end <= v) break;
         v = slot_end;
     }
-    if (g_need_flush) flush_all();
-    interrupts_restore(irq);
+    if (g_need_flush) flush_everywhere();
+    else if (changed) tlb_shootdown(this, virt, size);
     if (err != Error::None) return err;
     return {};
 }
 
 Result<paddr_t> AddressSpace::translate(vaddr_t virt) const {
-    u64 irq = interrupts_save();
+    lock_.lock();
     Slot s = lookup(root_, virt);
     u64 e = *s.entry;
-    interrupts_restore(irq);
+    lock_.unlock();
     if (!(e & PTE_P)) return Error::NotFound;
     return (paddr_t)((e & leaf_addr_mask(s.level)) + (virt & (level_size(s.level) - 1)));
 }
@@ -560,24 +621,24 @@ Result<vaddr_t> AddressSpace::mmap(vaddr_t hint, usize len, u32 prot, u32 flags)
     if (size < len || total < size) return Error::Invalid;
     if (!kernel_) prot |= vm::USER;
 
-    u64 irq = interrupts_save();
+    lock_.lock();
     vaddr_t base;
     if (flags & mmap_flag::FIXED) {
         vaddr_t end = hint + size;
         if ((hint & (PAGE_SIZE - 1)) || hint < guard || end < hint || hint - guard < low_limit() ||
             end > high_limit()) {
-            interrupts_restore(irq);
+            lock_.unlock();
             return Error::Invalid;
         }
         base = hint - guard;
         if (!range_free(base, end)) {
-            interrupts_restore(irq);
+            lock_.unlock();
             return Error::Exists;
         }
     } else {
         Result<vaddr_t> gap = find_gap(hint, total);
         if (!gap.ok()) {
-            interrupts_restore(irq);
+            lock_.unlock();
             return gap.error();
         }
         base = gap.value();
@@ -593,11 +654,11 @@ Result<vaddr_t> AddressSpace::mmap(vaddr_t hint, usize len, u32 prot, u32 flags)
     if (err != Error::None) {
         (void)clear_range(this, base, total);
         release_range(base, base + total);
-        interrupts_restore(irq);
+        lock_.unlock();
         return err;
     }
-    if (g_need_flush) flush_all();
-    interrupts_restore(irq);
+    if (g_need_flush) flush_everywhere();
+    lock_.unlock();
     return base + guard;
 }
 
@@ -609,19 +670,19 @@ Result<vaddr_t> AddressSpace::mmap_device(paddr_t phys, usize len, u32 prot) {
     if (len + offset < len || size < len || first + size < first) return Error::Invalid;
     if (!kernel_) prot |= vm::USER;
 
-    u64 irq = interrupts_save();
+    lock_.lock();
     Result<vaddr_t> gap = find_gap(0, size);
     if (!gap.ok()) {
-        interrupts_restore(irq);
+        lock_.unlock();
         return gap.error();
     }
     vaddr_t base = gap.value();
     Error err = insert_vma(base, base + size, prot, VmaKind::Device, first).error();
     if (err == Error::None) {
-        err = map(base, first, size, prot).error();
+        err = map_locked(base, first, size, prot).error();
         if (err != Error::None) release_range(base, base + size);
     }
-    interrupts_restore(irq);
+    lock_.unlock();
     if (err != Error::None) return err;
     return base + offset;
 }
@@ -631,12 +692,12 @@ Result<void> AddressSpace::munmap(vaddr_t addr, usize len) {
     vaddr_t end = addr + size;
     if (!len || size < len || (addr & (PAGE_SIZE - 1)) || end < addr || addr < low_limit() || end > high_limit())
         return Error::Invalid;
-    u64 irq = interrupts_save();
+    lock_.lock();
     Error err = split_vma_at(addr).error();
     if (err == Error::None) err = split_vma_at(end).error();
     if (err == Error::None) err = clear_range(this, addr, size).error();
     if (err == Error::None) release_range(addr, end);
-    interrupts_restore(irq);
+    lock_.unlock();
     if (err != Error::None) return err;
     return {};
 }
@@ -648,7 +709,7 @@ Result<void> AddressSpace::mprotect(vaddr_t addr, usize len, u32 prot) {
         return Error::Invalid;
     if ((prot & vm::WRITE) && (prot & vm::EXEC)) return Error::Invalid;          // W^X
 
-    u64 irq = interrupts_save();
+    lock_.lock();
     // The whole range must be backed by mappable VMAs, with no holes.
     Error err = Error::None;
     for (vaddr_t a = addr; a < end;) {
@@ -668,11 +729,11 @@ Result<void> AddressSpace::mprotect(vaddr_t addr, usize len, u32 prot) {
     if (err == Error::None) {
         for (Vma* v = find_vma_mut(addr); v && v->start < end; v = v->next) {
             v->prot = (v->prot & ~(vm::WRITE | vm::EXEC)) | prot;
-            err = protect(v->start, v->end - v->start, v->prot).error();
+            err = protect_locked(v->start, v->end - v->start, v->prot).error();
             if (err != Error::None) break;
         }
     }
-    interrupts_restore(irq);
+    lock_.unlock();
     if (err != Error::None) return err;
     return {};
 }
@@ -681,6 +742,21 @@ Result<void> AddressSpace::mprotect(vaddr_t addr, usize len, u32 prot) {
 
 bool AddressSpace::handle_fault(vaddr_t addr, u64 error) {
     if (error & PF_RESERVED) return false;
+    u64 irq = interrupts_save();
+    // A fault taken while this CPU is itself editing the space is a kernel
+    // bug, and waiting for the lock would wait for ever: let it be reported.
+    if (lock_.held_by_this_cpu()) {
+        interrupts_restore(irq);
+        return false;
+    }
+    lock_.acquire();
+    bool resolved = handle_fault_locked(addr, error);
+    lock_.release();
+    interrupts_restore(irq);
+    return resolved;
+}
+
+bool AddressSpace::handle_fault_locked(vaddr_t addr, u64 error) {
     const Vma* v = find_vma(addr);
     if (!v || v->kind != VmaKind::Anonymous) return false;
     if ((error & PF_USER) && !(v->prot & vm::USER)) return false;
@@ -691,7 +767,7 @@ bool AddressSpace::handle_fault(vaddr_t addr, u64 error) {
     Slot s = lookup(root_, page);
 
     if (!(error & PF_PRESENT)) {
-        if (*s.entry & PTE_P) {             // already resolved; the TLB entry was stale
+        if (*s.entry & PTE_P) {             // another CPU resolved it first, or the TLB entry was stale
             invlpg(page);
             return true;
         }
@@ -703,28 +779,54 @@ bool AddressSpace::handle_fault(vaddr_t addr, u64 error) {
             return false;
         }
         *e = f | leaf_flags(v->prot);
-        g_stats.demand_faults++;
+        stat_add(g_stats.demand_faults, 1);
         return true;
     }
 
-    // Present page: the only resolvable case is the first write to a page
-    // shared by clone().
-    if (!(error & PF_WRITE) || s.level != 1 || !(*s.entry & PTE_P) || !(*s.entry & PTE_COW)) return false;
-    paddr_t old = *s.entry & ADDR_4K;
-    if (ref_of(old) == 1) {
-        *s.entry = (*s.entry | PTE_W) & ~PTE_COW;       // last sharer: take the page over
+    // The CPU found a present page it was not allowed to use that way.
+    if (s.level != 1) return false;
+    u64 e = *s.entry;
+    if (!(e & PTE_P)) {                     // unmapped by another CPU since: fault again as not-present
+        invlpg(page);
+        return true;
+    }
+    if (!(e & PTE_COW)) {
+        // Not shared. If the page tables now allow the access, another CPU
+        // has already resolved this fault (or raised the permissions) and
+        // this CPU's TLB entry was out of date.
+        bool allowed = (!(error & PF_WRITE) || (e & PTE_W)) && (!(error & PF_FETCH) || !(e & PTE_NX)) &&
+                       (!(error & PF_USER) || (e & PTE_U));
+        if (allowed) invlpg(page);
+        return allowed;
+    }
+    // The only other resolvable case: the first write to a page shared by
+    // clone().
+    if (!(error & PF_WRITE)) return false;
+    paddr_t old = e & ADDR_4K;
+    g_frames_lock.lock();
+    bool sole = ref_of(old) == 1;
+    g_frames_lock.unlock();
+    if (sole) {
+        // Last sharer: take the page over. Nobody can gain a reference in
+        // the meantime; only clone() of this space could, and it needs lock_.
+        *s.entry = (e | PTE_W) & ~PTE_COW;
+        invlpg(page);
     } else {
+        // Copy first, while this space still holds its reference: as long
+        // as the count is above one no other sharer can make the frame
+        // writable, so the copy is of a page that is not changing.
         paddr_t n = pmm_alloc(1);
         if (n == PMM_NO_MEMORY) return false;
         memcpy(hhdm_virt(n), hhdm_virt(old), PAGE_SIZE);
         ref_of(n) = 1;
-        g_stats.anon_frames++;
-        ref_of(old)--;
+        stat_add(g_stats.anon_frames, 1);
         *s.entry = n | leaf_flags(v->prot);
-        g_stats.cow_copies++;
+        invlpg(page);
+        tlb_shootdown(this, page, PAGE_SIZE);       // other CPUs in this space still map the old frame
+        anon_release(old);                          // frees it if every other sharer has copied too
+        stat_add(g_stats.cow_copies, 1);
     }
-    invlpg(page);
-    g_stats.cow_faults++;
+    stat_add(g_stats.cow_faults, 1);
     return true;
 }
 
@@ -736,7 +838,9 @@ Result<AddressSpace*> AddressSpace::clone() {
     if (!made.ok()) return made.error();
     AddressSpace* child = made.value();
 
-    u64 irq = interrupts_save();
+    // The child is not visible to anyone else yet, so only this space's lock
+    // is needed.
+    lock_.lock();
     Error err = Error::None;
     for (Vma* v = vmas_; v && err == Error::None; v = v->next) {
         err = child->insert_vma(v->start, v->end, v->prot, v->kind, v->phys).error();
@@ -759,13 +863,20 @@ Result<AddressSpace*> AddressSpace::clone() {
                 err = Error::NoMemory;
                 break;
             }
-            if (!(e & PTE_NOFREE)) ref_of(e & ADDR_4K)++;
+            if (!(e & PTE_NOFREE)) {
+                g_frames_lock.lock();
+                ref_of(e & ADDR_4K)++;
+                g_frames_lock.unlock();
+            }
             *ce = e;
             a += PAGE_SIZE;
         }
     }
-    if (this == g_current) write_cr3(root_);        // drop stale writable TLB entries
-    interrupts_restore(irq);
+    // Drop stale writable TLB entries, here and on any other CPU running
+    // this space.
+    if (this == current_space()) write_cr3(root_);
+    tlb_shootdown(this, 0, 0);
+    lock_.unlock();
     if (err != Error::None) {
         child->destroy();
         return err;
@@ -775,7 +886,9 @@ Result<AddressSpace*> AddressSpace::clone() {
 
 void AddressSpace::activate() {
     u64 irq = interrupts_save();
-    g_current = this;
+    // Published before it is loaded: tlb_shootdown decides whom to interrupt
+    // by this field, and a CPU that loads CR3 afterwards starts clean.
+    __atomic_store_n(&percpu()->space, this, __ATOMIC_RELEASE);
     write_cr3(root_);
     interrupts_restore(irq);
 }
@@ -783,13 +896,33 @@ void AddressSpace::activate() {
 // ================================================================== module ==
 
 AddressSpace& vmm_kernel() { return g_kernel_space; }
-AddressSpace& vmm_current() { return *g_current; }
 
-VmmStats vmm_stats() {
+AddressSpace& vmm_current() {
     u64 irq = interrupts_save();
-    VmmStats s = g_stats;
+    AddressSpace* as = current_space();
     interrupts_restore(irq);
-    return s;
+    return *as;
+}
+
+VmmStats vmm_stats() { return g_stats; }
+
+void vmm_flush_local(vaddr_t start, usize size) {
+    constexpr usize MAX_SINGLE = 32 * PAGE_SIZE;    // beyond this one full flush is cheaper
+    if (!size || size > MAX_SINGLE) {
+        flush_all();
+        return;
+    }
+    for (vaddr_t v = align_down(start, PAGE_SIZE); v < start + size; v += PAGE_SIZE) invlpg(v);
+}
+
+void vmm_init_cpu() {
+    wrmsr(msr::EFER, rdmsr(msr::EFER) | EFER_NXE);
+    write_cr0(read_cr0() | CR0_WP);
+    // Reloading CR3 drops whatever this CPU cached before the tables were
+    // hardened. (Global entries cannot be flushed this way, so PGE is
+    // toggled as well.)
+    write_cr3(g_kernel_space.root());
+    flush_all();
 }
 
 Result<vaddr_t> vmm_alloc_kernel_stack(usize size) {
@@ -805,7 +938,7 @@ void vmm_free_kernel_stack(vaddr_t top, usize size) {
 }
 
 bool vmm_fault_note(vaddr_t addr) {
-    const AddressSpace* spaces[2] = {&g_kernel_space, g_current};
+    const AddressSpace* spaces[2] = {&g_kernel_space, current_space()};
     for (const AddressSpace* as : spaces) {
         const Vma* v = as->find_vma(addr);
         if (!v || v->kind != VmaKind::Guard) continue;
@@ -835,7 +968,8 @@ void vmm_init() {
     g_kernel_space.root_ = read_cr3() & ADDR_4K;
     g_kernel_space.vmas_ = nullptr;
     g_kernel_space.kernel_ = true;
-    g_current = &g_kernel_space;
+    g_kernel_space.lock_.rank = lock_rank::VMM_KERNEL;
+    percpu()->space = &g_kernel_space;
     u64* pml4 = table_at(g_kernel_space.root_);
 
     // The kernel lives entirely in the upper half; anything the bootloader

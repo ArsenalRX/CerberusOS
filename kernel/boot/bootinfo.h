@@ -84,8 +84,12 @@ bool limine_base_revision_supported();
 void boot_info_collect();
 
 // Moves every application processor out of the bootloader's waiting loop
-// (which runs from bootloader memory) into a parking loop in kernel text,
+// (which runs from bootloader memory) into a wait loop in kernel text,
 // and returns how many were moved once all have arrived. Must run before
 // bootloader memory is made non-executable. Panics if a processor never
 // arrives. Call once, from the bootstrap processor.
 usize boot_park_aps();
+// How many of them the kernel will use (at most MAX_CPUS - 1).
+usize boot_ap_count();
+// Lets them go: each calls smp_ap_main with its CPU id (1, 2, ...).
+void boot_release_aps();

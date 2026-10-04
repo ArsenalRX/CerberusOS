@@ -18,56 +18,57 @@ matching docs/TO_FINISH.md.
 something works that does not, the next session builds on a broken base; if
 it omits half-done work, that work is lost or done twice.
 
-Last updated: **2026-10-03**.
+Last updated: **2026-10-04**.
 
 ## Version
 
-Released: **0.7.0** (2026-10-03, tag `v0.7.0`). The release is always
+Released: **0.0.5a** (2026-10-04, tag `v0.0.5a`), the phase 8 release and
+the first under the new version scheme: every release moves one letter
+(`0.0.5a` … `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1). It follows 0.7.0;
+releases 0.3.0 to 0.7.0 keep their old numbers. The release is always
 `dist/lumen.iso` (`dist/VERSION.txt` names the version); each release
-overwrites it. The tree now builds as `0.7.1-dev+<commit>`. Scheme: docs/SPEC.md §23; history: docs/CHANGELOG.md.
-
-Releases made on 2026-10-03: 0.3.0 (versioning, PS/2 fixes), 0.4.0 (phase 4),
-0.5.0 (phase 5), 0.5.1 (VirtualBox keyboard fix), 0.6.0 (phase 6),
-0.7.0 (phase 7).
+overwrites it. The tree now builds as `0.0.5b-dev+<commit>`. History:
+docs/CHANGELOG.md.
 
 ---
 
 ## Current phase
 
-**Phase 7 — Userland and syscalls: COMPLETE (2026-10-03).**
-Phases 0–3 complete 2026-09-14; phases 4, 5 and 6 complete 2026-10-03. Desktop
-preview (owner-requested, brought forward from phases 12-13): first version
-2026-09-14, now running in its own thread.
+**Phase 8 — SMP: COMPLETE (2026-10-04).** Phases 0–3 complete 2026-09-14;
+phases 4–7 complete 2026-10-03. Desktop preview (owner-requested, brought
+forward from phases 12-13) runs in its own thread.
 
-Next up: **Phase 8 — SMP** (SPEC §5 and §5A). The owner approves each
-phase's contents before it starts; phase 8 has not been approved yet.
+Next up: **Phase 9 — Filesystem** (SPEC §5 and §5A). The owner approves each
+phase's contents before it starts; phase 9 has not been approved yet. The
+owner has also asked for desktop polish (Windows-style window buttons,
+rounder corners, smoother dragging) and installer research (done:
+docs/INSTALLER.md).
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
 performance are requirements. See docs/DECISIONS.md.
 
 ## Last verified
 
-All on 2026-10-03, on the phase 7 code.
+All on 2026-10-04, on the 0.0.5a code.
 
-- `make test` in QEMU/KVM: all **22** integration tests passed:
-  boot-banner, desktop, keyboard, pmm, vmm, heap, sched, shell-tests,
-  exception-de/pf/ud/so/ub, heap-freelist, heap-write-after-free,
-  heap-double-free, user-hello, user-fork, user-badptr, user-crash,
-  user-aslr, user-sysfuzz.
-- `make fuzz` (60 s per harness): ELF loader 4.5 million mutated inputs,
-  tar reader 126 thousand, no crash; random system calls: 600 processes
-  making up to 1.2 million calls, kernel still running.
-- `make bench`: recorded in docs/BENCH.md.
-- **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with
-  4 CPUs, BIOS** (created for the check and deleted afterwards): booted;
-  `run /bin/hello`, `forktest`, `badptr`, `crash null`, `crash smash`,
-  `aslr` and `sysfuzz 40 500` behaved as in QEMU; `test vmm` passed;
-  `test sched 3` passed six times in a row; `bench` ran. VirtualBox on this
-  host does not offer SMEP, SMAP or UMIP to the guest, so there the kernel
-  prints a warning and runs without them (the range checks and fault fixups
-  still apply); under QEMU/KVM all three are on.
+- `make test` in QEMU/KVM, 4 CPUs: all **24** integration tests passed
+  (the 22 of 0.7.0 plus `smp` and `exception-lockorder`).
+- `make fuzz` (60 s per harness): ELF loader 5.6 million mutated inputs, tar
+  reader 151 thousand, no crash; random system calls: 600 processes, up to
+  1.2 million calls, kernel still running. (Run before the reference-clock
+  change, which touches neither parser nor the system calls.)
+- `make bench`: six runs, recorded in docs/BENCH.md.
+- **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with 4 CPUs
+  and 2 GiB, BIOS**: booted, all four CPUs online; every shell command;
+  every user program (`hello`, `args`, `forktest`, `badptr`, `crash null`,
+  `crash smash`, `aslr`, `sysbench`, `sysfuzz 40 500`, a missing program);
+  `test timer`, `test idle` (twice), `test smp`, `test sched 3`, and on the
+  build before the clock fix `test kprintf|pmm|vmm|heap`; `bench`; no heap
+  leak after 580,000 allocations. Desktop: launcher menu by keyboard,
+  System Monitor, Memory Map, Alt+Tab, Super+M, Super+T. Mouse dragging was
+  not driven (VBoxManage cannot move the mouse); the owner reports it laggy.
 - Not run this session: UEFI boot, software emulation (TCG), a `DEBUG=0`
-  build (last checked on 0.5.0).
+  build (last checked on 0.5.0), the fatal-error tests on VirtualBox.
 
 ## How to run it
 
@@ -76,7 +77,7 @@ All on 2026-10-03, on the phase 7 code.
   `logs/qemu-serial.log`. `run-lumen.cmd uefi` boots through OVMF;
   `run-lumen.cmd build` rebuilds first. This is the fast, accurate path.
 - VirtualBox: the owner creates VMs in the VirtualBox window. As of
-  2026-10-03 (evening) no VM is registered. Point a new VM's DVD drive at
+  2026-10-04 no VM of the owner's is registered. Point a new VM's DVD drive at
   `dist/lumen.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
   hides 64-bit mode, and the bootloader then reports that the CPU is not
   64-bit. `make dist` (via `tools/vbox-attach.sh`) fixes that and re-points
@@ -88,7 +89,7 @@ All on 2026-10-03, on the phase 7 code.
   `make RELEASE=1 dist` overwrites it and re-points
   the VirtualBox VM.
 
-## What works (verified 2026-10-03 by `make test` in QEMU/KVM)
+## What works (verified 2026-10-04 by `make test` in QEMU/KVM)
 
 - Host environment: WSL2 Ubuntu 24.04 with the cross toolchain
   (`toolchain/out/`, binutils 2.42 + GCC 13.3.0), QEMU 8.2 with KVM, OVMF.
@@ -128,10 +129,16 @@ All on 2026-10-03, on the phase 7 code.
   program is killed and reported; `init` is pid 1; in-tree libc
   (`userland/libc`). Shell command `run <path> [args]`. Programs: `hello`,
   `args`, `forktest`, `badptr`, `crash`, `aslr`, `sysbench`, `sysfuzz`.
+- Phase 8: every CPU runs threads (started through the bootloader); per-CPU
+  data behind GS; per-CPU run queues with work stealing under one scheduler
+  lock; inter-processor interrupts (reschedule, TLB flush, stop on panic);
+  TLB shootdown before any frame is freed; a lock per address space;
+  per-CPU heap slabs; lock-rank checker (`kernel/lib/lock_order.h`);
+  reference clock on the time-stamp counter; `test smp`, `ps` per CPU.
 - Fatal-error tests (each halts by design): `test exceptions
   de|ud|pf|pfw|gp|bp` (CPU exceptions), `so` (a runaway thread reported as
   a kernel stack overflow), `ub` (undefined behaviour), `fl|waf|df` (heap
-  corruption).
+  corruption), `lo` (lock-order violation).
 - Desktop preview (`kernel/gui/`, `kernel/gfx/`), now driven by the
   compositor thread:
   - libgfx: fills, rounded rects, alpha blits, scaled blits, lines, circles,
@@ -179,6 +186,12 @@ In place (each demonstrated by a test):
   (`crash smash`). (0.7.0)
 - The ELF loader, the tar reader and the system-call interface are fuzzed
   by `make fuzz`. (0.7.0)
+- Unmapping or restricting memory is withdrawn from every CPU before the
+  change returns or the frame is reused (TLB shootdown). (0.0.5a)
+- Lock order is checked on every acquisition in debug builds. (0.0.5a)
+- A panic stops every CPU. (0.0.5a)
+- The user-copy bounds check masks the address without a branch, so a
+  mispredicted check cannot read kernel memory speculatively. (0.0.5a)
 
 Still missing:
 
@@ -187,9 +200,8 @@ Still missing:
   program can read every file in the boot archive.
 - Where the hypervisor hides SMEP/SMAP (VirtualBox on this host), the
   kernel has only its software checks.
-- Speculation hardening is partial: the system-call number is masked; the
-  user-copy bounds check is not, and retpolines have not been evaluated
-  (phase 8 audit).
+- Retpolines have not been evaluated; the stack-protector guard is one
+  global value, not per CPU.
 - No `/dev/random` (no device files until phase 9); programs use
   `getrandom`.
 - No kernel ASLR (phase 19).
@@ -200,19 +212,23 @@ Do not put real data in the system before phase 15.
 
 ## Performance state
 
-Numbers are in docs/BENCH.md (latest block 2026-10-03, 0.7.0). In short,
-under QEMU/KVM: context switch 14 ns, system-call round trip 36 ns, wake-up
-latency 7 µs average, allocation 80–100 ns per pair (debug build), idle
-desktop 0% of ticks busy — all within budget. **Over budget: a minor page
-fault takes 2.2–3.3 µs against 2 µs** (it was 4.1 µs in 0.6.0; the figure
-varies from run to run and has not been profiled).
+Numbers are in docs/BENCH.md (latest block 2026-10-04, 0.0.5a). Under
+QEMU/KVM with 4 CPUs: context switch 22–24 ns, system-call round trip
+33–34 ns, wake-up latency 7–9 µs average, allocation 76–84 ns per pair
+(debug build), idle desktop 0% of ticks busy — all within budget. **Over
+budget: a minor page fault takes 2.0–2.9 µs against 2 µs** (not profiled).
+
+On VirtualBox (Hyper-V backend) a full-screen composite takes about 23 ms
+(about 130 MB/s into video memory), which is the likely cause of the laggy
+window dragging the owner reports there; the framebuffer's cache type has
+not been checked yet.
 
 Known limits:
 
-- The three other CPUs are halted until phase 8.
-- Frame pacing follows the 10 ms tick: continuous animation would run at
-  50 frames per second (see docs/DECISIONS.md, phase 6). Input is handled
+- Frame pacing follows the 10 ms tick (no one-shot timer). Input is handled
   immediately.
+- Waking a thread on another CPU costs an inter-processor interrupt; one
+  scheduler lock for all CPUs (DECISIONS, phase 8).
 - The shell polls the serial port once per tick (no serial interrupt yet).
 - Debug builds carry the undefined-behaviour checks and heap red zones.
 
@@ -231,30 +247,33 @@ Known limits:
   escape sequences in the terminal.
 - Unregistered "Lumen-dev" and "Lumen" folders are left under `VirtualBox VMs` from
   VMs that were removed; they are not used.
+- Phase 8 deviations from the spec are listed in docs/DECISIONS.md
+  (2026-10-03, phase 8): one scheduler lock, cross-CPU wake-up costs an
+  interrupt, not tickless, at most 32 CPUs.
 
 ## Open decisions waiting on the owner
 
 Recorded in docs/DECISIONS.md (2026-10-03).
 
-1. **libc: grow the in-tree libc or port mlibc.** Phase 7 wrote the minimal
+1. **Approve phase 9** (filesystem) and/or the desktop polish first.
+2. **libc: grow the in-tree libc or port mlibc.** Phase 7 wrote the minimal
    in-tree library the spec asks for; the choice matters from phase 17.
-2. TCP/IP: write in-tree (current plan) or port lwIP. Needed before
+3. TCP/IP: write in-tree (current plan) or port lwIP. Needed before
    phase 14.
-3. TLS and cryptography source: port Mbed TLS (recommended), port BearSSL,
+4. TLS and cryptography source: port Mbed TLS (recommended), port BearSSL,
    or write in-tree. Needed before phase 15.
-4. Confirm the v2 phase order and the non-goals list.
-5. Still open from 2026-09-14: confirm the scope of the network toolbox
+5. Confirm the v2 phase order and the non-goals list.
+6. Still open from 2026-09-14: confirm the scope of the network toolbox
    (docs/TO_FINISH.md, "Owner-added requirements").
 
 ## Next
 
-1. Get the owner's go-ahead for phase 8.
-2. Phase 8: start the other CPUs (INIT/SIPI trampoline), per-CPU data and
-   run queues, work stealing, TLB shootdown, a spinlock inside every
-   primitive that now relies on "interrupts off", lock-rank checker,
-   per-CPU slab caches, `test smp`.
+1. Get the owner's go-ahead: phase 9, or the desktop polish they asked for
+   on 2026-10-04 (Windows-style minimise/maximise/close buttons, rounder
+   and smoother window corners, smoother dragging — check the framebuffer's
+   cache type on VirtualBox first).
+2. Phase 9: VFS, tmpfs, initramfs, devfs, lumfs + `mkfs.lumfs`, page cache.
 3. Look at the minor-page-fault cost (over budget).
-4. Desktop polish as the owner sends reference screenshots.
 
 ## Known bugs
 
@@ -262,6 +281,8 @@ Recorded in docs/DECISIONS.md (2026-10-03).
   "Clock skew detected" (drvfs timestamp rounding). Harmless so far.
 - Backtraces cannot name a function that faults inside its own prologue
   (inherent to RBP walking); tests avoid it by making a call before faulting.
+- Pressing Super as part of a shortcut (Super+M, Super+T) also toggles the
+  launcher menu. With the menu open, typed keys still reach the terminal.
 - The About window's CPU line is clipped at the window edge on long brand
   strings (needs ellipsis on the value column).
 - `kmalloc`+`kfree` in the debug build sits at the edge of its 100 ns

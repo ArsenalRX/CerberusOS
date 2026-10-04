@@ -133,3 +133,47 @@ No SMEP/SMAP/UMIP offered to the guest there.
 | Minor page fault | 19,356 ns | 2,000 ns | **over** (the budgets are defined for QEMU/KVM) |
 | System-call round trip | 37 ns | 300 ns | within |
 | Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+
+## 0.0.5a — 2026-10-04 (phase 8: SMP)
+
+First release under the new version scheme; it follows 0.7.0. The kernel's
+reference clock is now the CPU's time-stamp counter where it is usable
+(QEMU/KVM: 3,869 MHz, calibrated against the HPET), which makes every
+timestamp in the benchmarks cheaper than the HPET read it replaces.
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs (all active), 512 MiB — `make bench`, six runs
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 22–24 ns | 2,000 ns | within |
+| Wake-up latency, interactive thread, average | 7–9 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 76–101 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 76–84 ns | 100 ns | within |
+| Minor page fault (first touch, through the user-copy path) | 1,993–2,922 ns | 2,000 ns | **over** in five runs of six |
+| System-call round trip (`getpid` from ring 3) | 33–34 ns | 300 ns | within |
+| Idle desktop CPU use (3 s sample) | 0 % of ticks | under 1 % | within (one run read 16 % while a VirtualBox VM was busy on the same host; 0 % in the five others) |
+| Last composite (partial frame) | 130–194 µs | 8,000 µs | not comparable yet |
+
+Notes:
+- **Wake-up latency** is back at the 0.7.0 level (6–7 µs). With the HPET as
+  the clock, phase 8 builds measured 18–19 µs; part of that was the cost of
+  reading the HPET itself, now gone.
+- **`kmalloc`/`kfree` moved away from its limit** (80–101 ns before): the
+  per-CPU slabs take no lock on the common path.
+- **Minor page fault is still over budget**, by a little. Not profiled yet.
+
+### VirtualBox 7.2.6 (Hyper-V backend), temporary VM, 4 CPUs, 2 GiB — `bench` typed in the shell
+
+No HPET, so the reference clock is the PIT (this VM's time-stamp counter
+measured 6.9 MHz and is not used). No SMEP/SMAP/UMIP offered.
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 32 ns | 2,000 ns | within |
+| Wake-up latency, average | 238 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 8,061 µs | 1,000 µs | **over** (the budgets are defined for QEMU/KVM) |
+| `kmalloc(64)` + `kfree` pair | 67 ns | 100 ns | within |
+| Minor page fault | 17,221 ns | 2,000 ns | **over** (QEMU/KVM budget) |
+| System-call round trip | 37 ns | 300 ns | within |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+| Full-screen composite (maximised window, from the System Monitor) | 22,959 µs | 8,000 µs | **over**: about 130 MB/s into video memory, the likely cause of laggy dragging there |

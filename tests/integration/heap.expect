@@ -1,5 +1,6 @@
 # Phase 5: the kernel heap passes its self-test twice (nothing leaks between
-# runs) and heapstat reports its state.
+# runs) and heapstat reports its state. (Since phase 8 a second run may keep
+# a few more slab pages: each CPU the test happens to run on has its own.)
 kheap: slab classes 16-2048 bytes
 lumen kernel shell
 !send test heap
@@ -16,7 +17,6 @@ test heap: PASS
 !send test heap
 !wait 8
 leaks: 0
-0 slab page(s) kept for reuse
 test heap: PASS
 !send heapstat
 !wait 1

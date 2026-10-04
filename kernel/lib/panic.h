@@ -10,6 +10,13 @@
 
 [[noreturn]] void halt_forever();
 
+// First step of every fatal report: interrupts off, the other CPUs stopped.
+// If another CPU is already reporting, this one just stops. Afterwards
+// panic_in_progress() is true and spinlocks no longer block (their holders
+// may have been stopped mid-section).
+void panic_begin();
+bool panic_in_progress();
+
 #define PANIC(...) panic_impl(__FILE__, __LINE__, __VA_ARGS__)
 
 #define ASSERT_ALWAYS(cond)                                                                  \

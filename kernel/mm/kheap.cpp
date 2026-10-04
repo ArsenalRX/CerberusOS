@@ -1,6 +1,6 @@
 // Slab allocator and large-allocation path. See kheap.h for the contract.
 //
-// Slab page layout:   [Slab header, 32 bytes][object][object]...
+// Slab page layout:   [Slab header, 48 bytes][object][object]...
 // Object layout, release:  [payload: class size]
 // Object layout, debug:    [Track, 16][red zone, 16][payload: class size][red zone, 16]
 // A free object's first 8 bytes hold the encoded link to the next free
@@ -9,8 +9,23 @@
 // Large allocations are always page-aligned and slab payloads never are
 // (the header occupies the start of the page), which is how kfree tells
 // them apart.
+//
+// More than one CPU (SPEC §5A phase 8). Each CPU has, per size class, one
+// slab of its own: its "current slab". Allocating from it and freeing back
+// into it touch nothing another CPU can touch, so the common path takes no
+// lock; interrupts are off, which is all the protection a CPU needs against
+// itself. Everything else is shared and under the heap lock:
+//   - the lists of slabs no CPU currently owns (partial and full);
+//   - an object freed by a CPU other than its slab's owner, which goes onto
+//     that slab's "remote" list. The owner collects the list, under the
+//     lock, when its own free list runs out;
+//   - handing a CPU a new current slab when its old one is used up;
+//   - the list of large allocations.
+// The heap never calls the VMM while holding its lock (the VMM allocates its
+// own records here).
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
+#include <arch/x86_64/percpu.h>
 #include <boot/bootinfo.h>
 #include <lib/csprng.h>
 #include <lib/kprintf.h>
@@ -21,6 +36,7 @@
 #include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
+#include <sched/sync.h>
 
 namespace {
 
@@ -48,22 +64,26 @@ constexpr usize OBJECT_OVERHEAD = 0;
 #endif
 
 struct Slab {
-    Slab* next;
+    Slab* next;         // shared lists: heap lock
     Slab* prev;
-    u8* free_head;      // first free object, nullptr when the slab is full
-    u16 inuse;
+    u8* free_head;      // first free object. The owner CPU's alone while owned; heap lock when shared
+    u8* remote_head;    // objects freed by other CPUs while a CPU owns the slab: heap lock
+    u16 inuse;          // objects handed out, including those waiting on the remote list
     u16 capacity;
+    u16 remote_count;
     u8 cls;
     u8 on_full_list;
+    u8 owner;           // CPU id + 1 while this is a CPU's current slab, 0 when shared
+    u8 reserved0;
     u16 magic;
+    u32 reserved1;
 };
-static_assert(sizeof(Slab) == 32);
+static_assert(sizeof(Slab) == 48);
 
 struct Cache {
-    Slab* partial;      // slabs with at least one free object
+    Slab* partial;      // shared slabs with at least one free object
     Slab* full;
-    u64 slabs;
-    u64 inuse;
+    u64 slabs;          // all slabs of the class, owned ones included
 };
 
 struct LargeNode {
@@ -75,9 +95,21 @@ struct LargeNode {
     bool vmapped;       // true: VMM mapping; false: contiguous frames via the direct map
 };
 
-Cache g_caches[CLASS_COUNT];
-LargeNode* g_large = nullptr;
-KheapStats g_stats;
+// Allocation counts kept by each CPU for itself. An object may be freed on
+// a different CPU from the one that allocated it, so only the totals over
+// all CPUs mean anything.
+struct Counters {
+    u64 allocs;
+    u64 frees;
+};
+
+Spinlock g_lock = SPINLOCK_RANKED(lock_rank::HEAP);
+Cache g_caches[CLASS_COUNT];                    // heap lock
+Slab* g_cpu_slab[MAX_CPUS][CLASS_COUNT];        // row n: CPU n only, interrupts off
+Counters g_counters[MAX_CPUS];                  // likewise
+LargeNode* g_large = nullptr;                   // heap lock
+u64 g_slab_pages = 0;                           // heap lock
+u64 g_large_pages = 0;                          // heap lock
 u64 g_secret = 0;
 bool g_ready = false;
 u64 g_ram_top = 0;             // end of physical RAM; heap pointers lie below it in the direct map
@@ -130,6 +162,7 @@ void print_site(u64 addr) {
 
 #endif
 
+// Heap lock held.
 Slab* new_slab(int cls) {
     paddr_t p = pmm_alloc(1);
     if (p == PMM_NO_MEMORY) return nullptr;
@@ -139,10 +172,13 @@ Slab* new_slab(int cls) {
     memset(s, POISON_FREE, PAGE_SIZE);
 #endif
     s->next = s->prev = nullptr;
+    s->remote_head = nullptr;
+    s->remote_count = 0;
     s->inuse = 0;
     s->capacity = (u16)((PAGE_SIZE - sizeof(Slab)) / stride);
     s->cls = (u8)cls;
     s->on_full_list = 0;
+    s->owner = 0;
     s->magic = SLAB_MAGIC;
     // Thread the free list through the objects, lowest address first.
     u8* first = first_object(s);
@@ -157,26 +193,64 @@ Slab* new_slab(int cls) {
     }
     s->free_head = first;
     g_caches[cls].slabs++;
-    g_stats.slab_pages++;
+    g_slab_pages++;
     return s;
 }
 
+// Heap lock held; the slab is shared, empty, and on the partial list.
 void release_slab(Cache& c, Slab* s) {
     list_remove(&c.partial, s);
     s->magic = 0;
     c.slabs--;
-    g_stats.slab_pages--;
+    g_slab_pages--;
     pmm_free(phys_of(s), 1);
 }
 
-// Returns the payload pointer, or nullptr when out of memory.
-void* slab_alloc(int cls, usize requested, u64 caller) {
+// Interrupts off. Gives this CPU a current slab of class `cls` that has a
+// free object: its own again if other CPUs have freed into it, otherwise a
+// shared partial slab or a new one. nullptr when out of memory.
+Slab* refill(u32 cpu, int cls) {
     Cache& c = g_caches[cls];
-    Slab* s = c.partial;
-    if (!s) {
+    g_lock.acquire();
+    Slab* s = g_cpu_slab[cpu][cls];
+    if (s) {
+        if (s->remote_head) {
+            s->free_head = s->remote_head;
+            s->remote_head = nullptr;
+            s->inuse = (u16)(s->inuse - s->remote_count);
+            s->remote_count = 0;
+            g_lock.release();
+            return s;
+        }
+        // Used up: it becomes an ordinary full slab.
+        s->owner = 0;
+        list_push(&c.full, s);
+        s->on_full_list = 1;
+        g_cpu_slab[cpu][cls] = nullptr;
+    }
+    s = c.partial;
+    if (s) {
+        list_remove(&c.partial, s);
+    } else {
         s = new_slab(cls);
+        if (!s) {
+            g_lock.release();
+            return nullptr;
+        }
+    }
+    s->owner = (u8)(cpu + 1);
+    g_cpu_slab[cpu][cls] = s;
+    g_lock.release();
+    return s;
+}
+
+// Interrupts off. Returns the payload pointer, or nullptr when out of memory.
+void* slab_alloc(int cls, usize requested, u64 caller) {
+    u32 cpu = percpu_cpu_id();
+    Slab* s = g_cpu_slab[cpu][cls];
+    if (!s || !s->free_head) {
+        s = refill(cpu, cls);
         if (!s) return nullptr;
-        list_push(&c.partial, s);
     }
     u8* obj = s->free_head;
     if (s->magic != SLAB_MAGIC || !object_in_slab(s, obj))
@@ -188,14 +262,7 @@ void* slab_alloc(int cls, usize requested, u64 caller) {
               (void*)s, (void*)obj, (void*)next);
     s->free_head = next;
     s->inuse++;
-    c.inuse++;
-    if (!next) {
-        list_remove(&c.partial, s);
-        list_push(&c.full, s);
-        s->on_full_list = 1;
-    }
-    g_stats.live_objects++;
-    g_stats.total_allocs++;
+    g_counters[cpu].allocs++;
 
 #ifdef LUMEN_DEBUG
     Track* t = (Track*)obj;
@@ -243,12 +310,15 @@ Slab* slab_of(const void* ptr, u8** obj_out) {
     return s;
 }
 
+// Interrupts off.
 void slab_free(void* ptr) {
     u8* obj = nullptr;
     Slab* s = slab_of(ptr, &obj);
     if (!s) PANIC("kfree: %p was not allocated by the kernel heap", ptr);
     Cache& c = g_caches[s->cls];
+    u32 cpu = percpu_cpu_id();
 #ifdef LUMEN_DEBUG
+    // The object still belongs to the caller, so these checks need no lock.
     Track* t = (Track*)obj;
     if (t->state != STATE_ALLOCATED) PANIC("kfree: double free or invalid free of %p", ptr);
     if (!red_zones_intact(s, obj)) {
@@ -261,25 +331,50 @@ void slab_free(void* ptr) {
     memset(obj + sizeof(Track), POISON_FREE, stride_of(s->cls) - sizeof(Track));
     t->requested = 0;
     t->state = STATE_FREE;
-#else
-    if (obj == s->free_head) PANIC("kfree: double free of %p", ptr);
 #endif
-    *(u64*)obj = encode_link(s->free_head, obj);
-    s->free_head = obj;
-    if (s->on_full_list) {
-        list_remove(&c.full, s);
-        list_push(&c.partial, s);
-        s->on_full_list = 0;
+    // Reading `owner` without the lock is sound for this comparison: only
+    // this CPU ever writes its own id there, or removes it.
+    if (s->owner == cpu + 1) {
+#ifndef LUMEN_DEBUG
+        if (obj == s->free_head) PANIC("kfree: double free of %p", ptr);
+#endif
+        *(u64*)obj = encode_link(s->free_head, obj);
+        s->free_head = obj;
+        s->inuse--;
+    } else {
+        g_lock.acquire();
+        if (s->owner) {
+            // Another CPU's current slab: leave the object where its owner
+            // will find it. `inuse` is corrected when it does.
+#ifndef LUMEN_DEBUG
+            if (obj == s->remote_head) PANIC("kfree: double free of %p", ptr);
+#endif
+            *(u64*)obj = encode_link(s->remote_head, obj);
+            s->remote_head = obj;
+            s->remote_count++;
+        } else {
+#ifndef LUMEN_DEBUG
+            if (obj == s->free_head) PANIC("kfree: double free of %p", ptr);
+#endif
+            *(u64*)obj = encode_link(s->free_head, obj);
+            s->free_head = obj;
+            if (s->on_full_list) {
+                list_remove(&c.full, s);
+                list_push(&c.partial, s);
+                s->on_full_list = 0;
+            }
+            s->inuse--;
+            // Give an empty slab back unless it is the only shared one with
+            // free objects, so a cache that hovers around empty does not
+            // thrash the frame allocator.
+            if (s->inuse == 0 && (s->next || s->prev)) release_slab(c, s);
+        }
+        g_lock.release();
     }
-    s->inuse--;
-    c.inuse--;
-    g_stats.live_objects--;
-    g_stats.total_frees++;
-    // Give an empty slab back unless it is the only one with free objects,
-    // so a cache that hovers around empty does not thrash the frame allocator.
-    if (s->inuse == 0 && (s->next || s->prev)) release_slab(c, s);
+    g_counters[cpu].frees++;
 }
 
+// Heap lock held.
 LargeNode** find_large(const void* addr) {
     for (LargeNode** link = &g_large; *link; link = &(*link)->next)
         if ((*link)->addr == addr) return link;
@@ -289,7 +384,9 @@ LargeNode** find_large(const void* addr) {
 void* large_alloc(usize size, u64 caller) {
     usize pages = align_up(size, PAGE_SIZE) / PAGE_SIZE;
     if (pages * PAGE_SIZE < size) return nullptr;
+    u64 irq = interrupts_save();
     LargeNode* node = (LargeNode*)slab_alloc(class_for(sizeof(LargeNode)), sizeof(LargeNode), (u64)&large_alloc);
+    interrupts_restore(irq);
     if (!node) return nullptr;
     void* addr = nullptr;
     bool vmapped = false;
@@ -305,23 +402,26 @@ void* large_alloc(usize size, u64 caller) {
         }
     }
     if (!addr) {
+        irq = interrupts_save();
         slab_free(node);
+        interrupts_restore(irq);
         return nullptr;
     }
+#ifdef LUMEN_DEBUG
+    memset(addr, POISON_ALLOC, size);
+    memset((u8*)addr + size, RED_ZONE, pages * PAGE_SIZE - size);
+#endif
     node->addr = addr;
     node->pages = pages;
     node->requested = size;
     node->caller = caller;
     node->vmapped = vmapped;
+    g_lock.lock();
     node->next = g_large;
     g_large = node;
-    g_stats.large_pages += pages;
-    g_stats.live_objects++;
-    g_stats.total_allocs++;
-#ifdef LUMEN_DEBUG
-    memset(addr, POISON_ALLOC, size);
-    memset((u8*)addr + size, RED_ZONE, pages * PAGE_SIZE - size);
-#endif
+    g_large_pages += pages;
+    g_counters[percpu_cpu_id()].allocs++;
+    g_lock.unlock();
     return addr;
 }
 
@@ -332,9 +432,15 @@ bool large_slack_intact(const LargeNode* n) {
 #endif
 
 void large_free(void* ptr) {
+    g_lock.lock();
     LargeNode** link = find_large(ptr);
     if (!link) PANIC("kfree: %p was not allocated by the kernel heap (or was already freed)", ptr);
     LargeNode* n = *link;
+    *link = n->next;
+    g_large_pages -= n->pages;
+    g_counters[percpu_cpu_id()].frees++;
+    g_lock.unlock();
+    // Off the list, the allocation is this caller's alone again.
 #ifdef LUMEN_DEBUG
     if (!large_slack_intact(n)) {
         kprintf("heap: buffer overrun past the %lu-byte allocation at %p, allocated by ",
@@ -345,25 +451,24 @@ void large_free(void* ptr) {
     }
     memset(ptr, POISON_FREE, n->pages * PAGE_SIZE);
 #endif
-    *link = n->next;
     if (n->vmapped) {
         Result<void> r = vmm_kernel().munmap((vaddr_t)ptr, n->pages * PAGE_SIZE);
         ASSERT_ALWAYS(r.ok());
     } else {
         pmm_free(phys_of(ptr), n->pages);
     }
-    g_stats.large_pages -= n->pages;
-    g_stats.live_objects--;
-    g_stats.total_frees++;
+    u64 irq = interrupts_save();
     slab_free(n);
+    interrupts_restore(irq);
 }
 
 void* alloc(usize size, u64 caller) {
     if (!size) return nullptr;
     ASSERT_ALWAYS(g_ready);
-    u64 irq = interrupts_save();
     int cls = class_for(size);
-    void* p = cls >= 0 ? slab_alloc(cls, size, caller) : large_alloc(size, caller);
+    if (cls < 0) return large_alloc(size, caller);
+    u64 irq = interrupts_save();
+    void* p = slab_alloc(cls, size, caller);
     interrupts_restore(irq);
     return p;
 }
@@ -392,25 +497,28 @@ __attribute__((noinline)) void* kzalloc(usize size) {
 
 void kfree(void* ptr) {
     if (!ptr) return;
+    if (is_large_pointer(ptr)) {
+        large_free(ptr);
+        return;
+    }
     u64 irq = interrupts_save();
-    if (is_large_pointer(ptr)) large_free(ptr);
-    else slab_free(ptr);
+    slab_free(ptr);
     interrupts_restore(irq);
 }
 
 usize ksize(const void* ptr) {
     if (!ptr) return 0;
     usize size = 0;
-    u64 irq = interrupts_save();
     if (is_large_pointer(ptr)) {
+        g_lock.lock();
         LargeNode** link = find_large(ptr);
         if (link) size = (*link)->pages * PAGE_SIZE;
+        g_lock.unlock();
     } else {
         u8* obj = nullptr;
         Slab* s = slab_of(ptr, &obj);
         if (s) size = CLASS_SIZE[s->cls];
     }
-    interrupts_restore(irq);
     return size;
 }
 
@@ -429,19 +537,19 @@ __attribute__((noinline)) void* krealloc(void* ptr, usize size) {
                                       : (class_for(size) >= 0 && CLASS_SIZE[class_for(size)] == old);
     if (same) {
 #ifdef LUMEN_DEBUG
-        u64 irq = interrupts_save();
         if (is_large_pointer(ptr)) {
+            g_lock.lock();
             LargeNode* n = *find_large(ptr);
             if (size > n->requested) memset((u8*)ptr + n->requested, POISON_ALLOC, size - n->requested);
             n->requested = size;
             memset((u8*)ptr + size, RED_ZONE, old - size);
+            g_lock.unlock();
         } else {
             Track* t = (Track*)((u8*)ptr - KHEAP_PAYLOAD_OFFSET);
             if (size > t->requested) memset((u8*)ptr + t->requested, POISON_ALLOC, size - t->requested);
             t->requested = (u32)size;
             memset((u8*)ptr + size, RED_ZONE, old - size);
         }
-        interrupts_restore(irq);
 #endif
         return ptr;
     }
@@ -450,10 +558,14 @@ __attribute__((noinline)) void* krealloc(void* ptr, usize size) {
     usize keep = min(size, old);
 #ifdef LUMEN_DEBUG
     // Only the bytes the caller asked for are meaningful; the rest is red zone.
-    u64 irq = interrupts_save();
-    usize requested = is_large_pointer(ptr) ? (*find_large(ptr))->requested
-                                            : ((Track*)((u8*)ptr - KHEAP_PAYLOAD_OFFSET))->requested;
-    interrupts_restore(irq);
+    usize requested;
+    if (is_large_pointer(ptr)) {
+        g_lock.lock();
+        requested = (*find_large(ptr))->requested;
+        g_lock.unlock();
+    } else {
+        requested = ((Track*)((u8*)ptr - KHEAP_PAYLOAD_OFFSET))->requested;
+    }
     keep = min(keep, requested);
 #endif
     memcpy(fresh, ptr, keep);
@@ -471,13 +583,14 @@ void kfree_sensitive(void* ptr, usize size) {
 bool kheap_check(const void* ptr) {
     if (!ptr) return false;
     bool ok = false;
-    u64 irq = interrupts_save();
     if (is_large_pointer(ptr)) {
+        g_lock.lock();
         LargeNode** link = find_large(ptr);
         ok = link != nullptr;
 #ifdef LUMEN_DEBUG
         if (ok) ok = large_slack_intact(*link);
 #endif
+        g_lock.unlock();
     } else {
         u8* obj = nullptr;
         Slab* s = slab_of(ptr, &obj);
@@ -486,27 +599,47 @@ bool kheap_check(const void* ptr) {
         if (ok) ok = ((Track*)obj)->state == STATE_ALLOCATED && red_zones_intact(s, obj);
 #endif
     }
-    interrupts_restore(irq);
     return ok;
 }
 
 KheapStats kheap_stats() {
-    u64 irq = interrupts_save();
-    KheapStats s = g_stats;
-    interrupts_restore(irq);
+    KheapStats s{};
+    g_lock.lock();
+    s.slab_pages = g_slab_pages;
+    s.large_pages = g_large_pages;
+    // Read while other CPUs may be counting: exact only when the heap is
+    // quiet, which is when the tests compare it.
+    for (u32 cpu = 0; cpu < MAX_CPUS; cpu++) {
+        s.total_allocs += g_counters[cpu].allocs;
+        s.total_frees += g_counters[cpu].frees;
+    }
+    g_lock.unlock();
+    s.live_objects = s.total_allocs - s.total_frees;
     return s;
 }
 
 void kheap_report() {
-    u64 irq = interrupts_save();
+    KheapStats st = kheap_stats();
+    g_lock.lock();
     kprintf("kernel heap: %lu slab page(s), %lu large page(s), %lu live allocation(s), %lu allocs / %lu frees "
             "since boot\n",
-            (unsigned long)g_stats.slab_pages, (unsigned long)g_stats.large_pages,
-            (unsigned long)g_stats.live_objects, (unsigned long)g_stats.total_allocs,
-            (unsigned long)g_stats.total_frees);
+            (unsigned long)st.slab_pages, (unsigned long)st.large_pages, (unsigned long)st.live_objects,
+            (unsigned long)st.total_allocs, (unsigned long)st.total_frees);
+    // Every slab of a class: the shared lists, then each CPU's current one.
+    // Other CPUs keep allocating from their own slabs while this runs, so
+    // the figures for those are a snapshot.
+    auto for_each_slab = [](int c, auto&& fn) {
+        Slab* lists[2] = {g_caches[c].partial, g_caches[c].full};
+        for (Slab* head : lists)
+            for (Slab* s = head; s; s = s->next) fn(s);
+        for (u32 cpu = 0; cpu < MAX_CPUS; cpu++)
+            if (g_cpu_slab[cpu][c]) fn(g_cpu_slab[cpu][c]);
+    };
     for (int c = 0; c < CLASS_COUNT; c++) {
         if (!g_caches[c].slabs) continue;
-        kprintf("  %4u bytes: %lu in use, %lu slab(s)\n", CLASS_SIZE[c], (unsigned long)g_caches[c].inuse,
+        u64 inuse = 0;
+        for_each_slab(c, [&](Slab* s) { inuse += (u64)(s->inuse - s->remote_count); });
+        kprintf("  %4u bytes: %lu in use, %lu slab(s)\n", CLASS_SIZE[c], (unsigned long)inuse,
                 (unsigned long)g_caches[c].slabs);
     }
 #ifdef LUMEN_DEBUG
@@ -535,16 +668,13 @@ void kheap_report() {
         sites[used++] = {caller, 1, bytes};
     };
     for (int c = 0; c < CLASS_COUNT; c++) {
-        Slab* lists[2] = {g_caches[c].partial, g_caches[c].full};
-        for (Slab* head : lists) {
-            for (Slab* s = head; s; s = s->next) {
-                u8* first = first_object(s);
-                for (usize i = 0; i < s->capacity; i++) {
-                    Track* t = (Track*)(first + i * stride_of(c));
-                    if (t->state == STATE_ALLOCATED) note(t->caller, t->requested);
-                }
+        for_each_slab(c, [&](Slab* s) {
+            u8* first = first_object(s);
+            for (usize i = 0; i < s->capacity; i++) {
+                Track* t = (Track*)(first + i * stride_of(c));
+                if (t->state == STATE_ALLOCATED) note(t->caller, t->requested);
             }
-        }
+        });
     }
     for (LargeNode* n = g_large; n; n = n->next) note(n->caller, n->requested);
     kprintf("  outstanding by call site:\n");
@@ -555,5 +685,5 @@ void kheap_report() {
     }
     if (unlisted) kprintf("    (%lu more allocation(s) from call sites beyond the table)\n", (unsigned long)unlisted);
 #endif
-    interrupts_restore(irq);
+    g_lock.unlock();
 }

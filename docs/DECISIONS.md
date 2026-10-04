@@ -805,3 +805,148 @@ fault handler accept any kernel-mode fault on a user address (hides kernel
 bugs; SMAP would be pointless); loading fixed-address executables "for
 now" (ASLR would then be optional forever); a separate interrupt-style
 `int 0x80` path (two entry paths to keep correct instead of one).
+
+## 2026-10-03 — Phase 8: SMP design
+
+- **The other processors are started through the bootloader, not with
+  INIT/SIPI.** Limine has already started every processor and leaves each
+  waiting for an address to jump to (SPEC phase 8 names this mechanism). At
+  boot they are moved into a wait loop in kernel text, as before; `smp_init`
+  then releases them. Each loads its own GDT, TSS, the shared IDT, its
+  per-CPU data and control registers, enables its local APIC, prints
+  "smp: cpu N online", and sleeps (`sti; hlt`) until the scheduler starts.
+  This replaces the plan recorded on 2026-10-03 ("phase 8 restarts them
+  with INIT/SIPI"): a real-mode trampoline would duplicate what the
+  bootloader has done. The wait loop spins instead of halting, but only for
+  the few milliseconds between `vmm_init` and `smp_init`; the VirtualBox
+  problem of 0.5.0 came from spinning for the whole session.
+- **Per-CPU data behind GS** (`arch/x86_64/percpu.h`): kernel stack pointer
+  for system-call entry, the running thread, CPU id, the loaded address
+  space, the lock ranks held. It is set up first thing in `kernel_main`,
+  because locks and `kprintf` use it.
+- **Per-CPU run queues under one scheduler lock.** Each CPU has its own four
+  queues. A thread that becomes runnable goes to the CPU it last ran on if
+  that CPU is idle, else to any idle CPU, else back to its last CPU; a CPU
+  that runs out of work steals from the queue of a busy one. One spinlock
+  protects all of it, together with wait queues, the sleep list, the thread
+  and process lists and the process tree, and it is held across the switch
+  from one thread to the next (released by the thread that resumes). That
+  one rule removes the hard races of a multi-CPU scheduler: a thread cannot
+  be woken and run elsewhere while it is still on its old stack, and "put
+  myself on a wait queue and stop" is a single step. Mutex, semaphore,
+  condition variable and reader-writer lock keep their state under the same
+  lock.
+- **One clock.** Every CPU has its own 100 Hz APIC timer for time slices;
+  only the bootstrap CPU's tick advances time, wakes sleepers and restores
+  priorities.
+- **Inter-processor interrupts:** "look at your run queue" (the switch
+  happens on the way out of the interrupt), "flush your TLB", and a
+  non-maskable "stop" sent by a panic so one CPU reports while the others
+  halt.
+- **TLB shootdown** (`arch/x86_64/smp.cpp`): whoever removes or restricts a
+  translation tells the CPUs that have that address space loaded (all of
+  them for the kernel space) and waits for each to flush, before it releases
+  the address-space lock and before any frame is given back to the
+  allocator. A CPU that is waiting for a spinlock keeps answering these
+  requests, so waiting for a flush while holding a lock cannot deadlock.
+- **A lock per address space** plus one for the frame reference counts
+  shared between spaces. Copy-on-write copies the page while still holding a
+  reference, so a second sharer cannot make the page writable under the
+  copy. A fault that finds the page tables already allow the access (another
+  CPU resolved it) just flushes and retries.
+- **Per-CPU heap slabs** (`mm/kheap.cpp`): each CPU allocates from, and
+  frees into, a slab of its own per size class without a lock. An object
+  freed on a different CPU goes onto its slab's "remote" list under the heap
+  lock; the owner collects that list when its own runs out. Red zones,
+  poisoning, encoded free lists and double-free detection work as before.
+- **Lock ranks** (`lib/lock_order.h`): address space (user, then kernel) →
+  frame counts → heap → frame allocator → TLB → scheduler → CSPRNG →
+  console. Debug builds check every acquisition per CPU and panic on a
+  violation (`test exceptions lo`).
+- **FPU/SSE state is saved whenever a user thread leaves a CPU**, not lazily:
+  the thread may resume on another CPU.
+- **Everything that relied on "interrupts off" as its lock was changed:**
+  frame allocator, heap, VMM, scheduler and sync primitives, process tree,
+  CSPRNG, `kprintf`/console (one console lock, also taken by the compositor
+  when it paints or resizes the terminal), file reference counts and offsets
+  (atomics), keyboard/mouse/terminal input rings (single producer, single
+  consumer, published with atomic stores), interrupt counters (atomics).
+
+Also in this phase: the user-copy routines now mask the address without a
+branch after the range check (left over from phase 7), so a mispredicted
+check cannot be used to read kernel memory speculatively.
+
+Deviations from SPEC phase 8, for the owner to see:
+- **The run-queue path takes a shared lock.** §5A asks that per-CPU slab
+  caches and run queues let "the common path take no shared lock". The heap
+  does that; the scheduler has per-CPU queues but one lock, for the reason
+  above. With four CPUs the lock is not contended enough to matter;
+  splitting it is future work if measurements ask for it.
+- **Waking a thread on another CPU costs an interrupt.** Under nested
+  virtualisation that is about 20 µs, so workloads that hand work back and
+  forth between two threads got slower when the threads landed on different
+  CPUs (the producer/consumer run in `test sched` moves about a tenth of
+  the items it did on one CPU). Latency is still far inside its budget. The
+  known remedy is to let an idle CPU poll for a short while before it halts,
+  or to wake a thread on the waker's CPU when the waker is about to sleep;
+  neither is done yet.
+- **Not tickless**, no one-shot timer; frame pacing is still tied to the
+  10 ms tick (phase 6 deviation, unchanged).
+- **Retpolines were not evaluated**, and the stack guard is still one global
+  value rather than per-CPU; both remain open from phase 7.
+- At most **32 CPUs** are used (thread affinity is a 32-bit mask); any
+  beyond that stay halted.
+- The `timermode` diagnostic changes only the timer of the CPU the shell
+  happens to run on.
+
+Rejected: INIT/SIPI with a real-mode trampoline (see above); a lock per run
+queue plus a per-thread "still on its CPU" flag (the usual fully split
+design; several subtle races for no measurable gain at this size); deferring
+frame frees to a later pass instead of shooting down before the free
+(simpler to reason about when the free can never precede the flush);
+keeping lazy FPU switching with a cross-CPU "give me that thread's state"
+interrupt.
+
+## 2026-10-04 — Version scheme: 0.0.5a, one letter per release (owner)
+
+The owner asked for versions to climb more slowly: the next build is
+`0.0.5a`, the one after `0.0.5b`, and so on to `0.0.5j`, after which comes
+`0.0.6a`. Every release takes the next letter, whatever it contains; the
+phase a release completes is written in its changelog entry, not in its
+number. After `0.0.9j` the patch number carries into the minor number
+(`0.1.0a`). This replaces the `0.PHASE.PATCH` scheme of 2026-10-03
+(docs/SPEC.md §23.1 rewritten). Releases 0.3.0 to 0.7.0 and their tags are
+left as they are, so the number goes down once, from 0.7.0 to 0.0.5a; tags
+are only labels, and nothing in the system compares version numbers yet
+(`pkg upgrade`, phase 18, will have to compare by the new rules and treat
+the old numbers as older).
+
+## 2026-10-04 — Reference clock: the time-stamp counter, PIT under a lock
+
+Found while checking phase 8 on VirtualBox with 4 CPUs. VirtualBox offers no
+HPET, so `refclock_now_us()` read the PIT: three port accesses with no lock.
+With several CPUs reading it at once (the compositor and a test, say), the
+reads interleaved, the clock ran several times too fast, and `test timer`,
+`test idle`, `test smp` and `test sched` failed there (0.7.0 used one CPU
+and never saw it; QEMU has an HPET). First suspected, wrongly, to be
+VirtualBox withholding timer interrupts.
+
+- **The clock is now the time-stamp counter** when the CPU says its rate is
+  constant, or when running under a hypervisor (which presents a
+  constant-rate counter even when it hides the flag). It is calibrated for
+  50 ms at boot against the HPET or PIT, read with one instruction, and a
+  shared "latest value" keeps it from going backwards when a thread moves
+  between CPUs. QEMU/KVM: 3,869 MHz.
+- A counter slower than 100 MHz is not believed. VirtualBox's measured
+  6.9 MHz here, so it keeps the PIT, which is now read under a lock with
+  interrupts off.
+- Rejected: keeping the HPET as the first choice (every read is a VM exit,
+  about 1 µs under KVM); a per-CPU clock (callers compare timestamps taken
+  on different CPUs).
+
+Also changed in the self-tests: the preemption workers are pinned to one CPU
+and the work-stealing threads run for a number of timer ticks rather than
+microseconds, so they test the scheduler and not the clock; reader overlap
+in the reader-writer test is checked in a phase without a writer; latency
+checks in self-tests are sanity bounds (20 ms), the budgets are judged from
+`make bench` under QEMU/KVM.

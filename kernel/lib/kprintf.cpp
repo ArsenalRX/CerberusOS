@@ -211,13 +211,13 @@ void buf_sink(char c, void* ctx) {
 }
 } // namespace
 
-// One call is one uninterrupted piece of output: with interrupts off no other
-// thread can run in the middle of it, so lines from different threads never
-// interleave character by character. (Phase 8 adds a lock for other CPUs.)
+// One call is one uninterrupted piece of output: the console lock is held
+// for the whole of it, so lines from different threads or CPUs never
+// interleave character by character.
 int kvprintf(const char* fmt, va_list ap) {
-    u64 irq = interrupts_save();
+    console_lock();
     int n = kvformat(console_sink, nullptr, fmt, ap);
-    interrupts_restore(irq);
+    console_unlock();
     return n;
 }
 

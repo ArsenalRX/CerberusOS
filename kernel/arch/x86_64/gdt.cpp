@@ -1,5 +1,6 @@
 // Per-CPU GDT/TSS storage lives in .bss. Only the bootstrap CPU's stacks are
-// static; application processors get theirs from the allocator in phase 8.
+// static; the other processors get theirs from the VMM (smp.cpp).
+#include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
 #include <boot/bootinfo.h>
 #include <lib/panic.h>
@@ -88,6 +89,9 @@ TssDescriptor make_tss(const Tss* tss) {
 }
 
 void load(const Gdt* gdt) {
+    // Writing a selector to GS clears its base on some CPUs; the base is
+    // this CPU's per-CPU data pointer (percpu.h) and must survive.
+    u64 gs_base = rdmsr(msr::GS_BASE);
     GdtPointer ptr{(u16)(sizeof(Gdt) - 1), (u64)gdt};
     asm volatile("lgdt %0" ::"m"(ptr) : "memory");
     // Reload CS with a far return, then the data selectors.
@@ -107,6 +111,7 @@ void load(const Gdt* gdt) {
                  : "i"((u64)seg::KCODE), "i"((u16)seg::KDATA)
                  : "rax", "memory");
     asm volatile("ltr %0" ::"r"((u16)seg::TSS) : "memory");
+    wrmsr(msr::GS_BASE, gs_base);
 }
 
 } // namespace

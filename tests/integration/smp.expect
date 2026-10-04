@@ -1,0 +1,27 @@
+# Phase 8: four CPUs report in at boot, and the SMP self-test passes: an
+# exact spinlock-protected count from all CPUs, a TLB shootdown that makes a
+# reader on another CPU fault at once, work stealing, the heap under all
+# CPUs, and no lock-order violation.
+smp: cpu 1 online
+smp: 4 CPUs online
+sched: started on 4 CPU(s)
+lumen kernel shell
+!send test smp
+!wait 6
+4 CPU(s) in use
+affinity: a thread pinned to each of 4 CPUs ran on exactly that CPU
+spinlock: 4 CPUs x 1000000 increments = 4000000, exact
+TLB shootdown: cpu
+none got through
+work stealing: 8 busy threads ran on 4 different CPUs
+heap: 4 CPUs x 40000 allocations
+mutex: 4 threads made 200000 increments, none lost
+lock order: every spinlock taken above was checked
+cleanup:
+test smp: PASS
+!send test smp
+!wait 6
+test smp: PASS
+!send ps
+!wait 2
+cpu 3:

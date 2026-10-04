@@ -70,7 +70,8 @@ void push(const MouseEvent& e) {
     usize next = (g_head + 1) % RING_SIZE;
     if (next == g_tail) return;         // full: drop
     g_ring[g_head] = e;
-    g_head = next;
+    // Publish the slot only after it is filled: the reader may be on another CPU.
+    __atomic_store_n(&g_head, next, __ATOMIC_RELEASE);
 }
 
 void handle_byte(u8 b) {
@@ -170,9 +171,9 @@ bool init_locked() {
 } // namespace
 
 bool ps2mouse_poll(MouseEvent* out) {
-    if (g_head == g_tail) return false;
+    if (__atomic_load_n(&g_head, __ATOMIC_ACQUIRE) == g_tail) return false;
     *out = g_ring[g_tail];
-    g_tail = (g_tail + 1) % RING_SIZE;
+    __atomic_store_n(&g_tail, (g_tail + 1) % RING_SIZE, __ATOMIC_RELEASE);
     return true;
 }
 

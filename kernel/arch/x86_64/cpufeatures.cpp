@@ -28,6 +28,20 @@ alignas(16) u8 g_fpu_clean[FPU_STATE_SIZE];
 
 } // namespace
 
+void cpu_features_init_cpu() {
+    // FPU and SSE for user programs: native FPU errors, no emulation, FXSAVE
+    // and SSE exceptions enabled. Every x86-64 CPU has SSE2 and FXSR.
+    write_cr0((read_cr0() & ~CR0_EM) | CR0_MP | CR0_NE);
+    u64 cr4 = read_cr4() | CR4_OSFXSR | CR4_OSXMMEXCPT;
+    if (g_cpu.smep) cr4 |= CR4_SMEP;
+    if (g_cpu.smap) cr4 |= CR4_SMAP;
+    if (g_cpu.umip) cr4 |= CR4_UMIP;
+    write_cr4(cr4);
+    if (g_cpu.smap) asm volatile("clac");       // user access stays closed except inside usercopy
+    u32 mxcsr = 0x1F80;                          // all SSE exceptions masked, round to nearest
+    asm volatile("fninit; ldmxcsr %0" ::"m"(mxcsr));
+}
+
 void cpu_features_init() {
     u32 max = cpuid_max_leaf(), max_ext = cpuid_max_ext_leaf();
     CpuidRegs l1 = cpuid(1);
@@ -45,23 +59,11 @@ void cpu_features_init() {
     g_cpu.smap = l7.ebx & (1u << 20);
     g_cpu.umip = l7.ecx & (1u << 2);
     g_cpu.invariant_tsc = e7.edx & (1u << 8);
+    g_cpu.hypervisor = l1.ecx & (1u << 31);
 
-    // FPU and SSE for user programs: native FPU errors, no emulation, FXSAVE
-    // and SSE exceptions enabled. Every x86-64 CPU has SSE2 and FXSR.
-    write_cr0((read_cr0() & ~CR0_EM) | CR0_MP | CR0_NE);
-    u64 cr4 = read_cr4() | CR4_OSFXSR | CR4_OSXMMEXCPT;
-    if (g_cpu.smep) cr4 |= CR4_SMEP;
-    if (g_cpu.smap) cr4 |= CR4_SMAP;
-    if (g_cpu.umip) cr4 |= CR4_UMIP;
-    write_cr4(cr4);
-    if (g_cpu.smap) {
-        g_smap_enabled = 1;
-        asm volatile("clac");                   // user access stays closed except inside usercopy
-    }
-
+    cpu_features_init_cpu();
+    if (g_cpu.smap) g_smap_enabled = 1;
     // Capture the clean FPU state every new user thread starts from.
-    u32 mxcsr = 0x1F80;                          // all SSE exceptions masked, round to nearest
-    asm volatile("fninit; ldmxcsr %0" ::"m"(mxcsr));
     asm volatile("fxsave64 (%0)" ::"r"(g_fpu_clean) : "memory");
 
     kprintf("cpu: protections on:%s%s%s%s; rdrand %s, rdseed %s\n", g_cpu.nx ? " NX" : "",

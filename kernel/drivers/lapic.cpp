@@ -10,6 +10,7 @@
 #include <arch/x86_64/acpi.h>
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/interrupts.h>
+#include <arch/x86_64/percpu.h>
 #include <drivers/lapic.h>
 #include <drivers/refclock.h>
 #include <lib/kprintf.h>
@@ -24,6 +25,8 @@ constexpr u32 REG_TPR = 0x080;
 constexpr u32 REG_EOI = 0x0B0;
 constexpr u32 REG_SVR = 0x0F0;
 constexpr u32 REG_ESR = 0x280;
+constexpr u32 REG_ICR_LOW = 0x300;
+constexpr u32 REG_ICR_HIGH = 0x310;
 constexpr u32 REG_LVT_TIMER = 0x320;
 constexpr u32 REG_LVT_THERMAL = 0x330;
 constexpr u32 REG_LVT_PERF = 0x340;
@@ -40,6 +43,9 @@ constexpr u32 SVR_ENABLE = 1 << 8;
 constexpr u32 DIVIDE_BY_16 = 0x3;
 constexpr u64 APIC_BASE_ENABLE = 1 << 11;
 constexpr u64 APIC_BASE_X2APIC = 1 << 10;
+constexpr u32 ICR_DELIVERY_PENDING = 1 << 12;
+constexpr u32 ICR_MODE_NMI = 4 << 8;
+constexpr u32 ICR_ALL_BUT_SELF = 3 << 18;
 
 volatile u32* g_regs = nullptr;
 u32 g_ticks_per_ms = 0;
@@ -50,9 +56,12 @@ bool g_rearm_mode = false;      // one-shot re-armed from the handler instead of
 
 u32 read(u32 reg) { return g_regs[reg / 4]; }
 void write(u32 reg, u32 v) { g_regs[reg / 4] = v; }
+void enable_this_cpu();
 
+// Runs on every CPU, each for its own timer. Only the bootstrap CPU's ticks
+// are counted as time.
 void timer_handler(InterruptFrame*, void*) {
-    g_ticks = g_ticks + 1;
+    if (percpu_cpu_id() == 0) g_ticks = g_ticks + 1;
     if (g_rearm_mode) write(REG_TIMER_INIT, g_periodic_count);
     lapic_eoi();
     if (g_hook) g_hook();
@@ -90,7 +99,49 @@ u64 measure_rate_x10(u32 ticks) {
     return us ? (u64)ticks * 10000000 / us : 0;
 }
 
+void enable_this_cpu() {
+    write(REG_TPR, 0);                      // accept all priorities
+    write(REG_LVT_TIMER, LVT_MASKED);
+    write(REG_LVT_THERMAL, LVT_MASKED);
+    write(REG_LVT_PERF, LVT_MASKED);
+    write(REG_LVT_LINT0, LVT_MASKED);
+    write(REG_LVT_LINT1, LVT_MASKED);
+    write(REG_LVT_ERROR, vec::APIC_ERROR);
+    write(REG_ESR, 0);
+    write(REG_SVR, SVR_ENABLE | vec::APIC_SPURIOUS);
+}
+
 } // namespace
+
+void lapic_init_cpu() {
+    u64 base_msr = rdmsr(msr::APIC_BASE);
+    if (base_msr & APIC_BASE_X2APIC) PANIC("lapic: a processor is in x2APIC mode (unsupported)");
+    if (!(base_msr & APIC_BASE_ENABLE)) wrmsr(msr::APIC_BASE, base_msr | APIC_BASE_ENABLE);
+    enable_this_cpu();
+}
+
+void lapic_timer_start_cpu() {
+    ASSERT_ALWAYS(g_periodic_count);
+    write(REG_TIMER_DIVIDE, DIVIDE_BY_16);
+    write(REG_LVT_TIMER, vec::APIC_TIMER | LVT_TIMER_PERIODIC);
+    write(REG_TIMER_INIT, g_periodic_count);
+}
+
+void lapic_send_ipi(u32 apic_id, u8 vector) {
+    // The two register writes must not be split by an interrupt handler that
+    // sends an interrupt of its own.
+    u64 irq = interrupts_save();
+    write(REG_ICR_HIGH, apic_id << 24);
+    write(REG_ICR_LOW, vector);
+    while (read(REG_ICR_LOW) & ICR_DELIVERY_PENDING) cpu_relax();
+    interrupts_restore(irq);
+}
+
+void lapic_send_nmi_to_others() {
+    if (!g_regs) return;
+    write(REG_ICR_HIGH, 0);
+    write(REG_ICR_LOW, ICR_MODE_NMI | ICR_ALL_BUT_SELF);
+}
 
 void lapic_init() {
     u64 base_msr = rdmsr(msr::APIC_BASE);
@@ -104,15 +155,7 @@ void lapic_init() {
                 (unsigned long)phys, (unsigned long)msr_phys);
     g_regs = (volatile u32*)early_map(msr_phys, PAGE_SIZE, MapCache::Uncached);
 
-    write(REG_TPR, 0);                      // accept all priorities
-    write(REG_LVT_TIMER, LVT_MASKED);
-    write(REG_LVT_THERMAL, LVT_MASKED);
-    write(REG_LVT_PERF, LVT_MASKED);
-    write(REG_LVT_LINT0, LVT_MASKED);
-    write(REG_LVT_LINT1, LVT_MASKED);
-    write(REG_LVT_ERROR, vec::APIC_ERROR);
-    write(REG_ESR, 0);
-    write(REG_SVR, SVR_ENABLE | vec::APIC_SPURIOUS);
+    enable_this_cpu();
 
     interrupt_register(vec::APIC_SPURIOUS, spurious_handler);
     interrupt_register(vec::APIC_ERROR, error_handler);

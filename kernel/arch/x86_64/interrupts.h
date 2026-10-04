@@ -18,13 +18,17 @@ using InterruptHandler = void (*)(InterruptFrame* frame, void* ctx);
 namespace vec {
 constexpr u8 IRQ_BASE = 0x20;       // legacy ISA IRQ n -> vector 0x20 + n
 constexpr u8 APIC_TIMER = 0x30;
+constexpr u8 IPI_RESCHED = 0xF0;    // from another CPU: look at your run queue (smp.h)
+constexpr u8 IPI_TLB = 0xF1;        // from another CPU: flush your TLB
 constexpr u8 APIC_ERROR = 0xFE;
 constexpr u8 APIC_SPURIOUS = 0xFF;
 } // namespace vec
 
 // Builds the IDT (all 256 gates pointing at the asm stubs, IST slots for
-// #DF/#NMI/#MC) and loads it. Call once per CPU after gdt_init_cpu.
+// #DF/#NMI/#MC) and loads it. Bootstrap CPU, after gdt_init_bsp.
 void interrupts_init();
+// Loads the same IDT on another CPU, after its gdt_init_cpu.
+void interrupts_load();
 
 // Installs a handler for a vector. Returns false if one is already installed.
 // Handlers for vectors >= 32 must acknowledge the interrupt controller.

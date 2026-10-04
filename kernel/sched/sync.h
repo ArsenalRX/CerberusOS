@@ -1,9 +1,11 @@
-// Synchronisation primitives (SPEC phase 6). All are zero-initialisable, so
-// they can be plain globals or members with no constructor call.
+// Synchronisation primitives (SPEC phases 6 and 8). All are
+// zero-initialisable, so they can be plain globals or members with no
+// constructor call.
 //
 //   Spinlock  - short critical sections; disables interrupts while held, so
 //               it may be taken from interrupt handlers. Never sleep while
-//               holding one.
+//               holding one. Carries a rank (lib/lock_order.h) that debug
+//               builds check on every acquisition.
 //   Mutex     - sleeping lock for thread context; not recursive.
 //   Semaphore - counting; up() is interrupt-safe, down() sleeps.
 //   CondVar   - wait(mutex) atomically releases the mutex and sleeps.
@@ -11,19 +13,36 @@
 //               cannot starve.
 //
 // Mutex, CondVar::wait, Semaphore::down and RwLock may only be used from
-// thread context with interrupts enabled.
+// thread context with interrupts enabled. Their internal state is protected
+// by the scheduler lock (sched.h), which is also what makes "release and go
+// to sleep" a single step on any number of CPUs.
 #pragma once
 
+#include <lib/lock_order.h>
 #include <lib/types.h>
 #include <sched/sched.h>
 
 struct Spinlock {
     volatile u32 locked;
+    u8 rank;                    // lock_rank::*; 0 = not checked
+    u32 owner;                  // holder's CPU id + 1, 0 when free
     u64 saved_flags;
 
+    // Disables interrupts and takes the lock; unlock puts them back as they
+    // were. The pair must be called by the same thread with no switch in
+    // between.
     void lock();
     void unlock();
+    // The lock alone, for callers that manage the interrupt flag themselves.
+    // Interrupts must already be off.
+    void acquire();
+    void release();
+    // True if the calling CPU holds it. Interrupts must be off.
+    bool held_by_this_cpu() const;
 };
+
+// A ranked lock as a global:  Spinlock g_lock = SPINLOCK_RANKED(lock_rank::HEAP);
+#define SPINLOCK_RANKED(r) Spinlock{0, (r), 0, 0}
 
 // Holds a Spinlock for the lifetime of the object.
 class SpinGuard {

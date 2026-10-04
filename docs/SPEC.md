@@ -2125,15 +2125,18 @@ Rules for all of them:
 
 ## 23.1 The version number
 
-Three numbers, `MAJOR.MINOR.PATCH`. No letters.
-
-**Before 1.0: `0.PHASE.PATCH`.**
-- `PHASE` is the number of the last completed phase in §5 (all §5 and §5A
-  acceptance criteria demonstrated). Completing phase 4 produces `0.4.0`.
-- `PATCH` counts every release made between phase completions: bug fixes,
-  performance fixes, security fixes, small additions. It resets to 0 when
-  `PHASE` advances.
-- `1.0.0` is released when every item of §16 is demonstrated.
+**Before 1.0: `0.MINOR.PATCH` followed by one letter, `a` to `j`** (owner,
+2026-10-04). Versions climb slowly and do not follow the phase number.
+- Every release takes the next letter: `0.0.5a`, `0.0.5b`, … `0.0.5j`.
+- After `j`, `PATCH` goes up by one and the letter starts again at `a`:
+  `0.0.5j` is followed by `0.0.6a`.
+- After `0.0.9j` comes `0.1.0a` (`PATCH` carries into `MINOR` the way a
+  car's odometer does).
+- The first version under this scheme is `0.0.5a` (the phase 8 release);
+  the earlier releases `0.3.0` to `0.7.0` keep their old numbers and tags.
+- Which phase a release completes is written in its changelog entry, not
+  in its number.
+- `1.0.0` (no letter) is released when every item of §16 is demonstrated.
 
 **From 1.0:**
 - `MAJOR` increases when existing programs can break: an incompatible
@@ -2185,7 +2188,7 @@ behaviour adds its line there in the same commit.
    `make RELEASE=1 dist`, which overwrites `dist/lumen.iso` (the folder
    holds exactly one ISO, always under that name), and points any
    VirtualBox VM that boots it at the file.
-5. Bump `VERSION` to the next patch number in a following commit
+5. Bump `VERSION` to the next version (§23.1: the next letter) in a following commit
    (`release: begin <next>`), so development builds are labelled correctly.
 
 A security fix is released on its own as soon as it is verified; it does not

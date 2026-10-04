@@ -5,9 +5,11 @@
 #include <lib/csprng.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
+#include <sched/sync.h>
 
 namespace {
 
+Spinlock g_lock = SPINLOCK_RANKED(lock_rank::CSPRNG);     // the key, the counters and reseeding
 u32 g_key[8];
 u64 g_counter = 0;              // block counter, also varies the nonce
 u64 g_pool = 0;                 // timing entropy collected since the last reseed
@@ -63,9 +65,8 @@ void reseed() {
     u64 v;
     if (g_have_rdseed && hw_random(true, &v)) mix(v);
     if (g_have_rdrand && hw_random(false, &v)) mix(v);
-    mix(g_pool ^ rdtsc());
-    g_pool = 0;
-    g_pool_events = 0;
+    mix(__atomic_exchange_n(&g_pool, 0, __ATOMIC_RELAXED) ^ rdtsc());
+    __atomic_store_n(&g_pool_events, 0u, __ATOMIC_RELAXED);
     g_blocks_since_reseed = 0;
 }
 
@@ -127,7 +128,7 @@ void csprng_init() {
 
 void csprng_bytes(void* buf, usize n) {
     u8* out = (u8*)buf;
-    u64 irq = interrupts_save();
+    g_lock.lock();
     while (n) {
         u8 block[32];
         next_block(block);
@@ -138,7 +139,7 @@ void csprng_bytes(void* buf, usize n) {
         volatile u8* wipe = block;
         for (usize i = 0; i < sizeof block; i++) wipe[i] = 0;
     }
-    interrupts_restore(irq);
+    g_lock.unlock();
 }
 
 u64 csprng_u64() {
@@ -160,6 +161,10 @@ u64 csprng_below(u64 bound) {
 void csprng_add_timing() {
     // The low bits of the time-stamp counter at interrupt arrival are the
     // unpredictable part; rotate so successive samples land on different bits.
-    g_pool = ((g_pool << 7) | (g_pool >> 57)) ^ rdtsc();
-    g_pool_events++;
+    // Every CPU's interrupts land here, without the lock: the pool is only
+    // ever XORed into, so concurrent updates cannot lose each other.
+    u32 n = __atomic_fetch_add(&g_pool_events, 1u, __ATOMIC_RELAXED);
+    u64 t = rdtsc();
+    unsigned shift = (n * 7) & 63;
+    __atomic_fetch_xor(&g_pool, (t << shift) | (shift ? t >> (64 - shift) : 0), __ATOMIC_RELAXED);
 }

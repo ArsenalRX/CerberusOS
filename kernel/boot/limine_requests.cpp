@@ -1,6 +1,8 @@
 // Limine protocol requests. They live in their own section so the linker script
 // keeps them together and the bootloader can find them; the start/end markers
 // bound the region. boot_info_collect() reads the responses.
+#include <arch/x86_64/percpu.h>
+#include <arch/x86_64/smp.h>
 #include <boot/bootinfo.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -175,20 +177,30 @@ void boot_info_collect() {
 namespace {
 
 volatile u32 g_aps_parked = 0;
+volatile u32 g_ap_release = 0;
+usize g_ap_count = 0;
 
-// Where every application processor waits until SMP bring-up (phase 8).
-// Runs on the bootloader-provided stack and touches nothing but this loop
-// and the counter. It halts with interrupts off rather than spinning: a
-// spinning virtual CPU costs the host a whole core, and on VirtualBox's
-// Hyper-V backend three of them starved the device timers until the
-// keyboard stopped delivering keys. Nothing sends these CPUs an interrupt;
-// phase 8 restarts them with INIT/SIPI.
-[[noreturn]] void ap_park(limine_mp_info*) {
+// Where every application processor waits between leaving the bootloader
+// and smp_init. It runs on the bootloader-provided stack and touches nothing
+// but these few variables. The wait is a spin, and a short one: smp_init
+// follows within a few milliseconds of boot. (An earlier version halted
+// here for good, because processors left spinning for the whole session
+// cost the host a core each and starved VirtualBox's device timers.)
+// A processor beyond the number the kernel uses is given id 0 and halts.
+[[noreturn]] void ap_wait(limine_mp_info* info) {
+    u32 id = (u32)info->extra_argument, lapic = info->lapic_id;
     __atomic_fetch_add(&g_aps_parked, 1, __ATOMIC_SEQ_CST);
-    for (;;) asm volatile("cli; hlt");
+    if (id == 0) {
+        for (;;) asm volatile("cli; hlt");
+    }
+    while (!__atomic_load_n(&g_ap_release, __ATOMIC_ACQUIRE)) asm volatile("pause");
+    smp_ap_main(id, lapic);
 }
 
 } // namespace
+
+usize boot_ap_count() { return g_ap_count; }
+void boot_release_aps() { __atomic_store_n(&g_ap_release, 1u, __ATOMIC_RELEASE); }
 
 usize boot_park_aps() {
     if (!mp_req.response) return 0;
@@ -197,8 +209,11 @@ usize boot_park_aps() {
     for (u64 i = 0; i < resp->cpu_count; i++) {
         limine_mp_info* info = resp->cpus[i];
         if (info->lapic_id == resp->bsp_lapic_id) continue;
-        __atomic_store_n(&info->goto_address, (limine_goto_address)ap_park, __ATOMIC_SEQ_CST);
         expected++;
+        // Kernel CPU ids follow the bootloader's order; 0 is the bootstrap CPU.
+        info->extra_argument = expected < MAX_CPUS ? expected : 0;
+        if (expected < MAX_CPUS) g_ap_count = expected;
+        __atomic_store_n(&info->goto_address, (limine_goto_address)ap_wait, __ATOMIC_SEQ_CST);
     }
     // No clock is up this early; bound the wait by the time-stamp counter
     // (tens of seconds on any CPU this kernel runs on) and fail loudly.

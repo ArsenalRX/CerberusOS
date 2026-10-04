@@ -3,7 +3,6 @@
 #include <lumen.h>
 
 int main(int, char**, char**) {
-    printf("init: started as pid %d\n", getpid());
     for (;;) {
         int status = 0;
         pid_t child = waitpid(-1, &status, 0);

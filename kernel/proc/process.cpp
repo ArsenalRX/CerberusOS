@@ -33,7 +33,9 @@ const char* base_name(const char* path) {
 }
 
 // ---------------------------------------------------------- process tree --
-// Interrupts off for all of these.
+// The parent/child links, the zombie flags and g_init are protected by the
+// scheduler lock (sched.h), which is also what a parent sleeps under while
+// it waits for a child. Scheduler lock held for both of these.
 void link_child(Process* parent, Process* child) {
     child->parent = parent;
     child->sibling = parent->children;
@@ -186,12 +188,6 @@ void fork_entry(void* arg) {
     enter_user(&f);
 }
 
-// Interrupts off. Frees an exited child that nobody will wait for.
-void reap_now(Process* child) {
-    unlink_child(child);
-    process_destroy(child);
-}
-
 } // namespace
 
 // ================================================================ ExecArgs ==
@@ -251,19 +247,19 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
     }
     if (err == Error::None) {
         p->auto_reap = auto_reap;
-        u64 irq = interrupts_save();
+        u64 irq = sched_lock();
         link_child(process_kernel(), p);
         if (!g_init) g_init = p;
-        interrupts_restore(irq);
+        sched_unlock(irq);
         Result<Thread*> t = kthread_create(spawn_entry, ctx, p->name, prio::NORMAL, p, true);
         if (t.ok()) {
             return p;
         }
         err = t.error();
-        irq = interrupts_save();
+        irq = sched_lock();
         unlink_child(p);
         if (g_init == p) g_init = nullptr;
-        interrupts_restore(irq);
+        sched_unlock(irq);
     }
     if (p) {
         for (File*& f : p->files)
@@ -277,11 +273,11 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
 
 int process_wait(Process* child) {
     Process* self = process_kernel();
-    u64 irq = interrupts_save();
+    u64 irq = sched_lock();
     while (!child->zombie) sched_block_locked(self->child_wait);
     int status = child->exit_status;
     unlink_child(child);
-    interrupts_restore(irq);
+    sched_unlock(irq);
     process_destroy(child);
     return status;
 }
@@ -301,30 +297,48 @@ int process_wait(Process* child) {
     p->space = nullptr;
     if (space) space->destroy();
 
-    interrupts_disable();
+    // The thread outlives the process record by a moment (the reaper frees
+    // it), so it moves to the kernel's thread list first.
+    thread_set_process(t, process_kernel());
+
     // Children go to init (or to the kernel if this is init, or init is
-    // gone); ones that have already exited are freed when nobody is left to
-    // collect them.
+    // gone). Ones that have already exited and now have nobody to collect
+    // them are gathered here and freed once the lock is released.
+    Process* dead = nullptr;
+    u64 irq = sched_lock();
     Process* heir = (g_init && g_init != p && !g_init->zombie) ? g_init : process_kernel();
     while (Process* c = p->children) {
         p->children = c->sibling;
         c->sibling = nullptr;
-        link_child(heir, c);
         if (heir == process_kernel()) {
             c->auto_reap = true;
-            if (c->zombie) reap_now(c);
+            if (c->zombie) {
+                c->sibling = dead;
+                dead = c;
+                continue;
+            }
         }
+        link_child(heir, c);
     }
-    if (heir != process_kernel()) heir->child_wait.wake_all();
+    if (heir != process_kernel()) sched_wake_all_locked(heir->child_wait);
     if (g_init == p) g_init = nullptr;
 
     p->exit_status = wait_status;
     p->zombie = true;
-    // The thread outlives the process record by a moment (the reaper frees
-    // it), so it moves to the kernel's thread list first.
-    thread_set_process(t, process_kernel());
-    if (p->auto_reap) reap_now(p);
-    else p->parent->child_wait.wake_all();
+    bool self_reap = p->auto_reap;
+    if (self_reap) unlink_child(p);
+    else sched_wake_all_locked(p->parent->child_wait);
+    sched_unlock(irq);
+    // From here on a waiting parent may free `p` at any moment, unless
+    // nobody waits and it is this thread's to free.
+
+    while (dead) {
+        Process* c = dead;
+        dead = c->sibling;
+        c->sibling = nullptr;
+        process_destroy(c);
+    }
+    if (self_reap) process_destroy(p);
     if (!t->detached) thread_detach(t);
     thread_exit(0);
 }
@@ -353,16 +367,16 @@ Result<i64> process_fork(const InterruptFrame* frame) {
     child->mmap_hint = parent->mmap_hint;
     for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++)
         if (parent->files[fd]) child->files[fd] = file_ref(parent->files[fd]);
-    u64 irq = interrupts_save();
+    u64 irq = sched_lock();
     link_child(parent, child);
-    interrupts_restore(irq);
+    sched_unlock(irq);
     i64 pid = child->pid;
 
     Result<Thread*> t = kthread_create(fork_entry, ctx, child->name, prio::NORMAL, child, true);
     if (!t.ok()) {
-        irq = interrupts_save();
+        irq = sched_lock();
         unlink_child(child);
-        interrupts_restore(irq);
+        sched_unlock(irq);
         for (File*& f : child->files)
             if (f) file_unref(f);
         process_destroy(child);
@@ -397,7 +411,7 @@ Result<void> process_exec(InterruptFrame* frame, const char* path, const ExecArg
 Result<i64> process_waitpid(i64 pid, int* status, bool nohang) {
     if (pid != -1 && pid <= 0) return Error::Invalid;
     Process* self = thread_current()->process;
-    u64 irq = interrupts_save();
+    u64 irq = sched_lock();
     for (;;) {
         bool any = false;
         for (Process* c = self->children; c; c = c->sibling) {
@@ -407,16 +421,16 @@ Result<i64> process_waitpid(i64 pid, int* status, bool nohang) {
             i64 id = c->pid;
             *status = c->exit_status;
             unlink_child(c);
-            interrupts_restore(irq);
+            sched_unlock(irq);
             process_destroy(c);
             return id;
         }
         if (!any) {
-            interrupts_restore(irq);
+            sched_unlock(irq);
             return Error::NoChild;
         }
         if (nohang) {
-            interrupts_restore(irq);
+            sched_unlock(irq);
             return (i64)0;
         }
         sched_block_locked(self->child_wait);

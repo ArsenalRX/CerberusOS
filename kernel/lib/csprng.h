@@ -9,7 +9,7 @@
 // regularly. On a CPU with neither RDSEED nor RDRAND the early output rests
 // on timing alone; csprng_init says so in the log.
 //
-// All functions are interrupt-safe and never sleep.
+// All functions are interrupt-safe, safe on any CPU, and never sleep.
 #pragma once
 
 #include <lib/types.h>

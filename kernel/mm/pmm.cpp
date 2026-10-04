@@ -9,9 +9,11 @@
 #include <lib/string.h>
 #include <mm/early_map.h>
 #include <mm/pmm.h>
+#include <sched/sync.h>
 
 namespace {
 
+Spinlock g_lock = SPINLOCK_RANKED(lock_rank::PMM);    // the bitmap, the counters and the hint
 u64* g_bitmap = nullptr;
 u64 g_frames = 0;           // bitmap length in frames
 u64 g_words = 0;
@@ -94,7 +96,7 @@ void pmm_init() {
 
 paddr_t pmm_alloc(usize count) {
     if (!count || !g_bitmap) return PMM_NO_MEMORY;
-    u64 flags = interrupts_save();
+    g_lock.lock();
     u64 f = (u64)-1;
     if (count == 1) {
         f = find_run(1, g_hint);
@@ -103,13 +105,13 @@ paddr_t pmm_alloc(usize count) {
         f = find_run(count, 0);
     }
     if (f == (u64)-1) {
-        interrupts_restore(flags);
+        g_lock.unlock();
         return PMM_NO_MEMORY;
     }
     for (u64 i = 0; i < count; i++) set(f + i);
     g_used += count;
     if (count == 1) g_hint = f + 1;
-    interrupts_restore(flags);
+    g_lock.unlock();
     return f * PAGE_SIZE;
 }
 
@@ -124,19 +126,19 @@ void pmm_free(paddr_t addr, usize count) {
     ASSERT_ALWAYS((addr % PAGE_SIZE) == 0);
     u64 f = addr / PAGE_SIZE;
     ASSERT_ALWAYS(f + count <= g_frames);
-    u64 flags = interrupts_save();
+    g_lock.lock();
     for (u64 i = 0; i < count; i++) {
         ASSERT(test(f + i));            // double free
         clear(f + i);
     }
     g_used -= count;
     if (f < g_hint) g_hint = f;
-    interrupts_restore(flags);
+    g_lock.unlock();
 }
 
 PmmStats pmm_stats() {
     PmmStats s{};
-    u64 flags = interrupts_save();
+    g_lock.lock();
     s.total_frames = g_frames;
     s.usable_frames = g_usable;
     s.used_frames = g_used;
@@ -148,7 +150,7 @@ PmmStats pmm_stats() {
         else if (++run > best) best = run;
     }
     s.largest_free_run = best;
-    interrupts_restore(flags);
+    g_lock.unlock();
     return s;
 }
 

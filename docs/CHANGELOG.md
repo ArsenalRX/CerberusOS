@@ -10,12 +10,59 @@ release, "Unreleased" is renamed to the version and date and a fresh
 "Unreleased" block is added above it. A version with a Security entry is
 marked "(security release)". Released blocks are never edited afterwards.
 
-Version numbers: `0.PHASE.PATCH` before 1.0, where PHASE is the last
-completed spec phase.
+Version numbers before 1.0 (since 2026-10-04): `0.0.5a`, `0.0.5b` … `0.0.5j`,
+then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
+0.3.0 to 0.7.0 used the older `0.PHASE.PATCH` scheme.
 
 ---
 
 ## Unreleased
+
+## 0.0.5a — 2026-10-04 (security release)
+
+Spec phase 8, SMP, is complete: Lumen now uses every processor.
+
+This is the first release under the new version scheme. It comes after
+0.7.0 but is numbered 0.0.5a: from now on each release moves one letter
+(0.0.5a, 0.0.5b … 0.0.5j, then 0.0.6a).
+
+### Security
+- Memory that is unmapped or made read-only is withdrawn from every
+  processor before the change returns (TLB shootdown), so no processor can
+  keep using a page that has been taken away.
+- The order in which kernel locks may be taken is written down in one place
+  and checked on every acquisition in debug builds; a wrong order stops the
+  kernel with a report instead of becoming a rare deadlock.
+- A fatal error stops all processors, not just the one that hit it.
+- The kernel's reads and writes of program memory can no longer be steered
+  at kernel memory speculatively.
+
+### Performance
+- All processors run threads. Work is spread across idle processors, and a
+  processor with nothing to do takes waiting work from a busy one.
+- The kernel heap gives each processor its own pool, so allocating memory
+  does not make processors wait for each other.
+- The kernel keeps time with the processor's own counter where it runs at a
+  steady rate, instead of reading a timer chip: reading the time is far
+  cheaper (wake-up latency 7–9 µs instead of 18–19 µs under QEMU).
+
+### Added
+- `test smp` self-test, and `test exceptions lo` (lock-order violation).
+- `ps` shows which processor each thread is on and per-processor statistics.
+
+### Changed
+- The boot log shows each processor reporting in ("smp: cpu 1 online").
+- "init: started as pid 1" is now printed by the kernel when it starts
+  `init`.
+
+### Fixed
+- The scheduler benchmarks no longer depend on there being one processor.
+- On machines without an HPET (such as VirtualBox), the clock ran several
+  times too fast when two processors read it at once; it is now read by
+  one processor at a time.
+- The scheduler and SMP self-tests measure their busy work in timer ticks
+  and no longer fail on slow virtual machines; `test all` includes
+  `test smp`.
 
 ## 0.7.0 — 2026-10-03 (security release)
 

@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.7.0).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5a).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,25 +27,36 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 8
+## Right now: waiting for the owner's go-ahead (phase 9 or desktop polish)
 
-Version **0.7.0** (phase 7, userland and system calls) was released on
-2026-10-03 (tag `v0.7.0`); all 22 integration tests pass in QEMU/KVM,
-`make fuzz` ran its 60 s per harness with no crash, and the build was
-checked on VirtualBox with 4 CPUs. The tree is on `0.7.1` development
-builds. The owner approves each phase's contents before work starts, so
-**do not start phase 8 until the owner says so**.
+Version **0.0.5a** (phase 8, SMP) was released on 2026-10-04 (tag
+`v0.0.5a`; first release under the letter scheme, docs/SPEC.md §23.1). All
+24 integration tests pass in QEMU/KVM, and the build was walked through on
+VirtualBox with 4 CPUs. The tree is on `0.0.5b` development builds. The
+owner approves each phase's contents before work starts, so **do not start
+phase 9 until the owner says so**.
+
+Owner requests of 2026-10-04, waiting for go-ahead:
+
+- **Desktop polish:** minimise/maximise/close buttons in the Windows style
+  (simple glyphs, close turns red on hover) instead of the coloured
+  macOS-style dots; rounder, smoother (anti-aliased) window corners;
+  smoother window dragging. On VirtualBox a full-screen composite takes
+  23 ms (about 130 MB/s into video memory): check whether the framebuffer
+  is mapped write-combining there (PAT) before anything else.
+- Fix: Super used in a shortcut also toggles the launcher menu; keys typed
+  with the menu open reach the terminal.
+- **Installer and dual boot:** researched in docs/INSTALLER.md (feeds
+  phase 18; NVMe would need adding to phase 10 for real PCs).
 
 Open items carried over:
 
-- Phase 7 left-overs (docs/DECISIONS.md, phase 7): `/dev/random` (needs
-  devfs, phase 9); speculation hardening of the user-copy bounds check and
-  a retpoline decision (phase 8 audit); per-CPU stack guard if still wanted
-  (phase 8).
-- **Minor page fault is over budget** (2.2–3.3 µs against 2 µs, docs/BENCH.md).
-  Profile it before changing anything.
-- Frame pacing is tied to the 10 ms tick (docs/DECISIONS.md, phase 6); a
-  one-shot timer belongs with phase 8.
+- `/dev/random` (needs devfs, phase 9); retpoline decision; per-CPU stack
+  guard.
+- **Minor page fault is over budget** (2.0–2.9 µs against 2 µs,
+  docs/BENCH.md). Profile it before changing anything.
+- Frame pacing is tied to the 10 ms tick; a one-shot timer would help the
+  desktop.
 
 ---
 
@@ -98,6 +109,14 @@ Open items carried over:
   ChaCha20 CSPRNG + `getrandom`, `make fuzz` (ELF, tar, random system
   calls); `run` shell command; system-call benchmark. Deviations recorded
   in docs/DECISIONS.md.
+- **Phase 8 — SMP. Release 0.0.5a (2026-10-04).** All CPUs started through
+  the bootloader; per-CPU data, run queues, work stealing; reschedule, TLB
+  and stop IPIs; TLB shootdown; per-address-space VMM lock; per-CPU heap
+  slabs; lock-rank checker; every "interrupts off" lock replaced; FPU state
+  saved on every switch; branch-free user-copy masking; time-stamp-counter
+  reference clock (and a PIT race fixed); `test smp`,
+  `test exceptions lo`. Deviations recorded in docs/DECISIONS.md. New
+  version scheme (owner).
 
 ---
 
@@ -111,12 +130,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 8 — SMP.** Start APs, per-CPU data, per-CPU run queues, work
-  stealing, TLB shootdown. Audit every lock. `test smp`. The APs already
-  are halted in `ap_park` (kernel text) since 0.5.1: restart them with
-  INIT/SIPI and a real-mode trampoline (DECISIONS 2026-10-03), and
-  give the VMM a per-address-space lock.
-  **+v2:** lock-rank checker; per-CPU slab caches.
 - [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **lumfs**
   (on-disk, journal) + `mkfs.lumfs`. Dentry cache. Acceptance: format,
   mount, write 4 MB, remount, byte-compare; journal replay after a hard
@@ -168,6 +181,9 @@ output.
   Live-ISO installer (GPT, lumfs + FAT32 EFI), optional full-disk
   encryption, signed updates with a fallback kernel, recovery boot entry
   and repairing `fsck.lumfs`, service manager with per-service sandbox.
+  Owner asked (2026-10-04) for a Windows-Setup-like flow (pick a drive,
+  erase or keep the existing system) and a boot menu with Windows: design
+  notes in docs/INSTALLER.md.
 - [ ] **Phase 19 — Stretch** (was phase 15). USB, audio, IPv6, KASLR, real
   hardware, self-hosting Spec, HiDPI, ARM64.
 

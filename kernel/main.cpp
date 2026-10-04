@@ -6,6 +6,7 @@
 #include <arch/x86_64/cpufeatures.h>
 #include <arch/x86_64/cpuid.h>
 #include <arch/x86_64/percpu.h>
+#include <arch/x86_64/smp.h>
 #include <lib/csprng.h>
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/interrupts.h>
@@ -87,7 +88,11 @@ void init_thread(void*) {
     if (files_archive_present()) {
         const char* const argv[] = {"init", nullptr};
         Result<Process*> init = process_spawn("/bin/init", argv, true);
-        if (!init.ok()) kprintf("init: could not start /bin/init: %s\n", error_name(init.error()));
+        // Announced here rather than by the program: it starts on another
+        // CPU, and its own first line would land somewhere in the middle of
+        // the shell's.
+        if (init.ok()) kprintf("init: started as pid %u\n", init.value()->pid);
+        else kprintf("init: could not start /bin/init: %s\n", error_name(init.error()));
     }
     shell_run();
 }
@@ -101,6 +106,8 @@ extern "C" [[noreturn]] void kernel_main() {
     // function that will return has been entered under the old value. Only
     // this function, which never returns, straddles the change. The low byte
     // stays zero so a string overrun cannot copy the guard.
+    // Before even that, per-CPU data: locks and kprintf look at it.
+    percpu_init(0, 0);
     csprng_init();
     __stack_chk_guard = csprng_u64() & ~0xFFull;
 
@@ -122,7 +129,6 @@ extern "C" [[noreturn]] void kernel_main() {
     pmm_init();
 
     gdt_init_bsp();
-    percpu_init_bsp();
     cpu_features_init();
     kprintf("gdt: loaded (kernel cs=%#x ds=%#x, user cs=%#x ds=%#x, tss=%#x)\n", seg::KCODE, seg::KDATA,
             seg::UCODE, seg::UDATA, seg::TSS);
@@ -146,6 +152,7 @@ extern "C" [[noreturn]] void kernel_main() {
     refclock_init();
     lapic_init();
     ioapic_init();
+    smp_init();
     lapic_timer_calibrate();
     lapic_timer_set_periodic(TIMER_HZ);
     ps2kbd_init();

@@ -15,6 +15,7 @@ struct CpuFeatures {
     bool erms;          // fast rep movsb/stosb
     bool pcid;
     bool invariant_tsc;
+    bool hypervisor;    // running in a virtual machine (CPUID.1:ECX bit 31)
     bool x2apic;
 };
 
@@ -25,8 +26,11 @@ extern CpuFeatures g_cpu;
 //     them outside the user-copy routines (mm/usercopy.h);
 //   - UMIP;
 //   - the FPU/SSE unit for user programs (the kernel itself never uses it).
-// Call once per CPU, early, with interrupts off.
+// Bootstrap CPU, early, with interrupts off.
 void cpu_features_init();
+// The enabling half alone, for every other CPU (the features were detected
+// by the bootstrap CPU; all CPUs of a machine are assumed alike).
+void cpu_features_init_cpu();
 
 // FPU/SSE state of user threads. The kernel is built without SSE, so the
 // registers only change hands between user threads: the state is saved and

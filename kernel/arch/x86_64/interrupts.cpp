@@ -3,6 +3,8 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/interrupts.h>
+#include <arch/x86_64/percpu.h>
+#include <arch/x86_64/smp.h>
 #include <lib/console.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -137,9 +139,10 @@ void decode_error_code(const InterruptFrame& f) {
 } // namespace
 
 [[noreturn]] void exception_fatal(InterruptFrame* f) {
-    interrupts_disable();
+    panic_begin();
     console_emergency_text_mode();
     kprintf("\n*** EXCEPTION %lu: %s ***\n", (unsigned long)f->vector, exception_name((u8)f->vector));
+    if (smp_cpu_count() > 1) kprintf("cpu %u\n", percpu_cpu_id());
     if (Thread* t = thread_current()) kprintf("thread: %s (id %u)\n", t->name, t->id);
     decode_error_code(*f);
     dump_frame(*f);
@@ -154,6 +157,10 @@ void interrupts_init() {
     set_gate(2, isr_stub_table[2], ist::NMI, GATE_INTERRUPT);
     set_gate(18, isr_stub_table[18], ist::MACHINE_CHECK, GATE_INTERRUPT);
 
+    interrupts_load();
+}
+
+void interrupts_load() {
     IdtPointer ptr{(u16)(sizeof g_idt - 1), (u64)g_idt};
     asm volatile("lidt %0" ::"m"(ptr) : "memory");
 }
@@ -173,7 +180,7 @@ u64 g_interrupt_counts[256];
 u64 interrupt_count(u8 vector) { return g_interrupt_counts[vector]; }
 
 extern "C" void interrupt_dispatch(InterruptFrame* f) {
-    g_interrupt_counts[f->vector]++;
+    __atomic_fetch_add(&g_interrupt_counts[f->vector], 1, __ATOMIC_RELAXED);
     Registration& r = g_handlers[f->vector];
     if (f->vector < 32) {
         // CPU exception: handled in place (page faults), or fatal.
@@ -188,7 +195,7 @@ extern "C" void interrupt_dispatch(InterruptFrame* f) {
     // way out, after the handler has acknowledged the interrupt.
     sched_irq_enter();
     if (r.fn) r.fn(f, r.ctx);
-    else if (g_unhandled_irq_count[f->vector]++ < 3)   // spurious or unclaimed: report the first few
+    else if (__atomic_fetch_add(&g_unhandled_irq_count[f->vector], 1u, __ATOMIC_RELAXED) < 3)   // spurious or unclaimed: report the first few
         kprintf("interrupt: unhandled vector %lu (no handler registered)\n", (unsigned long)f->vector);
     sched_irq_exit();
 }

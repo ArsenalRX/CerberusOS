@@ -11,7 +11,9 @@
 #include <boot/bootinfo.h>
 #include <drivers/fbconsole.h>
 #include <drivers/lapic.h>
+#include <arch/x86_64/smp.h>
 #include <drivers/ps2kbd.h>
+#include <lib/console.h>
 #include <drivers/ps2mouse.h>
 #include <drivers/refclock.h>
 #include <drivers/rtc.h>
@@ -302,7 +304,11 @@ int top_visible_window() {
 
 void terminal_fit(Window& w) {
     Rect cr = content_rect(w);
+    // The cell grid is written by whoever prints (any thread, any CPU) under
+    // the console lock; resizing and painting it take the same lock.
+    console_lock();
     g.term.resize((cr.w - 12) / g.term.cell_w(), (cr.h - 12) / g.term.cell_h());
+    console_unlock();
     w.needs_paint = true;
 }
 
@@ -504,7 +510,7 @@ void paint_sysmon(Surface& s) {
     char brand[49];
     cpuid_brand(brand);
     y = paint_kv(s, y, "CPU", brand);
-    ksnprintf(line, sizeof line, "%lu online (1 in use until phase 8)", (unsigned long)g_boot_info.cpu_count);
+    ksnprintf(line, sizeof line, "%u in use", smp_cpu_count());
     y = paint_kv(s, y, "Cores", line);
 
     PmmStats pm = pmm_stats();
@@ -559,8 +565,10 @@ void paint_window_content(Window& w) {
     if (w.kind == Kind::Terminal) {
         // Clear the flag before painting: output that arrives from another
         // thread while this paint runs sets it again and is drawn next frame.
+        console_lock();
         g.term_dirty = false;
         Rect d = g.term.paint(view, g.focus == idx, w.needs_paint);
+        console_unlock();
         if (!d.empty()) damage(d.translated(cr.x, cr.y));
         w.needs_paint = false;
         return;
@@ -996,10 +1004,12 @@ void on_motion() {
 }
 
 void term_input_push(char c) {
+    // One writer (the compositor) and one reader (the shell), possibly on
+    // different CPUs: the slot is filled before the index is published.
     usize next = (g.term_in_head + 1) % sizeof g.term_in;
     if (next == g.term_in_tail) return;
     g.term_in[g.term_in_head] = c;
-    g.term_in_head = next;
+    __atomic_store_n(&g.term_in_head, next, __ATOMIC_RELEASE);
 }
 
 void cycle_focus() {
@@ -1145,9 +1155,9 @@ void gui_terminal_putc(char c) {
 }
 
 int gui_terminal_getc() {
-    if (g.term_in_head == g.term_in_tail) return -1;
+    if (__atomic_load_n(&g.term_in_head, __ATOMIC_ACQUIRE) == g.term_in_tail) return -1;
     char c = g.term_in[g.term_in_tail];
-    g.term_in_tail = (g.term_in_tail + 1) % sizeof g.term_in;
+    __atomic_store_n(&g.term_in_tail, (g.term_in_tail + 1) % sizeof g.term_in, __ATOMIC_RELEASE);
     return (unsigned char)c;
 }
 

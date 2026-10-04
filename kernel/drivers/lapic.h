@@ -17,6 +17,15 @@ constexpr u32 TIMER_HZ = 100;
 void lapic_init();
 u32 lapic_id();
 void lapic_eoi();
+// Enables the APIC of another CPU (the register page is already mapped).
+void lapic_init_cpu();
+// Starts another CPU's periodic tick at the rate the bootstrap CPU settled on.
+void lapic_timer_start_cpu();
+// Sends interrupt `vector` to the CPU with this APIC id and waits until it
+// has been accepted for delivery. Interrupt-safe.
+void lapic_send_ipi(u32 apic_id, u8 vector);
+// A non-maskable interrupt to every other CPU (panic).
+void lapic_send_nmi_to_others();
 
 // Step 1: estimate ticks per millisecond from the count register (~30 ms).
 void lapic_timer_calibrate();

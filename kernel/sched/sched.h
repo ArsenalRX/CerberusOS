@@ -1,16 +1,26 @@
-// Threads, processes and the scheduler (SPEC phase 6 and §5A).
+// Threads, processes and the scheduler (SPEC phases 6 and 8, and §5A).
 //
-// Scheduling: four priority levels with one FIFO run queue each; the highest
-// non-empty level runs, round-robin within a level, one timer tick (10 ms)
-// per slice. A thread that uses its whole slice drops one level (down to
-// LOW); a thread that blocks returns to its base level; once a second every
-// thread returns to its base level so nothing starves. A thread made ready
-// at a higher level than the running one preempts it at once.
+// Scheduling: every CPU has four priority levels with one FIFO run queue
+// each; the highest non-empty level runs, round-robin within a level, one
+// timer tick (10 ms) per slice. A thread that uses its whole slice drops one
+// level (down to LOW); a thread that blocks returns to its base level; once
+// a second every thread returns to its base level so nothing starves. A
+// thread made ready at a higher level than the one running on its CPU
+// preempts it at once.
+//
+// Placement: a thread that becomes runnable goes to the CPU it last ran on
+// if that CPU is idle, otherwise to any idle CPU it may run on, otherwise
+// back to its last CPU. A CPU whose queues are empty takes a waiting thread
+// from another CPU's queue (work stealing) before it idles.
 //
 // Every thread runs on its own kernel stack with a guard page below it.
 //
-// Concurrency: all scheduler state is protected by disabling interrupts
-// (one CPU until phase 8, which adds per-CPU run queues and a lock). The
+// Concurrency: one spinlock, the scheduler lock, protects the run queues,
+// wait queues, the sleep list and the thread and process lists (including
+// the parent/child tree). It is held across the switch from one thread to
+// the next and released by the thread that resumes, which is what makes
+// "put myself on a wait queue and stop running" one step: nobody can wake a
+// thread and run it elsewhere while it is still on its old stack. The
 // functions that block (wait, sleep, join, yield) must be called from thread
 // context with interrupts enabled; the wake functions and sched_tick are
 // safe from interrupt context.
@@ -97,7 +107,8 @@ struct Thread {
     bool detached;
     bool timed_out;
     bool is_idle;
-    u32 cpu_affinity;           // bit per CPU; all ones until phase 8 uses it
+    u32 cpu_affinity;           // bit per CPU the thread may run on
+    u32 cpu;                    // the CPU it is running on, queued on, or last ran on
     Process* process;
     AddressSpace* space;        // address space active while this thread runs
     vaddr_t stack_top;
@@ -118,10 +129,12 @@ struct Thread {
 };
 
 struct SchedStats {
-    u64 ticks;                  // timer ticks since the scheduler started
-    u64 idle_ticks;             // of those, spent in the idle thread
+    u64 ticks;                  // timer ticks since the scheduler started, added over all CPUs
+    u64 idle_ticks;             // of those, spent in an idle thread
     u64 context_switches;
+    u64 steals;                 // threads taken from another CPU's queue
     u32 threads;
+    u32 cpus;                   // CPUs scheduling
 };
 
 // Starts scheduling: creates the kernel process, the idle and reaper threads
@@ -130,6 +143,9 @@ struct SchedStats {
 // running periodic timer.
 [[noreturn]] void sched_start(void (*init)(void*), void* arg);
 bool sched_running();
+// Another CPU joins in (called by smp_ap_main once sched_start has run).
+// Never returns; the stack it was called on is abandoned.
+[[noreturn]] void sched_enter_ap();
 
 Thread* thread_current();
 Process* process_kernel();
@@ -155,6 +171,13 @@ void thread_yield();
 void thread_sleep_ms(u64 ms);
 // Sleeps until the `ticks`-th next timer tick (ticks >= 1).
 void thread_sleep_ticks(u64 ticks);
+// Restricts the calling thread to the CPUs in `mask` (bit n = CPU n) and
+// moves it at once if it is on one it may no longer use. A mask naming no
+// running CPU means "any".
+void thread_set_affinity(u32 mask);
+// The CPU the caller is running on now. Unless the thread is pinned to one
+// CPU, it may be on another by the time the value is used.
+u32 thread_cpu();
 
 // Gives the calling thread an FPU/SSE save area, which it needs before it
 // first runs user code. `initial` is a 512-byte FXSAVE image to start from
@@ -179,9 +202,18 @@ Result<Process*> process_create(const char* name, AddressSpace* space = nullptr)
 // Frees a process and its address space. It must have no threads left.
 void process_destroy(Process* p);
 
-// For synchronisation primitives: blocks the calling thread on `wq`.
-// Interrupts must already be disabled; returns with them still disabled.
+// For synchronisation primitives and the process tree, whose state the
+// scheduler lock protects. sched_lock disables interrupts, takes the lock and
+// returns the previous interrupt state for sched_unlock, which also switches
+// threads first if a wake-up made under the lock calls for it.
+u64 sched_lock();
+void sched_unlock(u64 saved);
+// With the lock held: blocks the calling thread on `wq`. Returns with the
+// lock held again, possibly on another CPU.
 void sched_block_locked(WaitQueue& wq);
+// With the lock held: the wake functions.
+bool sched_wake_one_locked(WaitQueue& wq);
+void sched_wake_all_locked(WaitQueue& wq);
 
 // Timer interrupt entry (installed as the LAPIC tick hook by sched_start).
 void sched_tick();
@@ -197,5 +229,7 @@ bool sched_idle_spin();
 
 u64 sched_ticks();
 SchedStats sched_stats();
+// Timer ticks and idle ticks of one CPU (0 for a CPU that is not running).
+void sched_cpu_ticks(u32 cpu, u64* ticks, u64* idle_ticks);
 // Prints one line per thread (the `ps` shell command).
 void sched_print_threads();

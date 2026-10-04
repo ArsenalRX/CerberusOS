@@ -14,13 +14,22 @@
 
 namespace {
 
+struct YieldCtx {
+    u32 rounds;
+    u32 cpu;
+    u64 switches;       // times this thread was switched in
+};
+
 void yielder(void* arg) {
-    u32 rounds = (u32)(u64)arg;
-    for (u32 i = 0; i < rounds; i++) thread_yield();
+    YieldCtx* c = (YieldCtx*)arg;
+    // Both threads on one CPU: on separate CPUs each would yield to nobody.
+    thread_set_affinity(1u << c->cpu);
+    for (u32 i = 0; i < c->rounds; i++) thread_yield();
+    c->switches = thread_current()->switches;
 }
 
 struct WakeCtx {
-    WaitQueue wq;
+    Semaphore sem;      // counts wake-ups, so one sent before the target waits again is not lost
     volatile u64 sent_us;
     volatile u64 sum_us;
     volatile u64 max_us;
@@ -31,7 +40,7 @@ struct WakeCtx {
 void wake_target(void* arg) {
     WakeCtx* c = (WakeCtx*)arg;
     for (;;) {
-        c->wq.wait();
+        c->sem.down();
         if (c->stop) return;
         u64 d = refclock_now_us() - c->sent_us;
         c->sum_us = c->sum_us + d;
@@ -43,20 +52,18 @@ void wake_target(void* arg) {
 } // namespace
 
 u64 kbench_context_switch_ns(u32 rounds) {
-    // The caller sleeps in join while the two threads hand the CPU back and
-    // forth. Divide by the switches that really happened: a yield with no
-    // other thread at the same level does not switch.
-    // Both threads run at the lowest level. There they can never be more
-    // urgent than the caller (which may itself have been demoted), so neither
-    // starts before both exist; and a timer tick cannot demote one of them
-    // away from the other, which would leave each yielding to nobody.
-    // The clock and the counter are read before the threads exist, so that
-    // nothing they do can fall outside the measurement; the cost of creating
-    // them is included and is small against the run.
-    u64 s0 = sched_stats().context_switches;
+    // Two threads on the caller's CPU hand it back and forth while the
+    // caller sleeps in join. They run at the lowest level: there a timer
+    // tick cannot demote one of them away from the other, which would leave
+    // each yielding to nobody. Divide by the switches that really happened,
+    // counted by the threads themselves (other CPUs' switches are not theirs).
+    // The clock is read before the threads exist, so nothing they do can
+    // fall outside the measurement; creating them is small against the run.
+    static YieldCtx ctx[2];
+    ctx[0] = ctx[1] = YieldCtx{rounds, thread_cpu(), 0};
     u64 t0 = refclock_now_us();
-    Result<Thread*> a = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-a", prio::LOW);
-    Result<Thread*> b = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-b", prio::LOW);
+    Result<Thread*> a = kthread_create(yielder, &ctx[0], "bench-yield-a", prio::LOW);
+    Result<Thread*> b = kthread_create(yielder, &ctx[1], "bench-yield-b", prio::LOW);
     if (!a.ok() || !b.ok()) {
         if (a.ok()) thread_join(a.value());
         if (b.ok()) thread_join(b.value());
@@ -65,7 +72,7 @@ u64 kbench_context_switch_ns(u32 rounds) {
     thread_join(a.value());
     thread_join(b.value());
     u64 t1 = refclock_now_us();
-    u64 switches = sched_stats().context_switches - s0;
+    u64 switches = ctx[0].switches + ctx[1].switches;
     return switches ? (t1 - t0) * 1000 / switches : 0;
 }
 
@@ -77,11 +84,11 @@ WakeLatency kbench_wake_latency(u32 rounds) {
     thread_sleep_ticks(1);                  // let it reach its first wait
     for (u32 i = 0; i < rounds; i++) {
         ctx.sent_us = refclock_now_us();
-        ctx.wq.wake_one();                  // the target is more urgent: it runs before this returns
+        ctx.sem.up();                       // the target is more urgent: it runs at once, here or on an idle CPU
         while (ctx.seen <= i) thread_yield();
     }
     ctx.stop = true;
-    ctx.wq.wake_one();
+    ctx.sem.up();
     thread_join(t.value());
     return {rounds ? ctx.sum_us / rounds : 0, ctx.max_us, true};
 }

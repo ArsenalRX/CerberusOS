@@ -5,8 +5,8 @@
 // bitmap; contiguous runs are supported. Frames are returned as physical
 // addresses; use hhdm_virt() to touch them.
 //
-// All functions disable interrupts while touching the bitmap, so they are
-// safe from interrupt context. None of them sleep.
+// One spinlock protects the bitmap; all functions are safe on any CPU and
+// from interrupt context. None of them sleep.
 #pragma once
 
 #include <lib/types.h>

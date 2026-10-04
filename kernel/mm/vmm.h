@@ -12,14 +12,18 @@
 // The kernel half (the upper 256 PML4 slots) is shared by every address
 // space; kernel mappings are made through vmm_kernel() only.
 //
-// Concurrency: every operation disables interrupts while it edits page
-// tables or a VMA list. That is sufficient on one CPU; phase 8 adds a lock
-// per address space and TLB shootdown. Nothing here sleeps. Only
-// handle_fault and vmm_fault_note are called from interrupt context.
+// Concurrency: every address space has a spinlock that covers its page
+// tables and VMA list; every operation takes it. Removing or restricting a
+// translation also makes the other CPUs that may have cached it drop it
+// (TLB shootdown, arch/x86_64/smp.h) before the operation returns. Nothing
+// here sleeps. Only handle_fault and vmm_fault_note are called from
+// interrupt context. find_vma and vma_count take no lock: they are for the
+// fault path (which holds it) and for tests.
 #pragma once
 
 #include <lib/result.h>
 #include <lib/types.h>
+#include <sched/sync.h>
 
 // Page permissions. Readable is implied; the default is read-only,
 // kernel-only, non-executable, cached.
@@ -115,7 +119,9 @@ public:
     // copied on the first write by either side.
     Result<AddressSpace*> clone();
 
-    // Loads this space into CR3 and makes it the one faults resolve against.
+    // Loads this space into CR3 on the calling CPU and makes it the one
+    // faults there resolve against. The scheduler reloads it whenever the
+    // calling thread is switched back in, on whichever CPU.
     void activate();
 
     // Page-fault entry: returns true if the fault was resolved (demand page
@@ -130,6 +136,9 @@ public:
 private:
     friend void vmm_init();
 
+    Result<void> map_locked(vaddr_t virt, paddr_t phys, usize size, u32 flags);
+    Result<void> protect_locked(vaddr_t virt, usize size, u32 flags);
+    bool handle_fault_locked(vaddr_t addr, u64 error_code);
     Vma* find_vma_mut(vaddr_t addr);
     Result<void> insert_vma(vaddr_t start, vaddr_t end, u32 prot, VmaKind kind, paddr_t phys);
     Result<void> split_vma_at(vaddr_t addr);
@@ -143,6 +152,7 @@ private:
     paddr_t root_;      // physical address of the PML4
     Vma* vmas_;
     bool kernel_;
+    mutable Spinlock lock_;     // page tables and VMA list; rank VMM_USER or VMM_KERNEL
 };
 
 // Adopts the bootloader's page tables as the kernel address space, hardens
@@ -151,9 +161,17 @@ private:
 // Requires pmm_init and interrupts_init. Panics if the CPU lacks NX.
 void vmm_init();
 
+// The same control-register settings on another CPU, and the kernel space
+// loaded afresh. First thing that CPU does; needs no per-CPU data.
+void vmm_init_cpu();
+
 AddressSpace& vmm_kernel();
-// The address space most recently activated (the kernel space until then).
+// The address space loaded on the calling CPU, which is the calling
+// thread's own.
 AddressSpace& vmm_current();
+// Drops this CPU's cached translations for [start, start + size); size 0
+// means all of them. Used by TLB shootdown. Interrupts must be off.
+void vmm_flush_local(vaddr_t start, usize size);
 
 // A kernel stack of `size` bytes with a guard page below it. Returns the
 // address just past the top (the initial stack pointer).

@@ -3,6 +3,7 @@
 // show, and every fault function makes a call before faulting so its own frame
 // is established (an RBP walk cannot name a function that faults inside its
 // prologue). The kernel halts afterwards by design (phase 2 acceptance).
+#include <sched/sync.h>
 #include <kernel/ktest.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -95,6 +96,9 @@ __attribute__((noinline)) void fault_undefined_behaviour() {
 // Overwrites the free-list link inside a freed object, as a heap overflow or
 // use-after-free would; the allocator must refuse to follow it.
 __attribute__((noinline)) void fault_heap_free_list() {
+    // Stay on one CPU: the freed object goes back to this CPU's slab, and the
+    // next allocation must come from the same one.
+    thread_set_affinity(1u << thread_cpu());
     u8* p = (u8*)kmalloc(64);
     if (!p) return;
     kfree(p);
@@ -107,6 +111,9 @@ __attribute__((noinline)) void fault_heap_free_list() {
 
 __attribute__((noinline)) void fault_heap_write_after_free() {
 #ifdef LUMEN_DEBUG
+    // Stay on one CPU: the freed object goes back to this CPU's slab, and the
+    // next allocation must come from the same one.
+    thread_set_affinity(1u << thread_cpu());
     u8* p = (u8*)kmalloc(64);
     if (!p) return;
     kfree(p);
@@ -127,6 +134,23 @@ __attribute__((noinline)) void fault_heap_double_free() {
     kfree(p);
 }
 
+// Takes two ranked spinlocks in the wrong order (lib/lock_order.h). Nothing
+// is actually deadlocked: the checker must object to the order itself.
+__attribute__((noinline)) void fault_lock_order() {
+#ifdef LUMEN_DEBUG
+    static Spinlock inner = SPINLOCK_RANKED(lock_rank::PMM);
+    static Spinlock outer = SPINLOCK_RANKED(lock_rank::HEAP);
+    kprintf("  taking a lock of rank %u while holding one of rank %u\n", outer.rank, inner.rank);
+    inner.lock();
+    outer.lock();
+    outer.unlock();
+    inner.unlock();
+    kprintf("unexpectedly took both locks\n");
+#else
+    kprintf("  the lock-order checker is only built into debug kernels\n");
+#endif
+}
+
 __attribute__((noinline)) void trampoline(void (*fn)()) {
     kprintf("  raising...\n");
     fn();
@@ -137,7 +161,7 @@ __attribute__((noinline)) void trampoline(void (*fn)()) {
 
 int ktest_exceptions(int argc, char** argv) {
     if (argc < 2) {
-        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df>\n");
+        kprintf("usage: test exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df|lo>\n");
         return 1;
     }
     const char* which = argv[1];
@@ -153,6 +177,7 @@ int ktest_exceptions(int argc, char** argv) {
     else if (strcmp(which, "fl") == 0) fn = fault_heap_free_list;
     else if (strcmp(which, "waf") == 0) fn = fault_heap_write_after_free;
     else if (strcmp(which, "df") == 0) fn = fault_heap_double_free;
+    else if (strcmp(which, "lo") == 0) fn = fault_lock_order;
     if (!fn) {
         kprintf("unknown exception '%s'\n", which);
         return 1;

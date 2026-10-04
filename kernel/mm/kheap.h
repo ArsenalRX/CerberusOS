@@ -19,10 +19,11 @@
 // is NOT zeroed by kmalloc: use kzalloc for anything that may be copied to
 // user space (SPEC §19.3).
 //
-// Concurrency: every entry point disables interrupts while it works (enough
-// on one CPU; phase 8 adds per-CPU caches and a lock). Slab-sized requests
-// are safe from interrupt context; large requests are not (they may call
-// into the VMM). Nothing here sleeps.
+// Concurrency: safe on any number of CPUs. Each CPU allocates from slabs of
+// its own without taking a lock; the shared lists behind them have one lock
+// (kheap.cpp describes the scheme). Slab-sized requests are safe from
+// interrupt context; large requests are not (they may call into the VMM).
+// Nothing here sleeps.
 #pragma once
 
 #include <lib/types.h>

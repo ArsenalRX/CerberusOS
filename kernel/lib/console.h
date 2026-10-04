@@ -6,6 +6,14 @@
 
 #include <lib/types.h>
 
+// The console lock (rank CONSOLE, the last in lib/lock_order.h) covers the
+// serial port, the framebuffer console and the terminal's cell grid. kprintf
+// takes it for one whole call; the functions below do not take it, so
+// callers that use them directly hold it around their output. Interrupts are
+// off while it is held.
+void console_lock();
+void console_unlock();
+
 void console_putc(char c);
 void console_write(const char* s, usize n);
 void console_puts(const char* s);
