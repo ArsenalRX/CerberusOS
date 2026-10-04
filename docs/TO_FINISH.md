@@ -46,6 +46,7 @@ Owner requests of 2026-10-04, waiting for go-ahead:
   is mapped write-combining there (PAT) before anything else.
 - Fix: Super used in a shortcut also toggles the launcher menu; keys typed
   with the menu open reach the terminal.
+- Overview for the owner: docs/ROADMAP.md.
 - **Installer and dual boot:** researched in docs/INSTALLER.md (feeds
   phase 18; NVMe would need adding to phase 10 for real PCs).
 
