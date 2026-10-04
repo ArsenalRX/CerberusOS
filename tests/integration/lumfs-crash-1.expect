@@ -1,0 +1,21 @@
+#!machine pc
+#!disk new 64M crash
+#!hostcheck-replay crash
+# Phase 9 acceptance, part 1 of 2: power is cut while files are being
+# written, renamed and deleted. Afterwards the build machine replays the
+# journal on a copy of the disk and checks it with an independent reader:
+# the file system must be consistent. Part 2 boots Lumen on the same disk.
+ata: sda
+lumen kernel shell
+!send mount -t lumfs /dev/disk/sda /mnt
+!wait 2
+lumfs: mounted /dev/disk/sda
+!send fstest write /mnt/base.bin 1
+!wait 4
+fstest: wrote 1 MiB
+!send mkdir /mnt/work
+!wait 1
+!send fstest churn /mnt/work
+!wait 6
+fstest: churn round
+!kill

@@ -1,0 +1,25 @@
+#!machine pc
+#!disk keep crash
+#!hostcheck crash
+# Phase 9 acceptance, part 2 of 2: Lumen mounts the disk whose power was cut
+# in part 1 (replaying the journal if a transaction was committed), the file
+# written and synced before the cut is intact, and after a clean unmount the
+# disk passes the independent check.
+ata: sda
+lumen kernel shell
+!send mount -t lumfs /dev/disk/sda /mnt
+!wait 3
+lumfs: mounted /dev/disk/sda
+!send fstest verify /mnt/base.bin 1
+!wait 4
+fstest: verified 1 MiB of /mnt/base.bin, every byte matches
+!send ls /mnt/work
+!wait 2
+!send fstest churn /mnt/work 30
+!wait 6
+fstest: churn done
+!send umount /mnt
+!wait 3
+!send mount
+!wait 2
+page cache:

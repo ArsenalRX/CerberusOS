@@ -21,6 +21,7 @@ Exit status: 0 if RIP is in the kernel's higher half and all expectations hold.
 import argparse, json, os, re, socket, subprocess, sys, tempfile, threading, time
 
 KERNEL_BASE = 0xFFFFFFFF80000000
+BUILD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 class Qmp:
@@ -40,6 +41,37 @@ class Qmp:
 
     def hmp(self, line):
         return self.cmd("human-monitor-command", **{"command-line": line})
+
+def load_setup(path):
+    """'#!' lines at the top of an expect file: machine, disks, host checks.
+
+      #!machine pc                  QEMU machine type
+      #!disk new <size> <name>      a fresh lumfs image build/disk-<name>.img (mkfs.lumfs)
+      #!disk keep <name>            reuse that image as left by an earlier test
+      #!hostcheck <name>            after the run: mkfs.lumfs --check must pass
+      #!hostcheck-replay <name>     after the run: replay the journal on a copy, then check
+    """
+    setup = {"machine": None, "disks": [], "checks": []}
+    for raw in open(path, encoding="utf-8"):
+        line = raw.strip()
+        if not line.startswith("#!"):
+            continue
+        words = line[2:].split()
+        if words[:1] == ["machine"] and len(words) == 2:
+            setup["machine"] = words[1]
+        elif words[:2] == ["disk", "new"] and len(words) == 4:
+            setup["disks"].append(("new", words[3], words[2]))
+        elif words[:2] == ["disk", "keep"] and len(words) == 3:
+            setup["disks"].append(("keep", words[2], None))
+        elif words[:1] in (["hostcheck"], ["hostcheck-replay"]) and len(words) == 2:
+            setup["checks"].append((words[0], words[1]))
+    return setup
+
+def disk_path(name):
+    return os.path.join(BUILD_DIR, f"disk-{name}.img")
+
+def mkfs_tool():
+    return os.path.join(BUILD_DIR, "tools", "mkfs.lumfs")
 
 def load_expect(path):
     """Returns a list of ("send"|"key", text) / ("wait", secs) / ("expect", text)."""
@@ -127,6 +159,22 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="lumen-qmp-")
     sock = os.path.join(tmp, "qmp.sock")
+    setup = load_setup(a.expect) if a.expect else {"machine": None, "disks": [], "checks": []}
+    if setup["machine"]:
+        a.machine = setup["machine"]
+    for mode, name, size in setup["disks"]:
+        path = disk_path(name)
+        if mode == "new":
+            if os.path.exists(path):
+                os.remove(path)
+            r = subprocess.run([mkfs_tool(), "-s", size, path], capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"setup FAILED: mkfs.lumfs: {r.stdout}{r.stderr}")
+                sys.exit(1)
+        elif not os.path.exists(path):
+            print(f"setup FAILED: {path} does not exist (run the test that creates it first)")
+            sys.exit(1)
+        a.disk.append(path)
     machine = a.machine + (",hpet=off" if a.no_hpet else "")
     # KVM when available (nested virtualisation inside WSL2 works): faster tests
     # and hardware-accurate timers. LUMEN_QEMU_ACCEL=tcg forces emulation.
@@ -294,6 +342,20 @@ def main():
             pos = idx + len(want)
         else:
             print(f"expect OK: {a.expect}")
+    for kind, name in setup["checks"]:
+        path = disk_path(name)
+        if kind == "hostcheck-replay":
+            copy = path + ".replay"
+            subprocess.run(["cp", path, copy])
+            r = subprocess.run([mkfs_tool(), "--check", "--replay", copy], capture_output=True, text=True)
+        else:
+            r = subprocess.run([mkfs_tool(), "--check", path], capture_output=True, text=True)
+        print((r.stdout + r.stderr).strip())
+        if r.returncode != 0:
+            print(f"hostcheck FAILED: {path}")
+            ok = False
+        else:
+            print(f"hostcheck OK: {path}")
     sys.exit(0 if ok else 1)
 
 if __name__ == "__main__":

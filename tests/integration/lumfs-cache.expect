@@ -1,0 +1,30 @@
+#!machine pc
+#!disk new 160M cache
+#!hostcheck cache
+# Phase 9 (v2): one page cache serves file reads. A 64 MiB file is written,
+# the file system is remounted so the cache starts cold, and the file is read
+# twice: the second pass is served from the cache (at least twice as fast),
+# and the cache's counters show the hits.
+ata: sda
+lumen kernel shell
+!send mount -t lumfs /dev/disk/sda /mnt
+!wait 2
+lumfs: mounted /dev/disk/sda
+!send fstest write /mnt/big.bin 64
+!wait 40
+fstest: wrote 64 MiB
+!send umount /mnt
+!wait 4
+!send mount -t lumfs /dev/disk/sda /mnt
+!wait 2
+!send fstest readtwice /mnt/big.bin
+!wait 30
+fstest: the second pass came from the cache
+!send mount
+!wait 1
+page cache:
+!send umount /mnt
+!wait 4
+!send mount
+!wait 2
+page cache:

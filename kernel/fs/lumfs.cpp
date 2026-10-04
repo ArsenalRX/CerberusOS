@@ -19,6 +19,8 @@ constexpr u32 SECTORS = BLOCK / 512;
 // Commit before an operation when fewer than this many transaction slots
 // are left; no single step of an operation dirties more blocks.
 constexpr u32 TX_RESERVE = 24;
+// Closed files kept cached (with their pages) per mounted file system.
+constexpr u32 MAX_INACTIVE = 256;
 
 enum class Kind : u8 { Super, Bitmap, Dir, Indirect, Inodes };
 
@@ -44,6 +46,7 @@ struct LumFs {
     u64 alloc_hint;
     u32 inode_hint;
     bool broken;                // an I/O error: refuse further writes
+    u32 inactive;               // cached vnodes with no references
 };
 
 struct LumNode {
@@ -334,7 +337,10 @@ u8 dirtype_of(VType t) { return t == VType::Dir ? DT_DIR : t == VType::Symlink ?
 // The vnode for inode `ino`, with a new reference.
 Result<Vnode*> node_get(LumFs* fs, u32 ino) {
     for (LumNode* n = fs->nodes; n; n = n->next)
-        if (n->ino == ino) return vnode_ref(n->v);
+        if (n->ino == ino) {
+            if (n->v->refs == 0) fs->inactive--;
+            return vnode_ref(n->v);
+        }
     Inode di;
     Result<void> r = inode_read(fs, ino, &di);
     if (!r.ok()) return r.error();
@@ -1178,25 +1184,46 @@ Result<void> lum_setattr(Vnode* v) {
 
 Result<void> lum_fsync(Vnode* v) { return commit(fs_of(v)); }
 
-void lum_release(Vnode* v) {
-    LumNode* n = node_of(v);
+// Forgets a vnode nobody holds: its data is written first (the pages are
+// keyed by the vnode, which is about to go).
+void node_free(LumNode* n) {
     LumFs* fs = n->fs;
-    if (v->nlink == 0 && n->di.mode != 0 && !fs->broken && !(fs->mount.flags & vfs::MNT_RDONLY)) {
-        Result<void> r = inode_destroy(n);
-        if (!r.ok()) kprintf("lumfs: could not free inode %u: %s\n", n->ino, error_name(r.error()));
-    } else {
-        // Its data must reach the disk before the vnode (the pages' owner) goes.
-        Result<void> r = page_sync_owner(v);
-        if (!r.ok()) fs->broken = true;
-    }
+    Vnode* v = n->v;
+    Result<void> r = page_sync_owner(v);
+    if (!r.ok()) fs->broken = true;
     page_drop_owner(v, 0);
     for (LumNode** link = &fs->nodes; *link; link = &(*link)->next)
         if (*link == n) {
             *link = n->next;
             break;
         }
+    if (n->v->refs == 0 && fs->inactive) fs->inactive--;
     kfree(n);
     kfree(v);
+}
+
+// The last reference went. A file that still has a name stays cached
+// (inactive) with its pages, so opening it again finds its data in memory;
+// past MAX_INACTIVE the oldest inactive vnode is let go. A file without a
+// name is freed on disk now.
+void lum_release(Vnode* v) {
+    LumNode* n = node_of(v);
+    LumFs* fs = n->fs;
+    if (v->nlink == 0 && n->di.mode != 0 && !fs->broken && !(fs->mount.flags & vfs::MNT_RDONLY)) {
+        Result<void> r = inode_destroy(n);
+        if (!r.ok()) kprintf("lumfs: could not free inode %u: %s\n", n->ino, error_name(r.error()));
+        node_free(n);
+        return;
+    }
+    fs->inactive++;
+    while (fs->inactive > MAX_INACTIVE) {
+        // New vnodes go to the front of the list, so the oldest inactive one is the last.
+        LumNode* oldest = nullptr;
+        for (LumNode* o = fs->nodes; o; o = o->next)
+            if (o->v->refs == 0 && o != n) oldest = o;
+        if (!oldest) break;
+        node_free(oldest);
+    }
 }
 
 const VnodeOps g_ops = {
@@ -1215,6 +1242,8 @@ Result<void> lum_unmount(Mount* m) {
         fs->sb_dirty = true;
         r = commit(fs);
     }
+    // Every vnode left is inactive (unmount checked that nothing is in use).
+    while (fs->nodes) node_free(fs->nodes);
     Result<void> s = page_sync_owner(fs->dev);
     if (s.ok()) page_drop_owner(fs->dev, 0);
     vnode_unref(fs->dev);

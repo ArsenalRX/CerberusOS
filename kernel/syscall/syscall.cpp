@@ -2,6 +2,7 @@
 // rules every handler follows.
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
+#include <drivers/refclock.h>
 #include <fs/file.h>
 #include <fs/vfs.h>
 #include <lib/csprng.h>
@@ -477,6 +478,8 @@ i64 sys_sleep_ms(u64 ms, u64, u64, u64, u64, u64, InterruptFrame*) {
     thread_sleep_ms(ms);
     return 0;
 }
+
+i64 sys_time_ms(u64, u64, u64, u64, u64, u64, InterruptFrame*) { return (i64)(refclock_now_us() / 1000); }
 
 i64 sys_getrandom(u64 buf, u64 n, u64 flags, u64, u64, u64, InterruptFrame*) {
     if (flags) return -err::INVAL;

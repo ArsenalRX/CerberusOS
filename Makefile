@@ -156,7 +156,7 @@ gdb: $(KERNEL_ELF)
 # and checks the serial log (see tools/qemu-probe.py). Exit nonzero on any failure.
 INTEGRATION_TESTS := $(wildcard $(ROOT)/tests/integration/*.expect)
 
-test: $(ISO)
+test: $(ISO) tools
 	@fail=0; \
 	for t in $(INTEGRATION_TESTS); do \
 	    name=$$(basename $$t .expect); \

@@ -35,6 +35,7 @@ every other register is preserved. Numbers never change. Only implemented calls 
 | 33 | `int getpid(void)` | Returns the calling process's id. |
 | 38 | `int yield(void)` | Gives up the rest of the time slice. Returns 0. |
 | 39 | `int sleep_ms(uint64_t ms)` | Sleeps at least ms milliseconds (at most 2^31). Returns 0. EINVAL. |
+| 60 | `uint64_t time_ms(void)` | Milliseconds since the system started (monotonic). |
 | 66 | `long getrandom(void* buf, size_t n, unsigned flags)` | Fills buf with random bytes from the kernel generator; returns the number written (at most 1 MiB per call). flags must be 0. EINVAL, EFAULT. |
 | 120 | `int openat(int dirfd, const char* path, int flags, int mode)` | As open, relative to the directory open as dirfd (AT_FDCWD -100: the working directory). EBADF, ENOTDIR, and those of open. |
 | 121 | `int rmdir(const char* path)` | Removes an empty directory. ENOTEMPTY, ENOTDIR, EBUSY (a mount point), ENOENT, EACCES, EROFS, EFAULT. |
