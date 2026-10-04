@@ -79,6 +79,9 @@ int vsnprintf(char* buf, size_t cap, const char* fmt, va_list ap) {
         case 'u':
             put_number(o, longs ? va_arg(ap, unsigned long) : va_arg(ap, unsigned), 10, false, false, width, left, zero);
             break;
+        case 'o':
+            put_number(o, longs ? va_arg(ap, unsigned long) : va_arg(ap, unsigned), 8, false, false, width, left, zero);
+            break;
         case 'x':
         case 'X':
             if (alt) {

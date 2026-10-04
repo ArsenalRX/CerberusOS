@@ -18,9 +18,37 @@ SYSCALL(1,  write,     "long write(int fd, const void* buf, size_t n)",
 SYSCALL(2,  read,      "long read(int fd, void* buf, size_t n)",
         "Reads up to n bytes; returns the number read, 0 at end of file. The console has no input yet and returns 0. EBADF, EFAULT.")
 SYSCALL(3,  open,      "int open(const char* path, int flags, int mode)",
-        "Opens a file from the read-only boot archive. flags must be O_RDONLY (0). Returns a descriptor. ENOENT, EISDIR, EPERM (write access), EINVAL (unknown flags), EMFILE, EFAULT, E2BIG (path too long).")
+        "Opens a file; relative paths start at the working directory. flags: O_RDONLY/O_WRONLY/O_RDWR plus O_CREAT, O_EXCL, O_TRUNC, O_APPEND, O_NONBLOCK, O_DIRECTORY, O_NOFOLLOW, O_CLOEXEC. A new file gets mode & ~umask. Returns the lowest free descriptor. ENOENT, EACCES, EEXIST, EISDIR, ENOTDIR, ELOOP, EROFS, ENODEV, EINVAL, EMFILE, ENAMETOOLONG, EFAULT.")
 SYSCALL(4,  close,     "int close(int fd)",
         "Closes a descriptor. EBADF.")
+SYSCALL(5,  seek,      "long seek(int fd, long off, int whence)",
+        "Moves the file offset (SEEK_SET 0, SEEK_CUR 1, SEEK_END 2); returns the new offset. Directories only rewind to 0. EBADF, EINVAL, ESPIPE (devices).")
+SYSCALL(6,  stat,      "int stat(const char* path, struct stat* out)",
+        "Describes a file, following symbolic links. ENOENT, EACCES, ENOTDIR, ELOOP, ENAMETOOLONG, EFAULT.")
+SYSCALL(7,  fstat,     "int fstat(int fd, struct stat* out)",
+        "Describes an open file. EBADF, EFAULT.")
+SYSCALL(8,  mkdir,     "int mkdir(const char* path, int mode)",
+        "Creates a directory with mode & ~umask. EEXIST, ENOENT, EACCES, EROFS, ENOSPC, ENAMETOOLONG, EFAULT.")
+SYSCALL(9,  unlink,    "int unlink(const char* path)",
+        "Removes a name that is not a directory; the file goes when the last descriptor closes. ENOENT, EISDIR, EACCES, EBUSY, EROFS, EFAULT.")
+SYSCALL(10, rename,    "int rename(const char* from, const char* to)",
+        "Moves a name, replacing `to` if it is of the same kind (an empty directory, or a non-directory). EXDEV across file systems; EINVAL moving a directory into itself; ENOENT, EACCES, ENOTEMPTY, EISDIR, ENOTDIR, EBUSY, EROFS, EFAULT.")
+SYSCALL(11, readdir,   "long readdir(int fd, struct dirent* out, size_t n)",
+        "Reads up to n directory entries (\".\" and \"..\" first); returns how many, 0 at the end. EBADF, ENOTDIR, EFAULT.")
+SYSCALL(12, chdir,     "int chdir(const char* path)",
+        "Changes the working directory. ENOENT, ENOTDIR, EACCES, EFAULT.")
+SYSCALL(13, getcwd,    "long getcwd(char* buf, size_t n)",
+        "Stores the working directory's absolute path; returns its length. ENAMETOOLONG if n is too small, EFAULT.")
+SYSCALL(14, dup,       "int dup(int fd)",
+        "Duplicates a descriptor onto the lowest free one (close-on-exec cleared). EBADF, EMFILE.")
+SYSCALL(15, dup2,      "int dup2(int oldfd, int newfd)",
+        "Makes newfd refer to oldfd's file, closing newfd first. EBADF.")
+SYSCALL(17, ioctl,     "long ioctl(int fd, unsigned request, void* arg)",
+        "Device control. Block devices: BLKGETSIZE64 (0x80081272) stores the size in bytes. EBADF, ENODEV, EFAULT.")
+SYSCALL(18, truncate,  "int truncate(int fd, long size)",
+        "Sets the length of a file open for writing. EBADF, EINVAL, EISDIR, EROFS, ENOSPC.")
+SYSCALL(19, sync,      "int sync(void)",
+        "Writes every file system's changes to its disk. Returns 0.")
 
 SYSCALL(20, mmap,      "void* mmap(void* hint, size_t len, int prot, int flags, int fd, long off)",
         "Maps zero-filled private memory. flags must be MAP_PRIVATE|MAP_ANONYMOUS, optionally MAP_FIXED (which never replaces an existing mapping); fd must be -1 and off 0. Writable and executable together is refused. EINVAL, ENOMEM, EEXIST.")
@@ -42,3 +70,25 @@ SYSCALL(39, sleep_ms,  "int sleep_ms(uint64_t ms)",
 
 SYSCALL(66, getrandom, "long getrandom(void* buf, size_t n, unsigned flags)",
         "Fills buf with random bytes from the kernel generator; returns the number written (at most 1 MiB per call). flags must be 0. EINVAL, EFAULT.")
+
+// Phase 9, files part 2: calls the spec's table has no number for.
+SYSCALL(120, openat,   "int openat(int dirfd, const char* path, int flags, int mode)",
+        "As open, relative to the directory open as dirfd (AT_FDCWD -100: the working directory). EBADF, ENOTDIR, and those of open.")
+SYSCALL(121, rmdir,    "int rmdir(const char* path)",
+        "Removes an empty directory. ENOTEMPTY, ENOTDIR, EBUSY (a mount point), ENOENT, EACCES, EROFS, EFAULT.")
+SYSCALL(122, symlink,  "int symlink(const char* target, const char* path)",
+        "Creates a symbolic link at path pointing to target (not checked). EEXIST, ENOENT, EACCES, EROFS, EFAULT.")
+SYSCALL(123, readlink, "long readlink(const char* path, char* buf, size_t n)",
+        "Copies a symbolic link's target (not NUL-terminated); returns its length. EINVAL if not a link, ENOENT, EFAULT.")
+SYSCALL(124, chmod,    "int chmod(const char* path, int mode)",
+        "Sets permission bits; owner or root only. EPERM, EROFS, ENOENT, EFAULT.")
+SYSCALL(125, fsync,    "int fsync(int fd)",
+        "Writes one file's changes to its disk and returns when they are there. EBADF, EIO.")
+SYSCALL(126, mount,    "int mount(const char* source, const char* target, const char* type, unsigned flags)",
+        "Mounts a file system of `type` (tmpfs, lumfs) from source (a device path, or anything for tmpfs) on the directory target. flags: MS_RDONLY 1, MS_NOEXEC 2, MS_NOSUID 4, MS_NODEV 8. Root only. EPERM, ENODEV (unknown type), EBUSY, ENOTDIR, EINVAL, EIO, EFAULT.")
+SYSCALL(127, umount,   "int umount(const char* target)",
+        "Unmounts the file system mounted on target after writing its changes. EBUSY if a file in it is open, EINVAL if target is not a mount point, EPERM.")
+SYSCALL(128, lstat,    "int lstat(const char* path, struct stat* out)",
+        "As stat, but describes a symbolic link itself. ENOENT, EACCES, EFAULT.")
+SYSCALL(129, chown,    "int chown(const char* path, int uid, int gid)",
+        "Changes owner and group; root only. EPERM, EROFS, ENOENT, EFAULT.")

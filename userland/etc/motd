@@ -1,0 +1,6 @@
+Welcome to Lumen.
+
+This file lives in /etc/motd, inside the boot archive that the bootloader
+loads into memory. The root file system is read-only; /tmp is writable
+(it lives in memory), and disks formatted with mkfs.lumfs can be mounted
+under /mnt.

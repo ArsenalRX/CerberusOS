@@ -85,3 +85,10 @@ usize strlcpy(char* dst, const char* src, usize n) {
     }
     return len;
 }
+
+const char* strchr(const char* s, int c) {
+    for (;; s++) {
+        if (*s == (char)c) return s;
+        if (!*s) return nullptr;
+    }
+}

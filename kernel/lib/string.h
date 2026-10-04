@@ -13,6 +13,8 @@ int memcmp(const void* a, const void* b, usize n);
 usize strlen(const char* s);
 usize strnlen(const char* s, usize max);
 int strcmp(const char* a, const char* b);
+// First occurrence of c in s (the terminating NUL counts), or null.
+const char* strchr(const char* s, int c);
 int strncmp(const char* a, const char* b, usize n);
 char* strncpy(char* dst, const char* src, usize n);
 }

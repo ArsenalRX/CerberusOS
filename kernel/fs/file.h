@@ -1,48 +1,50 @@
-// Open files, as seen through a process's file descriptors. Until the VFS
-// exists (phase 9) there are two kinds: the console, and read-only files in
-// the boot archive. A File is shared by reference count: fork gives the
-// child the same File objects, so parent and child share one offset.
+// Open files, as seen through a process's file descriptors. A File is an
+// open vnode with an access mode and a position; it is shared by reference
+// count, so fork gives the child the same File objects (one shared offset).
 //
 // All functions are for thread context. The buffers are kernel buffers; the
 // system-call layer does the copying to and from user memory.
 #pragma once
 
+#include <fs/vfs.h>
 #include <lib/result.h>
 #include <lib/types.h>
-
-enum class FileKind : u8 { Console, Archive };
+#include <sched/sync.h>
+#include <syscall/abi.h>
 
 struct File {
-    FileKind kind;
     u32 refs;
-    bool readable, writable;
-    const u8* data;         // Archive: the file's bytes inside the boot archive
-    usize size;
-    usize offset;
+    u32 flags;                  // abi::O_ACCMODE | O_APPEND | O_NONBLOCK
+    Vnode* vnode;
+    u64 offset;                 // byte offset; for directories, the readdir cookie
+    Mutex pos_lock;             // serialises reads and writes that move the offset
 };
 
-// Finds the boot archive among the bootloader's modules. Call once at boot;
-// without an archive every open fails with NotFound.
-void files_init();
-// True if the boot archive is present.
-bool files_archive_present();
+// The boot archive (the initramfs) found among the bootloader's modules.
+bool boot_archive(const u8** data, usize* size);
 
-// A new reference to the console (readable and writable).
+// Opens `path` relative to `start` (null = root) with abi::O_* flags.
+// Errors: those of path resolution, plus Access, IsDir (writing a
+// directory), NotDir (O_DIRECTORY), Loop (O_NOFOLLOW on a symlink),
+// Exists (O_CREAT|O_EXCL), NoDevice, ReadOnly.
+Result<File*> file_open(Vnode* start, const char* path, u32 flags, u32 mode, const Credentials& cred);
+// A new File on /dev/console (for a process's standard descriptors).
 Result<File*> file_open_console();
-// Opens a file in the boot archive for reading. Errors: NotFound, IsDir,
-// NoMemory.
-Result<File*> file_open_archive(const char* path);
-// Raw access for the program loader: the bytes of a file in the archive.
-// Errors: NotFound, IsDir.
-Result<void> file_archive_lookup(const char* path, const u8** data, usize* size, u32* mode);
 
 File* file_ref(File* f);
-// Drops a reference; frees the File when it was the last.
+// Drops a reference; frees the File (and its vnode reference) when last.
 void file_unref(File* f);
 
-// Reads up to n bytes at the file's offset and advances it. Returns the
-// number read; 0 means end of file. The console has no input yet and always
-// returns 0. Error: BadFd if the file is not readable.
+bool file_readable(const File* f);
+bool file_writable(const File* f);
+
+// Reads up to n bytes at the offset and advances it; 0 at end of file.
 Result<usize> file_read(File* f, void* buf, usize n);
-// Writes n bytes. Error: BadFd if the file is not writable.
+// Writes n bytes at the offset (at the end with O_APPEND) and advances it.
 Result<usize> file_write(File* f, const void* buf, usize n);
+// Moves the offset. Returns the new offset. Invalid (negative result,
+// unknown whence), SeekPipe-like devices return Invalid as well.
+Result<u64> file_seek(File* f, i64 off, u32 whence);
+// Next directory entry (false at the end).
+Result<bool> file_readdir(File* f, abi::Dirent* out);
+void file_stat(const Vnode* v, abi::Stat* out);

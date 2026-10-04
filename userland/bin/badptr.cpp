@@ -38,7 +38,45 @@ int main(int, char**, char**) {
         expect("execve(bad envp)", CALL(SYS_execve, "/bin/hello", 0, p, 0, 0, 0), -EFAULT);
         expect("waitpid(bad status)", CALL(SYS_waitpid, -1, p, 0, 0, 0, 0), -EFAULT);
         expect("getrandom(bad buffer)", CALL(SYS_getrandom, p, 16, 0, 0, 0, 0), -EFAULT);
+        // File-system calls (phase 9).
+        expect("openat(bad path)", CALL(SYS_openat, AT_FDCWD, p, 0, 0, 0, 0), -EFAULT);
+        expect("stat(bad path)", CALL(SYS_stat, p, buf, 0, 0, 0, 0), -EFAULT);
+        expect("stat(bad buffer)", CALL(SYS_stat, "/bin/hello", p, 0, 0, 0, 0), -EFAULT);
+        expect("lstat(bad buffer)", CALL(SYS_lstat, "/bin/hello", p, 0, 0, 0, 0), -EFAULT);
+        expect("fstat(bad buffer)", CALL(SYS_fstat, fd, p, 0, 0, 0, 0), -EFAULT);
+        expect("mkdir(bad path)", CALL(SYS_mkdir, p, 0755, 0, 0, 0, 0), -EFAULT);
+        expect("unlink(bad path)", CALL(SYS_unlink, p, 0, 0, 0, 0, 0), -EFAULT);
+        expect("rmdir(bad path)", CALL(SYS_rmdir, p, 0, 0, 0, 0, 0), -EFAULT);
+        expect("rename(bad from)", CALL(SYS_rename, p, "/tmp/x", 0, 0, 0, 0), -EFAULT);
+        expect("rename(bad to)", CALL(SYS_rename, "/tmp/x", p, 0, 0, 0, 0), -EFAULT);
+        expect("chdir(bad path)", CALL(SYS_chdir, p, 0, 0, 0, 0, 0), -EFAULT);
+        expect("getcwd(bad buffer)", CALL(SYS_getcwd, p, 64, 0, 0, 0, 0), -EFAULT);
+        expect("readlink(bad path)", CALL(SYS_readlink, p, buf, 16, 0, 0, 0), -EFAULT);
+        expect("symlink(bad target)", CALL(SYS_symlink, p, "/tmp/l", 0, 0, 0, 0), -EFAULT);
+        expect("symlink(bad path)", CALL(SYS_symlink, "/x", p, 0, 0, 0, 0), -EFAULT);
+        expect("chmod(bad path)", CALL(SYS_chmod, p, 0644, 0, 0, 0, 0), -EFAULT);
+        expect("chown(bad path)", CALL(SYS_chown, p, 0, 0, 0, 0, 0), -EFAULT);
+        expect("mount(bad source)", CALL(SYS_mount, p, "/mnt", "tmpfs", 0, 0, 0), -EFAULT);
+        expect("mount(bad type)", CALL(SYS_mount, "none", "/mnt", p, 0, 0, 0), -EFAULT);
+        expect("umount(bad path)", CALL(SYS_umount, p, 0, 0, 0, 0, 0), -EFAULT);
+        int dfd = open("/bin", O_RDONLY | O_DIRECTORY);
+        expect("readdir(bad buffer)", CALL(SYS_readdir, dfd, p, 1, 0, 0, 0), -EFAULT);
+        close(dfd);
     }
+    // Descriptors and directories used the wrong way.
+    expect("readdir(not a directory)", CALL(SYS_readdir, fd, buf, 1, 0, 0, 0), -ENOTDIR);
+    expect("seek(bad whence)", CALL(SYS_seek, fd, 0, 9, 0, 0, 0), -EINVAL);
+    expect("seek(before the start)", CALL(SYS_seek, fd, -5, SEEK_SET, 0, 0, 0), -EINVAL);
+    expect("dup2(bad target)", CALL(SYS_dup2, fd, 999, 0, 0, 0, 0), -EBADF);
+    expect("truncate(read-only descriptor)", CALL(SYS_truncate, fd, 0, 0, 0, 0, 0), -EBADF);
+    expect("openat(bad directory descriptor)", CALL(SYS_openat, 29, "x", 0, 0, 0, 0), -EBADF);
+    expect("mkdir(in the read-only root)", CALL(SYS_mkdir, "/newdir", 0755, 0, 0, 0, 0), -EROFS);
+    char longpath[300];
+    memset(longpath, 'a', sizeof longpath - 1);
+    longpath[0] = '/';
+    longpath[sizeof longpath - 1] = 0;
+    expect("open(path too long)", CALL(SYS_open, longpath, 0, 0, 0, 0, 0), -ENAMETOOLONG);
+    expect("mount(unknown type)", CALL(SYS_mount, "none", "/mnt", "nosuchfs", 0, 0, 0), -ENODEV);
     // A string pointer array whose entries point at bad addresses.
     unsigned long argv_bad[] = {(unsigned long)"ok", KERNEL, 0};
     expect("execve(argv entry in the kernel)", CALL(SYS_execve, "/bin/hello", argv_bad, 0, 0, 0, 0), -EFAULT);
@@ -57,7 +95,7 @@ int main(int, char**, char**) {
 
     // Unknown flag bits and invalid values.
     expect("open(unknown flags)", CALL(SYS_open, "/bin/hello", 0x1234, 0, 0, 0, 0), -EINVAL);
-    expect("open(for writing)", CALL(SYS_open, "/bin/hello", 1, 0, 0, 0, 0), -EPERM);
+    expect("open(for writing, read-only root)", CALL(SYS_open, "/bin/hello", 1, 0, 0, 0, 0), -EROFS);
     expect("open(missing file)", CALL(SYS_open, "/bin/none", 0, 0, 0, 0, 0), -ENOENT);
     expect("close(bad descriptor)", CALL(SYS_close, 999, 0, 0, 0, 0, 0), -EBADF);
     expect("close(negative descriptor)", CALL(SYS_close, -1, 0, 0, 0, 0, 0), -EBADF);

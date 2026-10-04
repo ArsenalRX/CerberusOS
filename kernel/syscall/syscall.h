@@ -14,7 +14,8 @@
 namespace err {
 constexpr i64 PERM = 1, NOENT = 2, SRCH = 3, INTR = 4, IO = 5, TOOBIG = 7, NOEXEC = 8, BADF = 9, CHILD = 10,
               AGAIN = 11, NOMEM = 12, FAULT = 14, BUSY = 16, EXIST = 17, NOTDIR = 20, ISDIR = 21, INVAL = 22,
-              MFILE = 24, NOSPC = 28, DEADLK = 35, NOSYS = 38, TIMEDOUT = 110;
+              MFILE = 24, NOSPC = 28, DEADLK = 35, NOSYS = 38, TIMEDOUT = 110, ACCES = 13, XDEV = 18,
+              NODEV = 19, ROFS = 30, NAMETOOLONG = 36, NOTEMPTY = 39, LOOP = 40, SPIPE = 29;
 } // namespace err
 
 // The -errno value for a kernel Error.

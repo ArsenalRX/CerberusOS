@@ -3,6 +3,7 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
 #include <fs/file.h>
+#include <fs/vfs.h>
 #include <lib/csprng.h>
 #include <lib/kprintf.h>
 #include <lib/string.h>
@@ -11,6 +12,7 @@
 #include <mm/vmm.h>
 #include <proc/process.h>
 #include <sched/sched.h>
+#include <syscall/abi.h>
 #include <syscall/syscall.h>
 
 extern "C" void syscall_entry();
@@ -27,13 +29,12 @@ constexpr u64 RFLAGS_IF = 1 << 9, RFLAGS_FIXED = 1 << 1;
 // Flags cleared on entry: interrupts, direction, trap, nested task, alignment check.
 constexpr u64 SFMASK_VALUE = (1 << 9) | (1 << 10) | (1 << 8) | (1 << 14) | (1 << 18);
 
-constexpr usize IO_CHUNK = 512;
+constexpr usize IO_CHUNK = 4096;            // one page per step through the file layer
 constexpr usize IO_MAX = 1 * MIB;               // per call; the caller loops for more
 constexpr u64 SLEEP_MAX_MS = 1ull << 31;
 
 constexpr u64 PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4;
 constexpr u64 MAP_PRIVATE = 0x02, MAP_FIXED = 0x10, MAP_ANONYMOUS = 0x20;
-constexpr u64 O_ACCMODE = 3;
 constexpr u64 WNOHANG = 1;
 
 inline Process* self() { return thread_current()->process; }
@@ -85,28 +86,310 @@ i64 sys_read(u64 fd, u64 buf, u64 n, u64, u64, u64, InterruptFrame*) {
     return (i64)done;
 }
 
-i64 sys_open(u64 path, u64 flags, u64, u64, u64, u64, InterruptFrame*) {
-    if (flags & ~O_ACCMODE) return -err::INVAL;
-    if (flags & O_ACCMODE) return -err::PERM;       // the boot archive is read-only
-    char kpath[PATH_MAX];
-    Result<usize> len = strncpy_from_user(kpath, path, sizeof kpath);
-    if (!len.ok()) return errno_of(len.error());
+// ------------------------------------------------------------ file system --
+// Paths come from user memory; descriptors index the process's table.
+
+// Copies a user path. NameTooLong if it does not fit.
+Error user_path(u64 uptr, char* out) {
+    Result<usize> len = strncpy_from_user(out, uptr, PATH_MAX);
+    if (!len.ok()) return len.error() == Error::TooBig ? Error::NameTooLong : len.error();
+    return Error::None;
+}
+
+// The directory paths are resolved from: a directory descriptor for the
+// *at calls, else the working directory (null = the root).
+Result<Vnode*> start_dir(i64 dirfd) {
+    if (dirfd == abi::AT_FDCWD) return self()->cwd;
+    File* f = fd_file((u64)dirfd);
+    if (!f) return Error::BadFd;
+    if (f->vnode->type != VType::Dir) return Error::NotDir;
+    return f->vnode;
+}
+
+// Installs `f` at the lowest free descriptor.
+i64 install_fd(File* f, bool cloexec) {
     Process* p = self();
-    usize fd = 0;
-    while (fd < PROCESS_MAX_FDS && p->files[fd]) fd++;
-    if (fd == PROCESS_MAX_FDS) return -err::MFILE;
-    Result<File*> f = file_open_archive(kpath);
+    for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++) {
+        if (p->files[fd]) continue;
+        p->files[fd] = f;
+        if (cloexec) p->fd_cloexec |= 1u << fd;
+        else p->fd_cloexec &= ~(1u << fd);
+        return (i64)fd;
+    }
+    file_unref(f);
+    return -err::MFILE;
+}
+
+i64 do_open(i64 dirfd, u64 path, u64 flags, u64 mode) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    Result<Vnode*> start = start_dir(dirfd);
+    if (!start.ok()) return errno_of(start.error());
+    Process* p = self();
+    Result<File*> f = file_open(start.value(), kpath, (u32)flags, (u32)mode & ~p->umask & 07777, p->cred);
     if (!f.ok()) return errno_of(f.error());
-    p->files[fd] = f.value();
-    return (i64)fd;
+    return install_fd(f.value(), flags & abi::O_CLOEXEC);
+}
+
+i64 sys_open(u64 path, u64 flags, u64 mode, u64, u64, u64, InterruptFrame*) {
+    return do_open(abi::AT_FDCWD, path, flags, mode);
+}
+
+i64 sys_openat(u64 dirfd, u64 path, u64 flags, u64 mode, u64, u64, InterruptFrame*) {
+    return do_open((i64)(i32)dirfd, path, flags, mode);
 }
 
 i64 sys_close(u64 fd, u64, u64, u64, u64, u64, InterruptFrame*) {
     File* f = fd_file(fd);
     if (!f) return -err::BADF;
-    self()->files[fd] = nullptr;
+    Process* p = self();
+    p->files[fd] = nullptr;
+    p->fd_cloexec &= ~(1u << fd);
     file_unref(f);
     return 0;
+}
+
+i64 sys_seek(u64 fd, u64 off, u64 whence, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    if (f->vnode->type == VType::CharDev) return -err::SPIPE;
+    Result<u64> r = file_seek(f, (i64)off, (u32)whence);
+    return r.ok() ? (i64)r.value() : errno_of(r.error());
+}
+
+i64 stat_path(u64 path, u64 out, bool follow) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    LookupFlags lf;
+    lf.follow_last = follow;
+    Result<Vnode*> v = vfs_resolve(self()->cwd, kpath, self()->cred, lf);
+    if (!v.ok()) return errno_of(v.error());
+    abi::Stat st;
+    file_stat(v.value(), &st);
+    vnode_unref(v.value());
+    return copy_to_user(out, &st, sizeof st).ok() ? 0 : -err::FAULT;
+}
+
+i64 sys_stat(u64 path, u64 out, u64, u64, u64, u64, InterruptFrame*) { return stat_path(path, out, true); }
+i64 sys_lstat(u64 path, u64 out, u64, u64, u64, u64, InterruptFrame*) { return stat_path(path, out, false); }
+
+i64 sys_fstat(u64 fd, u64 out, u64, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    abi::Stat st;
+    file_stat(f->vnode, &st);
+    return copy_to_user(out, &st, sizeof st).ok() ? 0 : -err::FAULT;
+}
+
+i64 make_object(u64 path, VType type, u32 mode, const char* target) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    Process* p = self();
+    Result<Vnode*> v = vfs_create(p->cwd, kpath, p->cred, type, mode & ~p->umask & 07777, true, target);
+    if (!v.ok()) return errno_of(v.error());
+    vnode_unref(v.value());
+    return 0;
+}
+
+i64 sys_mkdir(u64 path, u64 mode, u64, u64, u64, u64, InterruptFrame*) {
+    return make_object(path, VType::Dir, (u32)mode, nullptr);
+}
+
+i64 sys_symlink(u64 target, u64 path, u64, u64, u64, u64, InterruptFrame*) {
+    char ktarget[PATH_MAX];
+    Error e = user_path(target, ktarget);
+    if (e != Error::None) return errno_of(e);
+    if (!ktarget[0]) return -err::NOENT;
+    return make_object(path, VType::Symlink, 0777, ktarget);
+}
+
+i64 remove_name(u64 path, bool dir) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    Result<void> r = vfs_unlink(self()->cwd, kpath, self()->cred, dir);
+    return r.ok() ? 0 : errno_of(r.error());
+}
+
+i64 sys_unlink(u64 path, u64, u64, u64, u64, u64, InterruptFrame*) { return remove_name(path, false); }
+i64 sys_rmdir(u64 path, u64, u64, u64, u64, u64, InterruptFrame*) { return remove_name(path, true); }
+
+i64 sys_rename(u64 from, u64 to, u64, u64, u64, u64, InterruptFrame*) {
+    char kfrom[PATH_MAX], kto[PATH_MAX];
+    Error e = user_path(from, kfrom);
+    if (e == Error::None) e = user_path(to, kto);
+    if (e != Error::None) return errno_of(e);
+    Result<void> r = vfs_rename(self()->cwd, kfrom, kto, self()->cred);
+    return r.ok() ? 0 : errno_of(r.error());
+}
+
+i64 sys_readdir(u64 fd, u64 out, u64 n, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    if (f->vnode->type != VType::Dir) return -err::NOTDIR;
+    u64 done = 0;
+    while (done < n) {
+        abi::Dirent d;
+        Result<bool> r = file_readdir(f, &d);
+        if (!r.ok()) return done ? (i64)done : errno_of(r.error());
+        if (!r.value()) break;
+        if (!copy_to_user(out + done * sizeof d, &d, sizeof d).ok()) return done ? (i64)done : -err::FAULT;
+        done++;
+    }
+    return (i64)done;
+}
+
+i64 sys_chdir(u64 path, u64, u64, u64, u64, u64, InterruptFrame*) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    Process* p = self();
+    Result<Vnode*> v = vfs_resolve(p->cwd, kpath, p->cred, LookupFlags{});
+    if (!v.ok()) return errno_of(v.error());
+    Result<void> ok = v.value()->type == VType::Dir ? vfs_access(v.value(), p->cred, vfs::X_OK)
+                                                    : Result<void>(Error::NotDir);
+    if (!ok.ok()) {
+        vnode_unref(v.value());
+        return errno_of(ok.error());
+    }
+    if (p->cwd) vnode_unref(p->cwd);
+    p->cwd = v.value();
+    return 0;
+}
+
+i64 sys_getcwd(u64 buf, u64 n, u64, u64, u64, u64, InterruptFrame*) {
+    char kpath[PATH_MAX];
+    Process* p = self();
+    Result<void> r = vfs_path_of(p->cwd ? p->cwd : vfs_root(), kpath, sizeof kpath);
+    if (!r.ok()) return errno_of(r.error());
+    usize len = strlen(kpath) + 1;
+    if (len > n) return -err::NAMETOOLONG;
+    return copy_to_user(buf, kpath, len).ok() ? (i64)(len - 1) : -err::FAULT;
+}
+
+i64 sys_dup(u64 fd, u64, u64, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    return install_fd(file_ref(f), false);
+}
+
+i64 sys_dup2(u64 oldfd, u64 newfd, u64, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(oldfd);
+    if (!f) return -err::BADF;
+    if (newfd >= PROCESS_MAX_FDS) return -err::BADF;
+    if (oldfd == newfd) return (i64)newfd;
+    Process* p = self();
+    File* old = p->files[newfd];
+    p->files[newfd] = file_ref(f);
+    p->fd_cloexec &= ~(1u << newfd);
+    if (old) file_unref(old);
+    return (i64)newfd;
+}
+
+i64 sys_ioctl(u64 fd, u64 request, u64 arg, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    Result<i64> r = vfs_ioctl(f->vnode, (u32)request, arg);
+    return r.ok() ? r.value() : errno_of(r.error() == Error::NotSupported ? Error::NoDevice : r.error());
+}
+
+i64 sys_truncate(u64 fd, u64 size, u64, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    if (!file_writable(f)) return -err::BADF;
+    if ((i64)size < 0) return -err::INVAL;
+    Result<void> r = vfs_truncate(f->vnode, size);
+    return r.ok() ? 0 : errno_of(r.error());
+}
+
+i64 sys_sync(u64, u64, u64, u64, u64, u64, InterruptFrame*) {
+    vfs_sync();
+    return 0;
+}
+
+i64 sys_fsync(u64 fd, u64, u64, u64, u64, u64, InterruptFrame*) {
+    File* f = fd_file(fd);
+    if (!f) return -err::BADF;
+    Result<void> r = vfs_fsync(f->vnode);
+    return r.ok() ? 0 : errno_of(r.error());
+}
+
+i64 sys_readlink(u64 path, u64 buf, u64 n, u64, u64, u64, InterruptFrame*) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    LookupFlags lf;
+    lf.follow_last = false;
+    Result<Vnode*> v = vfs_resolve(self()->cwd, kpath, self()->cred, lf);
+    if (!v.ok()) return errno_of(v.error());
+    char target[PATH_MAX];
+    Result<usize> r = vfs_readlink(v.value(), target, sizeof target);
+    vnode_unref(v.value());
+    if (!r.ok()) return errno_of(r.error());
+    usize len = r.value() < n ? r.value() : n;
+    return copy_to_user(buf, target, len).ok() ? (i64)len : -err::FAULT;
+}
+
+i64 attr_path(u64 path, bool follow, Vnode** out) {
+    char kpath[PATH_MAX];
+    Error e = user_path(path, kpath);
+    if (e != Error::None) return errno_of(e);
+    LookupFlags lf;
+    lf.follow_last = follow;
+    Result<Vnode*> v = vfs_resolve(self()->cwd, kpath, self()->cred, lf);
+    if (!v.ok()) return errno_of(v.error());
+    *out = v.value();
+    return 0;
+}
+
+i64 sys_chmod(u64 path, u64 mode, u64, u64, u64, u64, InterruptFrame*) {
+    Vnode* v;
+    i64 r = attr_path(path, true, &v);
+    if (r) return r;
+    Result<void> c = vfs_chmod(v, self()->cred, (u32)mode);
+    vnode_unref(v);
+    return c.ok() ? 0 : errno_of(c.error());
+}
+
+i64 sys_chown(u64 path, u64 uid, u64 gid, u64, u64, u64, InterruptFrame*) {
+    Vnode* v;
+    i64 r = attr_path(path, true, &v);
+    if (r) return r;
+    Result<void> c = vfs_chown(v, self()->cred, (u32)uid, (u32)gid);
+    vnode_unref(v);
+    return c.ok() ? 0 : errno_of(c.error());
+}
+
+i64 sys_mount(u64 source, u64 target, u64 type, u64 flags, u64, u64, InterruptFrame*) {
+    char ksource[PATH_MAX], ktarget[PATH_MAX], ktype[16];
+    Error e = user_path(source, ksource);
+    if (e == Error::None) e = user_path(target, ktarget);
+    if (e != Error::None) return errno_of(e);
+    Result<usize> tl = strncpy_from_user(ktype, type, sizeof ktype);
+    if (!tl.ok()) return errno_of(tl.error() == Error::TooBig ? Error::NoDevice : tl.error());
+    if (flags & ~(u64)(abi::MS_RDONLY | abi::MS_NOEXEC | abi::MS_NOSUID | abi::MS_NODEV)) return -err::INVAL;
+    if (self()->cred.uid != 0) return -err::PERM;
+    Result<Mount*> m = vfs_make_mount(ktype, ksource, (u32)flags);
+    if (!m.ok()) return errno_of(m.error());
+    Result<void> r = vfs_mount(m.value(), ktarget, self()->cred);
+    if (!r.ok()) {
+        // Not attached anywhere: hand it straight back to its file system.
+        vnode_unref(m.value()->root);
+        if (m.value()->unmount) (void)m.value()->unmount(m.value());
+        return errno_of(r.error());
+    }
+    return 0;
+}
+
+i64 sys_umount(u64 target, u64, u64, u64, u64, u64, InterruptFrame*) {
+    char ktarget[PATH_MAX];
+    Error e = user_path(target, ktarget);
+    if (e != Error::None) return errno_of(e);
+    Result<void> r = vfs_unmount(ktarget, self()->cred);
+    return r.ok() ? 0 : errno_of(r.error());
 }
 
 i64 sys_mmap(u64 hint, u64 len, u64 prot, u64 flags, u64 fd, u64 off, InterruptFrame*) {
@@ -273,6 +556,13 @@ i64 errno_of(Error e) {
     case Error::NoProcess: return -err::SRCH;
     case Error::TooManyFiles: return -err::MFILE;
     case Error::NotExecutable: return -err::NOEXEC;
+    case Error::Access: return -err::ACCES;
+    case Error::ReadOnly: return -err::ROFS;
+    case Error::NotEmpty: return -err::NOTEMPTY;
+    case Error::NameTooLong: return -err::NAMETOOLONG;
+    case Error::Loop: return -err::LOOP;
+    case Error::CrossDevice: return -err::XDEV;
+    case Error::NoDevice: return -err::NODEV;
     }
     return -err::INVAL;
 }

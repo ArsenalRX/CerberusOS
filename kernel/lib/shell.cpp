@@ -7,6 +7,9 @@
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
 #include <mm/kheap.h>
+#include <fs/file.h>
+#include <fs/pagecache.h>
+#include <fs/vfs.h>
 #include <proc/process.h>
 #include <sched/sched.h>
 #include <kernel/kbench.h>
@@ -37,6 +40,9 @@ int cmd_heapstat(int, char**);
 int cmd_ps(int, char**);
 int cmd_bench(int, char**);
 int cmd_run(int argc, char** argv);
+int cmd_cd(int argc, char** argv);
+int cmd_pwd(int, char**);
+int cmd_mount(int argc, char** argv);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -50,6 +56,9 @@ const ShellCommandEntry COMMANDS[] = {
     {"ps", "list threads: state, priority level, CPU time, switches", cmd_ps},
     {"bench", "run the micro-benchmarks behind `make bench`", cmd_bench},
     {"run", "run <path> [args]: start a user program and wait for it", cmd_run},
+    {"cd", "cd [dir]: change the shell's working directory (programs start there)", cmd_cd},
+    {"pwd", "print the shell's working directory", cmd_pwd},
+    {"mount", "mount: list mounted file systems (with arguments: run /bin/mount)", cmd_mount},
     {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
@@ -99,26 +108,106 @@ int cmd_bench(int, char**) { return kbench_run(); }
 
 // run <path> [args...]: starts a user program from the boot archive, waits
 // for it, and reports how it ended.
+const Credentials ROOT_CRED = {0, 0};
+
+// Starts a program and waits. "> file" and ">> file" anywhere in the
+// arguments redirect its standard output. With `verbose` (the `run`
+// command) the exit status is always reported; otherwise only failures.
+int run_program(const char* path, int argc, char** argv, bool verbose) {
+    const char* args[ARGV_MAX + 1];
+    int n = 0;
+    File* out = nullptr;
+    for (int i = 0; i < argc; i++) {
+        bool append = strcmp(argv[i], ">>") == 0;
+        if (append || strcmp(argv[i], ">") == 0) {
+            if (i + 1 >= argc) {
+                kprintf("%s: missing file name after %s\n", argv[0], argv[i]);
+                if (out) file_unref(out);
+                return 1;
+            }
+            u32 flags = abi::O_WRONLY | abi::O_CREAT | (append ? abi::O_APPEND : abi::O_TRUNC);
+            Result<File*> f = file_open(process_kernel()->cwd, argv[i + 1], flags, 0644, ROOT_CRED);
+            if (!f.ok()) {
+                kprintf("%s: cannot write %s: %s\n", argv[0], argv[i + 1], error_name(f.error()));
+                if (out) file_unref(out);
+                return 1;
+            }
+            if (out) file_unref(out);
+            out = f.value();
+            i++;
+            continue;
+        }
+        args[n++] = argv[i];
+    }
+    args[n] = nullptr;
+    Result<Process*> p = process_spawn(path, args, false, out);
+    if (out) file_unref(out);
+    if (!p.ok()) {
+        kprintf("%s: cannot start %s: %s\n", verbose ? "run" : argv[0], path, error_name(p.error()));
+        return 1;
+    }
+    int status = process_wait(p.value());
+    if (status & 0x7F) {
+        kprintf("%s: %s was killed (signal %d)\n", verbose ? "run" : argv[0], path, status & 0x7F);
+        return 128 + (status & 0x7F);
+    }
+    if (verbose) kprintf("run: %s exited with status %d\n", path, (status >> 8) & 0xFF);
+    return (status >> 8) & 0xFF;
+}
+
 int cmd_run(int argc, char** argv) {
     if (argc < 2) {
         kprintf("usage: run <path> [arguments]\n");
         return 1;
     }
-    const char* args[ARGV_MAX + 1];
-    for (int i = 1; i < argc; i++) args[i - 1] = argv[i];
-    args[argc - 1] = nullptr;
-    Result<Process*> p = process_spawn(argv[1], args, false);
-    if (!p.ok()) {
-        kprintf("run: cannot start %s: %s\n", argv[1], error_name(p.error()));
+    return run_program(argv[1], argc - 1, argv + 1, true);
+}
+
+int cmd_cd(int argc, char** argv) {
+    Process* k = process_kernel();
+    const char* path = argc > 1 ? argv[1] : "/";
+    Result<Vnode*> v = vfs_resolve(k->cwd, path, ROOT_CRED, LookupFlags{});
+    if (!v.ok()) {
+        kprintf("cd: %s: %s\n", path, error_name(v.error()));
         return 1;
     }
-    int status = process_wait(p.value());
-    if (status & 0x7F) {
-        kprintf("run: %s was killed (signal %d)\n", argv[1], status & 0x7F);
-        return 128 + (status & 0x7F);
+    if (v.value()->type != VType::Dir) {
+        vnode_unref(v.value());
+        kprintf("cd: %s: not a directory\n", path);
+        return 1;
     }
-    kprintf("run: %s exited with status %d\n", argv[1], (status >> 8) & 0xFF);
-    return (status >> 8) & 0xFF;
+    if (k->cwd) vnode_unref(k->cwd);
+    k->cwd = v.value();
+    return 0;
+}
+
+int cmd_pwd(int, char**) {
+    char buf[PATH_MAX];
+    Process* k = process_kernel();
+    Result<void> r = vfs_path_of(k->cwd ? k->cwd : vfs_root(), buf, sizeof buf);
+    if (!r.ok()) {
+        kprintf("pwd: %s\n", error_name(r.error()));
+        return 1;
+    }
+    kprintf("%s\n", buf);
+    return 0;
+}
+
+int cmd_mount(int argc, char** argv) {
+    if (argc > 1) return run_program("/bin/mount", argc, argv, false);
+    for (Mount* m = vfs_mounts(); m; m = m->next) {
+        u32 f = m->flags;
+        kprintf("%-14s on %-12s type %-9s (%s%s%s%s)\n", m->source, m->path, m->type, f & vfs::MNT_RDONLY ? "ro" : "rw",
+                f & vfs::MNT_NOEXEC ? ",noexec" : "", f & vfs::MNT_NOSUID ? ",nosuid" : "",
+                f & vfs::MNT_NODEV ? ",nodev" : "");
+    }
+    vfs_lock();
+    PageCacheStats pc = page_cache_stats();
+    vfs_unlock();
+    kprintf("page cache: %lu of %lu pages, %lu dirty; %lu hits, %lu misses, %lu read ahead, %lu written back\n",
+            (unsigned long)pc.pages, (unsigned long)pc.max_pages, (unsigned long)pc.dirty, (unsigned long)pc.hits,
+            (unsigned long)pc.misses, (unsigned long)pc.readahead, (unsigned long)pc.writebacks);
+    return 0;
 }
 
 int cmd_ps(int, char**) {
@@ -312,6 +401,19 @@ int split_args(char* line, char** argv, int max) {
                 break;
             }
         }
-        if (!found) kprintf("unknown command '%s'\n", argv[0]);
+        if (!found) {
+            // Not built in: a program in /bin (or a path) of that name.
+            char path[PATH_MAX];
+            if (strchr(argv[0], '/')) strlcpy(path, argv[0], sizeof path);
+            else ksnprintf(path, sizeof path, "/bin/%s", argv[0]);
+            Result<Vnode*> v = vfs_resolve(process_kernel()->cwd, path, ROOT_CRED, LookupFlags{});
+            if (!v.ok()) {
+                kprintf("unknown command '%s'\n", argv[0]);
+                continue;
+            }
+            vnode_unref(v.value());
+            int rc = run_program(path, argc, argv, false);
+            if (rc) kprintf("(exit %d)\n", rc);
+        }
     }
 }

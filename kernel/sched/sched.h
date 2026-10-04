@@ -71,6 +71,7 @@ struct Credentials {
 };
 
 struct File;
+struct Vnode;
 constexpr usize PROCESS_MAX_FDS = 32;
 
 // A process: an address space, the threads that run in it, its open files
@@ -92,6 +93,9 @@ struct Process {
     int exit_status;            // wait status: (code << 8) for exit, signal number if killed
     Credentials cred;
     File* files[PROCESS_MAX_FDS];
+    u32 fd_cloexec;             // bit per descriptor: close it on execve
+    Vnode* cwd;                 // working directory (a reference); null = the root
+    u32 umask;                  // permission bits removed from new files
     WaitQueue child_wait;       // woken when a child of this process exits
     vaddr_t mmap_hint;          // randomised base for the process's mmap region
 };

@@ -11,6 +11,7 @@
 #include <lib/string.h>
 #include <mm/kheap.h>
 #include <mm/vmm.h>
+#include <fs/vfs.h>
 #include <sched/sched.h>
 #include <sched/sync.h>
 
@@ -634,6 +635,7 @@ Result<Process*> process_create(const char* name, AddressSpace* existing) {
     strlcpy(p->name, name, sizeof p->name);
     p->space = existing;
     p->parent = &g_kernel_process;
+    p->umask = 022;
     u64 irq = sched_lock();
     p->pid = g_next_pid++;
     p->next = g_processes;
@@ -652,6 +654,7 @@ void process_destroy(Process* p) {
         }
     }
     sched_unlock(irq);
+    if (p->cwd) vnode_unref(p->cwd);
     // The caller may still have this space loaded if it just ran there.
     if (p->space) {             // an exited process has already given its space up
         if (&vmm_current() == p->space) vmm_kernel().activate();

@@ -13,6 +13,7 @@ Usage: qemu-probe.py <iso> [--uefi OVMF_CODE.fd] [--wait SECONDS] [--smp N]
                 in order) in the serial output. Two directives are allowed:
                   !send <text>   type <text> + Enter into the serial console
                   !wait <secs>   pause before continuing
+                  !kill          SIGKILL QEMU at once (a power cut)
                   (also !key, !mouse, !mouseto, !button, !wheel, !screenshot)
                 Directives execute after the initial --wait, in file order.
 Exit status: 0 if RIP is in the kernel's higher half and all expectations hold.
@@ -66,6 +67,8 @@ def load_expect(path):
             steps.append(("wheel", int(line[7:])))
         elif line.startswith("!screenshot "):
             steps.append(("screenshot", line[12:]))
+        elif line.strip() == "!kill":                # pull the plug: SIGKILL, no shutdown
+            steps.append(("kill", None))
         else:
             steps.append(("expect", line))
     return steps
@@ -115,13 +118,16 @@ def main():
     ap.add_argument("--hmp", action="append", default=[], metavar="CMD")
     ap.add_argument("--expect", metavar="FILE")
     ap.add_argument("--quiet", action="store_true", help="only print the verdict lines")
+    ap.add_argument("--machine", default="q35", help="QEMU machine type (pc has a legacy IDE controller)")
+    ap.add_argument("--disk", action="append", default=[], metavar="IMAGE",
+                    help="attach a raw disk image as an IDE disk (repeatable: sda, sdb)")
     a = ap.parse_args()
 
     steps = load_expect(a.expect) if a.expect else []
 
     tmp = tempfile.mkdtemp(prefix="lumen-qmp-")
     sock = os.path.join(tmp, "qmp.sock")
-    machine = "q35,hpet=off" if a.no_hpet else "q35"
+    machine = a.machine + (",hpet=off" if a.no_hpet else "")
     # KVM when available (nested virtualisation inside WSL2 works): faster tests
     # and hardware-accurate timers. LUMEN_QEMU_ACCEL=tcg forces emulation.
     if os.environ.get("LUMEN_QEMU_ACCEL", "kvm") == "kvm" and os.access("/dev/kvm", os.R_OK | os.W_OK):
@@ -134,6 +140,8 @@ def main():
            "-no-reboot", "-no-shutdown", "-qmp", f"unix:{sock},server,nowait"]
     if a.uefi:
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={a.uefi}"]
+    for i, d in enumerate(a.disk):
+        cmd += ["-drive", f"file={d},format=raw,if=ide,index={i},media=disk"]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
 
@@ -195,7 +203,13 @@ def main():
     else:
         time.sleep(a.wait)
     q = Qmp(sock)
+    killed = False
     for index, (kind, arg) in enumerate(steps):
+        if kind == "kill":
+            proc.kill()
+            proc.wait()
+            killed = True
+            break
         if kind == "send":
             proc.stdin.write((arg + "\n").encode()); proc.stdin.flush()
             time.sleep(0.3)
@@ -228,17 +242,19 @@ def main():
             time.sleep(arg)
             wait_until(expects_until_next_directive(index), arg * 3)
 
-    time.sleep(0.2)
-    regs = q.hmp("info registers")
-    extra = [(h, q.hmp(h)) for h in a.hmp]
-    if a.screenshot:
-        q.cmd("screendump", filename=os.path.abspath(a.screenshot), format="png")
-        time.sleep(0.5)
-    q.cmd("quit")
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill(); proc.wait()
+    regs, extra = "", []
+    if not killed:
+        time.sleep(0.2)
+        regs = q.hmp("info registers")
+        extra = [(h, q.hmp(h)) for h in a.hmp]
+        if a.screenshot:
+            q.cmd("screendump", filename=os.path.abspath(a.screenshot), format="png")
+            time.sleep(0.5)
+        q.cmd("quit")
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill(); proc.wait()
     reader.join(timeout=5)
     out = captured.decode(errors="replace")
 
@@ -257,11 +273,17 @@ def main():
             rip = int(line.split()[0][4:], 16)
             print(line.strip()); break
     ok = rip is not None and rip >= KERNEL_BASE
-    print("kernel entered: " + ("YES (RIP in higher half)" if ok else f"NO (RIP={rip:#x})" if rip else "NO"))
+    if killed:
+        ok = True
+        print("kernel entered: YES (machine killed on purpose by !kill)")
+    else:
+        print("kernel entered: " + ("YES (RIP in higher half)" if ok else f"NO (RIP={rip:#x})" if rip else "NO"))
 
     if a.expect:
         pos = 0
         for kind, want in steps:
+            if kind == "kill":
+                break
             if kind != "expect":
                 continue
             idx = clean.find(want, pos)

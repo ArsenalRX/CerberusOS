@@ -3,6 +3,7 @@
 #include <arch/x86_64/cpufeatures.h>
 #include <arch/x86_64/gdt.h>
 #include <fs/file.h>
+#include <fs/vfs.h>
 #include <lib/csprng.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -63,17 +64,31 @@ struct ExecImage {
 // stack. Runs with `space` active and leaves it active on success; on
 // failure the previously active space is restored (the caller disposes of
 // `space`).
-Result<ExecImage> exec_load(AddressSpace* space, const char* path, const ExecArgs& args) {
-    const u8* file;
-    usize file_size;
-    u32 mode;
-    Result<void> found = file_archive_lookup(path, &file, &file_size, &mode);
+// The program file: resolved from the process's working directory, checked
+// for execute permission (and a noexec mount), read whole into memory.
+Result<u8*> read_program(Process* p, const char* path, usize* size) {
+    Result<Vnode*> found = vfs_resolve(p->cwd, path, p->cred, LookupFlags{});
     if (!found.ok()) return found.error();
-    if (!(mode & 0111)) return Error::Perm;             // not marked executable
+    Vnode* v = found.value();
+    Result<void> ok = v->type == VType::Dir ? Result<void>(Error::IsDir)
+                      : v->type != VType::File ? Result<void>(Error::Access)
+                                               : vfs_access(v, p->cred, vfs::X_OK);
+    Result<u8*> data = ok.ok() ? vfs_read_all(v, EXEC_MAX_FILE, size) : Result<u8*>(ok.error());
+    vnode_unref(v);
+    return data;
+}
+
+Result<ExecImage> exec_load(AddressSpace* space, const char* path, const ExecArgs& args) {
+    Process* p = thread_current()->process;
+    usize file_size = 0;
+    Result<u8*> read = read_program(p, path, &file_size);
+    if (!read.ok()) return read.error();
+    const u8* file = read.value();
     ElfImage img;
     ElfError parsed = elf_parse(file, file_size, &img);
     if (parsed != ElfError::Ok) {
         kprintf("exec: %s: %s\n", path, elf_error_name(parsed));
+        kfree(read.value());
         return Error::NotExecutable;
     }
 
@@ -92,6 +107,7 @@ Result<ExecImage> exec_load(AddressSpace* space, const char* path, const ExecArg
         if (err == Error::None && !s.writable)
             err = space->mprotect(at, s.mem_size, s.executable ? vm::EXEC : 0).error();
     }
+    kfree(read.value());            // the segments have been copied out of it
 
     vaddr_t stack_top = STACK_TOP_MAX - csprng_below(ASLR_SLOTS_STACK) * PAGE_SIZE;
     if (err == Error::None)
@@ -216,12 +232,9 @@ Result<void> exec_args_add(ExecArgs* a, const char* s, bool env) {
 
 // ================================================================= lifetime ==
 
-void process_init() {
-    files_init();
-    syscall_init();
-}
+void process_init() { syscall_init(); }
 
-Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap) {
+Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out) {
     SpawnCtx* ctx = (SpawnCtx*)kzalloc(sizeof(SpawnCtx));
     if (!ctx) return Error::NoMemory;
     Error err = strlen(path) < PATH_MAX ? exec_args_init(&ctx->args).error() : Error::TooBig;
@@ -238,12 +251,19 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
         else err = made.error();
     }
     if (err == Error::None) {
-        // Standard input, output and error all start as the console.
+        // Standard input, output and error start as the console, unless
+        // output is redirected.
         for (int fd = 0; fd < 3 && err == Error::None; fd++) {
+            if (fd == 1 && out) {
+                p->files[fd] = file_ref(out);
+                continue;
+            }
             Result<File*> con = file_open_console();
             if (con.ok()) p->files[fd] = con.value();
             else err = con.error();
         }
+        Process* k = process_kernel();
+        if (err == Error::None && k->cwd) p->cwd = vnode_ref(k->cwd);
     }
     if (err == Error::None) {
         p->auto_reap = auto_reap;
@@ -290,6 +310,10 @@ int process_wait(Process* child) {
     for (File*& f : p->files) {
         if (f) file_unref(f);
         f = nullptr;
+    }
+    if (p->cwd) {
+        vnode_unref(p->cwd);
+        p->cwd = nullptr;
     }
     // Step out of the address space before tearing it down.
     vmm_kernel().activate();
@@ -365,6 +389,9 @@ Result<i64> process_fork(const InterruptFrame* frame) {
     Process* child = made.value();
     child->cred = parent->cred;
     child->mmap_hint = parent->mmap_hint;
+    child->umask = parent->umask;
+    child->fd_cloexec = parent->fd_cloexec;
+    if (parent->cwd) child->cwd = vnode_ref(parent->cwd);
     for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++)
         if (parent->files[fd]) child->files[fd] = file_ref(parent->files[fd]);
     u64 irq = sched_lock();
@@ -400,6 +427,12 @@ Result<void> process_exec(InterruptFrame* frame, const char* path, const ExecArg
     AddressSpace* old = p->space;
     p->space = fresh;
     old->destroy();
+    for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++)
+        if ((p->fd_cloexec >> fd) & 1 && p->files[fd]) {
+            file_unref(p->files[fd]);
+            p->files[fd] = nullptr;
+        }
+    p->fd_cloexec = 0;
     p->mmap_hint = img.value().mmap_hint;
     strlcpy(p->name, base_name(path), sizeof p->name);
     strlcpy(thread_current()->name, p->name, sizeof thread_current()->name);

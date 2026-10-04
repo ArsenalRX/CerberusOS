@@ -26,6 +26,7 @@ constexpr usize USER_STACK_SIZE = 8 * MIB;
 constexpr usize EXEC_MAX_STRINGS = 64;          // argv and envp entries, each
 constexpr usize EXEC_MAX_ARG_BYTES = 32 * KIB;  // all strings together
 constexpr usize PATH_MAX = 256;
+constexpr usize EXEC_MAX_FILE = 64 * MIB;      // largest program file execve will load
 
 // Wait-status encoding (as returned through waitpid): a normal exit stores
 // the 8-bit code in bits 8-15; a process killed by a fault stores the signal
@@ -56,7 +57,10 @@ void process_init();
 // otherwise the caller must collect it with process_wait. The program is
 // loaded by the new process's own thread, so a load failure shows up as
 // exit code 127. Errors: NoMemory, TooBig.
-Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap);
+// The new process starts in the kernel's working directory (the shell's
+// `cd`). Standard output goes to `out` when given (shell redirection),
+// otherwise to the console like standard input and error.
+Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out = nullptr);
 // Blocks until `child` (a child of the kernel) exits, frees it, and returns
 // its wait status.
 int process_wait(Process* child);

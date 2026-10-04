@@ -30,6 +30,13 @@ enum class Error : u8 {
     NoProcess,
     TooManyFiles,
     NotExecutable,
+    Access,             // permission bits refuse the operation (EACCES)
+    ReadOnly,           // read-only file system (EROFS)
+    NotEmpty,           // directory not empty
+    NameTooLong,
+    Loop,               // too many symbolic links
+    CrossDevice,        // rename across file systems
+    NoDevice,           // no such device, or the device does not support it
 };
 
 // Short lowercase name for logs ("no-memory", "invalid", ...).

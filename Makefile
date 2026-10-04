@@ -21,6 +21,7 @@ NM        := $(CROSS)nm
 NASM      ?= nasm
 XORRISO   ?= xorriso
 QEMU      ?= qemu-system-x86_64
+HOSTCXX   ?= g++
 GDB       ?= gdb
 PYTHON    ?= python3
 
@@ -296,15 +297,40 @@ $(UBUILD)/bin/%: $(UBUILD)/bin/%.o $(CRT0) $(LIBC_OBJS) $(USER_DIR)/libc/user.ld
 	$(USER_LD) $(ULDFLAGS) $(CRT0) $< $(LIBC_OBJS) $(LIBGCC) -o $@
 
 # A fixed owner, date and order make the archive identical for identical input.
-$(INITRD): $(USER_BINS)
+# One program (userland/bin/fileutils.cpp) answers to all these names.
+FILEUTILS_NAMES := rmdir mv cp touch stat ln sync mount umount pwd write
+
+$(INITRD): $(USER_BINS) $(wildcard $(USER_DIR)/etc/*)
 	rm -rf $(BUILD)/initrd_root
-	mkdir -p $(BUILD)/initrd_root/bin
+	mkdir -p $(BUILD)/initrd_root/bin $(BUILD)/initrd_root/etc
 	cp $(USER_BINS) $(BUILD)/initrd_root/bin/
-	chmod 755 $(BUILD)/initrd_root/bin/*
+	for t in $(FILEUTILS_NAMES); do cp $(UBUILD)/bin/fileutils $(BUILD)/initrd_root/bin/$$t; done
+	rm -f $(BUILD)/initrd_root/bin/fileutils
+	cp $(USER_DIR)/etc/* $(BUILD)/initrd_root/etc/
+	# Modes are set here, not with chmod: the build tree may live on a Windows
+	# drive where every file reads back as 0777.
 	tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner --mtime='2026-01-01 00:00:00' \
-	    -C $(BUILD)/initrd_root -cf $@ bin
+	    --mode=0755 -C $(BUILD)/initrd_root -cf $@ bin
+	tar --format=ustar --owner=0 --group=0 --numeric-owner --mtime='2026-01-01 00:00:00' \
+	    --mode=0755 --no-recursion -C $(BUILD)/initrd_root -rf $@ etc
+	cd $(BUILD)/initrd_root && tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner \
+	    --mtime='2026-01-01 00:00:00' --mode=0644 -rf $@ $$(ls etc/* | sort)
 
 -include $(USER_DEPS)
+
+# ---------------------------------------------------------------------------
+# Host tools: mkfs.lumfs formats and checks disk images on the build machine.
+# It shares the on-disk format code with the kernel.
+# ---------------------------------------------------------------------------
+MKFS_LUMFS := $(BUILD)/tools/mkfs.lumfs
+$(MKFS_LUMFS): $(ROOT)/tools/mkfs-lumfs.cpp $(ROOT)/kernel/lib/crc32c.cpp $(ROOT)/kernel/fs/lumfs_format.h \
+               $(ROOT)/kernel/fs/lumfs_mkfs.h
+	@mkdir -p $(dir $@)
+	$(HOSTCXX) -std=c++20 -O2 -g -Wall -Wextra -I$(ROOT)/kernel -o $@ $(ROOT)/tools/mkfs-lumfs.cpp \
+	    $(ROOT)/kernel/lib/crc32c.cpp
+
+tools: $(MKFS_LUMFS)
+.PHONY: tools
 
 # ---------------------------------------------------------------------------
 # Fuzzing (docs/SPEC.md §19.11). The parsers of untrusted input are built for

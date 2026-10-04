@@ -29,7 +29,8 @@
 #include <lib/version.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
-#include <fs/file.h>
+#include <drivers/ata.h>
+#include <fs/fs.h>
 #include <lib/string.h>
 #include <mm/vmm.h>
 #include <proc/process.h>
@@ -82,10 +83,12 @@ void print_banner() {
 // The first thread: brings up the desktop, then becomes the kernel shell.
 void init_thread(void*) {
     strlcpy(thread_current()->name, "shell", sizeof thread_current()->name);
+    ata_init();
+    fs_init();
     if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
     // The first user process. It is not waited for: it runs for as long as
     // the system does.
-    if (files_archive_present()) {
+    {
         const char* const argv[] = {"init", nullptr};
         Result<Process*> init = process_spawn("/bin/init", argv, true);
         // Announced here rather than by the program: it starts on another
