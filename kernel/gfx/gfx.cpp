@@ -402,8 +402,113 @@ void blur_box(Surface& s, int radius, u32* scratch) {
     }
 }
 
+namespace {
+
+struct BlobFont {               // 40 bytes, see tools/gen-fonts.py
+    char name[16];
+    u16 line_height, ascent, first, count, fixed_advance, pad;
+    u32 glyphs_offset, coverage_offset, coverage_size;
+};
+
+const AAGlyph* aa_glyph(const Font& f, unsigned char ch) {
+    if (ch < f.aa_first || ch >= f.aa_first + f.aa_count) ch = '?';
+    if (ch < f.aa_first || ch >= f.aa_first + f.aa_count) return nullptr;
+    return &f.aa_glyphs[ch - f.aa_first];
+}
+
+int draw_text_aa(Surface& s, const Font& f, int x, int y, const char* text, usize n, Color c) {
+    int pen = x;
+    u32 ca = alpha_of(c);
+    for (usize i = 0; i < n && text[i]; i++) {
+        const AAGlyph* g = aa_glyph(f, (unsigned char)text[i]);
+        if (!g) continue;
+        int gx0 = pen + g->xoff, gy0 = y + g->yoff;
+        if (g->w && gx0 < s.clip.right() && gx0 + g->w > s.clip.x && gy0 < s.clip.bottom() && gy0 + g->h > s.clip.y) {
+            const u8* cov = f.aa_coverage + g->offset;
+            for (int row = 0; row < g->h; row++) {
+                int py = gy0 + row;
+                if (py < s.clip.y || py >= s.clip.bottom()) continue;
+                u32* line = s.row(py);
+                const u8* src = cov + row * g->w;
+                for (int col = 0; col < g->w; col++) {
+                    u32 a = src[col];
+                    int px = gx0 + col;
+                    if (!a || px < s.clip.x || px >= s.clip.right()) continue;
+                    a = a * ca / 255;
+                    line[px] = blend(line[px], with_alpha(c, (u8)a));
+                }
+            }
+        }
+        pen += g->advance;
+    }
+    return pen - x;
+}
+
+usize text_len(const char* text) {
+    usize n = 0;
+    while (text[n]) n++;
+    return n;
+}
+
+int measure_n(const Font& f, const char* text, usize n) {
+    if (!f.antialiased()) {
+        usize len = 0;
+        while (len < n && text[len]) len++;
+        return (int)len * f.width;
+    }
+    int w = 0;
+    for (usize i = 0; i < n && text[i]; i++) {
+        const AAGlyph* g = aa_glyph(f, (unsigned char)text[i]);
+        if (g) w += g->advance;
+    }
+    return w;
+}
+
+} // namespace
+
+Font font_from_blob(const u8* blob, usize size, const char* name) {
+    Font f;
+    if (size < 8 || blob[0] != 'C' || blob[1] != 'F' || blob[2] != 'N' || blob[3] != 'T') return f;
+    u32 count;
+    __builtin_memcpy(&count, blob + 4, 4);
+    if (count > 64 || 8 + (u64)count * sizeof(BlobFont) > size) return f;
+    for (u32 i = 0; i < count; i++) {
+        BlobFont h;
+        __builtin_memcpy(&h, blob + 8 + i * sizeof(BlobFont), sizeof h);
+        bool same = true;
+        for (int k = 0; k < 16; k++) {
+            if (h.name[k] != name[k]) same = false;
+            if (!name[k] || !same) break;
+        }
+        if (!same) continue;
+        // Everything the glyph table points at must lie inside the blob.
+        if (h.count == 0 || h.first + (u32)h.count > 256 || h.line_height == 0 || h.line_height > 255) return f;
+        if ((u64)h.glyphs_offset + (u64)h.count * sizeof(AAGlyph) > size) return f;
+        if ((u64)h.coverage_offset + h.coverage_size > size) return f;
+        if (h.glyphs_offset % 4) return f;
+        const AAGlyph* glyphs = (const AAGlyph*)(blob + h.glyphs_offset);
+        for (u32 g = 0; g < h.count; g++)
+            if ((u64)glyphs[g].offset + (u64)glyphs[g].w * glyphs[g].h > h.coverage_size) return f;
+        f.aa_glyphs = glyphs;
+        f.aa_coverage = blob + h.coverage_offset;
+        f.aa_coverage_size = h.coverage_size;
+        f.aa_first = h.first;
+        f.aa_count = h.count;
+        f.height = h.line_height;
+        f.width = h.fixed_advance;
+        if (!f.width) {
+            const AAGlyph* zero = aa_glyph(f, '0');
+            const AAGlyph* n = aa_glyph(f, 'n');
+            f.width = zero && zero->advance ? zero->advance : n ? n->advance : h.line_height / 2;
+        }
+        return f;
+    }
+    return f;
+}
+
 int draw_text_n(Surface& s, const Font& f, int x, int y, const char* text, usize n, Color c) {
     if (!f.valid()) return 0;
+    if (f.antialiased()) return draw_text_aa(s, f, x, y, text, n, c);
     int stride = (f.width + 7) / 8;
     int pen = x;
     for (usize i = 0; i < n && text[i]; i++) {
@@ -429,20 +534,47 @@ int draw_text(Surface& s, const Font& f, int x, int y, const char* text, Color c
     return draw_text_n(s, f, x, y, text, (usize)-1, c);
 }
 
-int measure_text(const Font& f, const char* text) {
-    int n = 0;
-    while (text[n]) n++;
-    return n * f.width;
-}
+int measure_text(const Font& f, const char* text) { return measure_n(f, text, (usize)-1); }
 
 int draw_text_ellipsis(Surface& s, const Font& f, int x, int y, const char* text, int max_width, Color c) {
-    int full = measure_text(f, text);
-    if (full <= max_width) return draw_text(s, f, x, y, text, c);
-    int fit = (max_width - 3 * f.width) / f.width;
-    if (fit < 0) fit = 0;
-    int adv = draw_text_n(s, f, x, y, text, (usize)fit, c);
+    if (measure_text(f, text) <= max_width) return draw_text(s, f, x, y, text, c);
+    // The longest prefix that fits together with "...".
+    int dots = measure_text(f, "...");
+    usize len = text_len(text), fit = 0;
+    while (fit < len && measure_n(f, text, fit + 1) + dots <= max_width) fit++;
+    int adv = draw_text_n(s, f, x, y, text, fit, c);
     adv += draw_text(s, f, x + adv, y, "...", c);
     return adv;
+}
+
+// A line as the set of pixels within width/2 of the segment, with a one
+// pixel soft edge. Distances in 1/16 pixel, integer only.
+void draw_line_aa(Surface& s, int x0, int y0, int x1, int y1, int width16, Color c) {
+    int minx = (x0 < x1 ? x0 : x1) - 2, maxx = (x0 > x1 ? x0 : x1) + 2;
+    int miny = (y0 < y1 ? y0 : y1) - 2, maxy = (y0 > y1 ? y0 : y1) + 2;
+    i64 dx = (i64)(x1 - x0) * 16, dy = (i64)(y1 - y0) * 16;
+    i64 len2 = dx * dx + dy * dy;
+    i64 inner = width16 / 2, outer = inner + 16;
+    for (int py = miny; py <= maxy; py++) {
+        for (int px = minx; px <= maxx; px++) {
+            i64 vx = (i64)(px - x0) * 16, vy = (i64)(py - y0) * 16;
+            // Closest point on the segment.
+            i64 t = len2 ? vx * dx + vy * dy : 0;
+            if (t < 0) t = 0;
+            if (t > len2) t = len2;
+            i64 cx = len2 ? dx * t / len2 : 0, cy = len2 ? dy * t / len2 : 0;
+            i64 ex = vx - cx, ey = vy - cy;
+            i64 d2 = ex * ex + ey * ey;
+            if (d2 >= outer * outer) continue;
+            u32 cov = 255;
+            if (d2 > inner * inner) {
+                i64 d = inner;
+                while ((d + 1) * (d + 1) <= d2) d++;
+                cov = (u32)(255 * (outer - d) / 16);
+            }
+            put_cov(s, px, py, c, cov);
+        }
+    }
 }
 
 void draw_char_scaled(Surface& s, const Font& f, int x, int y, char ch, int scale, Color c) {

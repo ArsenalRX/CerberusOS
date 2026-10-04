@@ -13,4 +13,10 @@ _binary_font_8x16_end:
 _binary_font_16x32_start:
     .incbin "kernel/boot/font/terminus-16x32.psf"
 _binary_font_16x32_end:
+    .global _binary_fonts_aa_start
+    .global _binary_fonts_aa_end
+    .balign 16
+_binary_fonts_aa_start:
+    .incbin "kernel/gfx/fonts.bin"
+_binary_fonts_aa_end:
     .section .note.GNU-stack,"",@progbits

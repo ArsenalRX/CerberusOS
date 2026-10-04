@@ -22,14 +22,15 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Latest release: **0.0.5c** (2026-10-04, tag `v0.0.5c`): phase 9, files and
+Latest release: **0.0.5d** (2026-10-04, tag `v0.0.5d`): anti-aliased text on the
+desktop. Before it, **0.0.5c** (2026-10-04, tag `v0.0.5c`): phase 9, files and
 file systems; the OS renamed **Cerberus** (it was Lumen) and its file
 system **cerfs**. Before it on the same day: 0.0.5b (desktop polish) and
 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` … `0.0.5j`, then
 `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep their old
 numbers. The release is always `dist/cerberus.iso` (`dist/VERSION.txt`
 names the version); each release overwrites it. The tree now builds as
-`0.0.5d-dev+<commit>`. History: docs/CHANGELOG.md.
+`0.0.5e-dev+<commit>`. History: docs/CHANGELOG.md.
 
 ---
 

@@ -60,16 +60,39 @@ struct ClipStack {
     void pop(Surface& s);
 };
 
-// Bitmap font from a PSF2 blob (fixed advance, no kerning).
+// One glyph of an anti-aliased font: a w x h block of 8-bit coverage.
+struct AAGlyph {
+    u32 offset;             // into the font's coverage bytes
+    u8 w, h;
+    i8 xoff;                // from the pen position
+    u8 yoff;                // from the top of the line
+    u8 advance;
+    u8 pad[3];
+};
+
+// A font: either a 1-bit PSF2 bitmap font (fixed advance), or an
+// anti-aliased font from the fonts blob (tools/gen-fonts.py), whose glyphs
+// are blended by coverage and may be proportional. `width` is the advance of
+// a fixed-width font, and of the digit 0 otherwise (for rough layout);
+// measure_text gives exact widths.
 struct Font {
     const u8* glyphs = nullptr;
     u32 glyph_count = 0;
     u32 bytes_per_glyph = 0;
     int width = 0, height = 0;
-    bool valid() const { return glyphs != nullptr; }
+    // Anti-aliased fonts only:
+    const AAGlyph* aa_glyphs = nullptr;
+    const u8* aa_coverage = nullptr;
+    u32 aa_coverage_size = 0;
+    u16 aa_first = 0, aa_count = 0;
+    bool valid() const { return glyphs != nullptr || aa_glyphs != nullptr; }
+    bool antialiased() const { return aa_glyphs != nullptr; }
 };
 // Parses a PSF2 blob; returns an invalid Font on a bad magic.
 Font font_from_psf2(const u8* blob);
+// Finds font `name` in a fonts blob of `size` bytes. Every offset and glyph
+// is checked against the blob; returns an invalid Font if anything is off.
+Font font_from_blob(const u8* blob, usize size, const char* name);
 
 // Horizontal inset of a rounded corner of the given radius at row dy
 // (0 = the outermost row). Lets callers mask rectangles to rounded shapes.
@@ -91,6 +114,8 @@ void blit_alpha(Surface& dst, int x, int y, const Surface& src, u8 opacity = 255
 // Nearest-neighbour scaled copy of src into dst_rect.
 void blit_scaled(Surface& dst, const Rect& dst_rect, const Surface& src);
 void draw_line(Surface& s, int x0, int y0, int x1, int y1, Color c);
+// Anti-aliased line, about `width16`/16 pixels wide (16 = one pixel).
+void draw_line_aa(Surface& s, int x0, int y0, int x1, int y1, int width16, Color c);
 void draw_hline(Surface& s, int x0, int x1, int y, Color c);
 void draw_vline(Surface& s, int x, int y0, int y1, Color c);
 void fill_circle(Surface& s, int cx, int cy, int radius, Color c);

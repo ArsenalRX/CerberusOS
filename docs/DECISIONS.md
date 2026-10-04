@@ -1088,3 +1088,25 @@ when a thread changes CPU.
   cannot wrap unseen.
 - Verified: QEMU/KVM uses the TSC (4,192 MHz); VirtualBox uses the PIT and
   passes `test all` (10 of 10) twice in a row with 4 CPUs.
+
+## 2026-10-04 — Anti-aliased fonts rendered at build time (owner: "rough edges")
+
+The owner's screenshot of 0.0.5c showed stair-stepped text: the desktop used
+the 8x16 console bitmap font, and drew its wordmarks by enlarging the 16x32
+one two and three times. A TrueType renderer is phase 13 work (Facet), so
+until then the glyphs are rendered on the build machine: `tools/gen-fonts.py`
+(FreeType through Pillow) writes `kernel/gfx/fonts.bin`, 8-bit coverage for
+DejaVu Sans 14 px (regular and bold), DejaVu Sans Mono 13.3 px (advance
+exactly 8 px, 8x17 cells) and DejaVu Sans Bold at 64 and 104 px (letters
+only). The blob is committed, so a build needs neither Pillow nor the font
+files. libgfx's `Font` now covers both kinds; the loader bounds-checks every
+offset in the blob. The text console (boot log, panics) keeps the PSF fonts.
+
+- **New asset, licence:** DejaVu fonts (Bitstream Vera licence plus public
+  domain additions; free to embed and redistribute). This is a bundled
+  asset the owner did not pick explicitly; swapping the family is a
+  one-line change in the generator.
+- Also: an anti-aliased line primitive for the close button, and the
+  wallpaper computed with 8 extra bits per channel and ordered dithering.
+- Rejected: smoothing the enlarged bitmap font (still blurry, still a pixel
+  font); writing the TrueType rasteriser now (phase 13).

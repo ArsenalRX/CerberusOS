@@ -22,6 +22,20 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5d — 2026-10-04
+
+Smooth text: the desktop no longer looks pixelated.
+
+### Changed
+- All desktop text is anti-aliased: DejaVu Sans for the interface, DejaVu
+  Sans Mono for the terminal and tables, and a large bold face for the
+  "Cerberus" wordmarks (they were a small pixel font enlarged two and three
+  times, which made every letter stair-stepped).
+- The close button's cross is drawn with a smooth thin line.
+- The wallpaper is dithered, which removes the visible bands in its dark
+  gradient.
+- The terminal's rows are one pixel taller (8×17 cells).
+
 ## 0.0.5c — 2026-10-04 (security release)
 
 Spec phase 9, files and file systems, is complete: Cerberus can keep files

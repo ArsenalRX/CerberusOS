@@ -35,8 +35,8 @@
 #include <mm/vmm.h>
 #include <sched/sched.h>
 
-extern "C" const u8 _binary_font_8x16_start[];
-extern "C" const u8 _binary_font_16x32_start[];
+extern "C" const u8 _binary_fonts_aa_start[];
+extern "C" const u8 _binary_fonts_aa_end[];
 
 using namespace gfx;
 
@@ -127,7 +127,9 @@ struct State {
     int W = 0, H = 0;
     Surface fb, back, wall, scratch;
     u32* front = nullptr;       // what the framebuffer shows, cursor included
-    Font font, font_big;
+    // Anti-aliased fonts (kernel/gfx/fonts.bin): interface text, bold for
+    // headings, fixed-width for the terminal and tables, large for wordmarks.
+    Font font, bold, mono, display, display_big;
 
     Window windows[MAX_WINDOWS];
     int order[MAX_WINDOWS];
@@ -460,7 +462,7 @@ void build_shadow(Window& w) {
 // ---------------------------------------------------------------- paint ---
 void paint_lines_header(Surface& s, const char* heading) {
     fill_rect(s, s.bounds(), theme::CONTENT_BG);
-    draw_text(s, g.font, 16, 14, heading, theme::ACCENT);
+    draw_text(s, g.bold, 16, 14, heading, theme::ACCENT);
     draw_hline(s, 16, s.width - 17, 34, rgba(255, 255, 255, 30));
 }
 
@@ -474,14 +476,8 @@ int paint_kv(Surface& s, int y, const char* key, const char* value) {
 void paint_about(Surface& s) {
     fill_rect(s, s.bounds(), theme::CONTENT_BG);
     fill_gradient_radial(s, s.bounds(), s.width - 60, 40, 260, rgba(96, 165, 250, 60), rgba(0, 0, 0, 0));
-    // Wordmark: 16x32 font at 2x.
-    const char* mark = "Cerberus";
-    int x = 24;
-    for (int i = 0; mark[i]; i++) {
-        draw_char_scaled(s, g.font_big, x, 22, mark[i], 2, theme::TEXT);
-        x += g.font_big.width * 2;
-    }
-    fill_circle_aa(s, x + 18, 54, 8, theme::ACCENT);
+    int x = 22 + draw_text(s, g.display, 22, 12, "Cerberus", theme::TEXT);
+    fill_circle_aa(s, x + 16, 12 + g.display.height * 5 / 8, 8, theme::ACCENT);
     draw_text(s, g.font, 26, 96, "A hybrid-kernel operating system, built from scratch.", theme::TEXT_MUTED);
     char line[96];
     int y = 130;
@@ -551,7 +547,7 @@ void paint_memmap(Surface& s) {
     const BootInfo& bi = g_boot_info;
     int y = 48;
     char line[128];
-    draw_text(s, g.font, 16, y, "start            end              size       type", theme::TEXT_MUTED);
+    draw_text(s, g.mono, 16, y, "start            end              size       type", theme::TEXT_MUTED);
     y += 20;
     for (usize i = 0; i < bi.region_count && y < s.height - 40; i++) {
         const MemoryRegion& r = bi.regions[i];
@@ -559,7 +555,7 @@ void paint_memmap(Surface& s) {
                   (unsigned long)(r.base + r.length - 1), (unsigned long)(r.length / KIB),
                   memory_type_name(r.type));
         Color c = r.type == MemoryType::Usable ? theme::TEXT : theme::TEXT_MUTED;
-        draw_text(s, g.font, 16, y, line, c);
+        draw_text(s, g.mono, 16, y, line, c);
         y += 18;
     }
     ksnprintf(line, sizeof line, "%lu regions, %lu MiB usable", (unsigned long)bi.region_count,
@@ -613,8 +609,8 @@ void draw_button(Surface& s, const Window& w, int index, bool hover, bool focuse
     int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
     switch (index) {
     case 0:     // close: X
-        draw_line(s, cx - 5, cy - 5, cx + 5, cy + 5, gc);
-        draw_line(s, cx + 5, cy - 5, cx - 5, cy + 5, gc);
+        draw_line_aa(s, cx - 5, cy - 5, cx + 5, cy + 5, 8, gc);
+        draw_line_aa(s, cx + 5, cy - 5, cx - 5, cy + 5, 8, gc);
         break;
     case 1:     // maximise: a square; restore: two overlapping squares
         if (w.maximised) {
@@ -693,7 +689,7 @@ void draw_panel(Surface& back) {
     bool lhover = lr.contains(g.mx, g.my) || g.menu_open;
     fill_rect_rounded(back, lr, 8, lhover ? theme::ACCENT : theme::ACCENT_DARK);
     fill_circle_aa(back, lr.x + 16, lr.y + lr.h / 2, 5, rgb(255, 255, 255));
-    draw_text(back, g.font, lr.x + 30, lr.y + (lr.h - g.font.height) / 2, "Cerberus", rgb(255, 255, 255));
+    draw_text(back, g.bold, lr.x + 30, lr.y + (lr.h - g.bold.height) / 2, "Cerberus", rgb(255, 255, 255));
 
     // Task buttons.
     g.task_count = 0;
@@ -722,10 +718,10 @@ void draw_panel(Surface& back) {
     char buf[64];
     ksnprintf(buf, sizeof buf, "%02u:%02u:%02u", now.hour, now.minute, now.second);
     int tw = measure_text(g.font, buf);
-    draw_text(back, g.font, g.W - 16 - tw, pr.y + 5, buf, theme::TEXT);
+    draw_text(back, g.font, g.W - 16 - tw, pr.y + 3, buf, theme::TEXT);
     ksnprintf(buf, sizeof buf, "%04u-%02u-%02u", now.year, now.month, now.day);
     tw = measure_text(g.font, buf);
-    draw_text(back, g.font, g.W - 16 - tw, pr.y + 22, buf, theme::TEXT_MUTED);
+    draw_text(back, g.font, g.W - 16 - tw, pr.y + 20, buf, theme::TEXT_MUTED);
     PmmStats pm = pmm_stats();
     u32 pct = pm.usable_frames ? (u32)(pm.used_frames * 100 / pm.usable_frames) : 0;
     ksnprintf(buf, sizeof buf, "RAM %u%%", pct);
@@ -1159,20 +1155,52 @@ void process_mouse() {
 }
 
 // ------------------------------------------------------------- wallpaper --
+// The background is computed per pixel with 8 extra bits per channel and
+// ordered dithering: a dark, slow gradient drawn straight into 8 bits shows
+// as visible bands.
 void build_wallpaper() {
     Surface& s = g.wall;
-    fill_gradient_vertical(s, s.bounds(), theme::WALL_TOP, theme::WALL_BOTTOM);
-    fill_gradient_radial(s, s.bounds(), g.W * 4 / 5, g.H / 5, g.W / 2, theme::GLOW_BLUE, rgba(0, 0, 0, 0));
-    fill_gradient_radial(s, s.bounds(), g.W / 6, g.H * 5 / 6, g.W * 2 / 5, theme::GLOW_VIOLET, rgba(0, 0, 0, 0));
+    static const u8 BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+    struct Glow {
+        int cx, cy;
+        i64 r2;
+        Color c;
+    };
+    const Glow glows[2] = {
+        {g.W * 4 / 5, g.H / 5, (i64)(g.W / 2) * (g.W / 2), theme::GLOW_BLUE},
+        {g.W / 6, g.H * 5 / 6, (i64)(g.W * 2 / 5) * (g.W * 2 / 5), theme::GLOW_VIOLET},
+    };
+    const Color top = theme::WALL_TOP, bottom = theme::WALL_BOTTOM;
+    for (int y = 0; y < g.H; y++) {
+        // Vertical gradient, channels scaled by 256.
+        i64 t = g.H > 1 ? (i64)y * 65536 / (g.H - 1) : 0;
+        i64 base[3] = {
+            red_of(top) * 256 + ((i64)(red_of(bottom) - red_of(top)) * t >> 8),
+            green_of(top) * 256 + ((i64)(green_of(bottom) - green_of(top)) * t >> 8),
+            blue_of(top) * 256 + ((i64)(blue_of(bottom) - blue_of(top)) * t >> 8),
+        };
+        u32* row = s.row(y);
+        for (int x = 0; x < g.W; x++) {
+            i64 ch[3] = {base[0], base[1], base[2]};
+            for (const Glow& gl : glows) {
+                i64 d2 = (i64)(x - gl.cx) * (x - gl.cx) + (i64)(y - gl.cy) * (y - gl.cy);
+                if (d2 >= gl.r2) continue;
+                // Strength falls off with the squared distance; 0..alpha*256.
+                i64 a = (i64)alpha_of(gl.c) * 256 * (gl.r2 - d2) / gl.r2;
+                ch[0] += (red_of(gl.c) * 256 - ch[0]) * a / (255 * 256);
+                ch[1] += (green_of(gl.c) * 256 - ch[1]) * a / (255 * 256);
+                ch[2] += (blue_of(gl.c) * 256 - ch[2]) * a / (255 * 256);
+            }
+            i64 d = BAYER[y & 3][x & 3] * 16 + 8;
+            u32 r = (u32)((ch[0] + d) >> 8), gr = (u32)((ch[1] + d) >> 8), bl = (u32)((ch[2] + d) >> 8);
+            row[x] = rgb((u8)(r > 255 ? 255 : r), (u8)(gr > 255 ? 255 : gr), (u8)(bl > 255 ? 255 : bl));
+        }
+    }
     // Faint wordmark.
     const char* mark = "Cerberus";
-    int scale = g.W >= 1600 ? 4 : 3;
-    int mw = (int)strlen(mark) * g.font_big.width * scale;
-    int x = (g.W - mw) / 2, y = (g.H - theme::PANEL_H - g.font_big.height * scale) / 2;
-    for (int i = 0; mark[i]; i++) {
-        draw_char_scaled(s, g.font_big, x, y, mark[i], scale, rgba(255, 255, 255, 26));
-        x += g.font_big.width * scale;
-    }
+    const Font& big = g.W >= 1100 ? g.display_big : g.display;
+    int mw = measure_text(big, mark);
+    draw_text(s, big, (g.W - mw) / 2, (g.H - theme::PANEL_H - big.height) / 2, mark, rgba(255, 255, 255, 22));
     char line[64];
     ksnprintf(line, sizeof line, "Cerberus %s  |  preview desktop", cerberus_version());
     int tw = measure_text(g.font, line);
@@ -1207,9 +1235,13 @@ bool gui_init() {
         kprintf("gui: framebuffer pte %#lx (level %d), PAT %#lx\n", (unsigned long)leaf, level,
                 (unsigned long)rdmsr(msr::PAT));
     }
-    g.font = font_from_psf2(_binary_font_8x16_start);
-    g.font_big = font_from_psf2(_binary_font_16x32_start);
-    if (!g.font.valid() || !g.font_big.valid()) {
+    usize blob_size = (usize)(_binary_fonts_aa_end - _binary_fonts_aa_start);
+    g.font = font_from_blob(_binary_fonts_aa_start, blob_size, "ui");
+    g.bold = font_from_blob(_binary_fonts_aa_start, blob_size, "ui-bold");
+    g.mono = font_from_blob(_binary_fonts_aa_start, blob_size, "mono");
+    g.display = font_from_blob(_binary_fonts_aa_start, blob_size, "display");
+    g.display_big = font_from_blob(_binary_fonts_aa_start, blob_size, "display-big");
+    if (!g.font.valid() || !g.bold.valid() || !g.mono.valid() || !g.display.valid() || !g.display_big.valid()) {
         kprintf("gui: fonts invalid\n");
         return false;
     }
@@ -1232,7 +1264,7 @@ bool gui_init() {
     memset(front, 0, (usize)g.W * g.H * 4);
     g.front = front;
     g.term_cells = cells;
-    g.term.init(g.term_cells, TERM_COLS, TERM_HISTORY, g.font);
+    g.term.init(g.term_cells, TERM_COLS, TERM_HISTORY, g.mono);
 
     build_wallpaper();
     build_cursor();
