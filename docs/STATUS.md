@@ -22,12 +22,13 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Released: **0.0.5a** (2026-10-04, tag `v0.0.5a`), the phase 8 release and
+Latest release: **0.0.5b** (2026-10-04, tag `v0.0.5b`): desktop polish and terminal scrolling.
+Before it: **0.0.5a** (2026-10-04, tag `v0.0.5a`), the phase 8 release and
 the first under the new version scheme: every release moves one letter
 (`0.0.5a` … `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1). It follows 0.7.0;
 releases 0.3.0 to 0.7.0 keep their old numbers. The release is always
 `dist/lumen.iso` (`dist/VERSION.txt` names the version); each release
-overwrites it. The tree now builds as `0.0.5b-dev+<commit>`. History:
+overwrites it. Also released: **0.0.5b** (2026-10-04, desktop polish). The tree now builds as `0.0.5c-dev+<commit>`. History:
 docs/CHANGELOG.md.
 
 ---
@@ -40,9 +41,9 @@ forward from phases 12-13) runs in its own thread.
 
 Next up: **Phase 9 — Filesystem** (SPEC §5 and §5A). The owner approves each
 phase's contents before it starts; phase 9 has not been approved yet. The
-owner has also asked for desktop polish (Windows-style window buttons,
-rounder corners, smoother dragging) and installer research (done:
-docs/INSTALLER.md).
+desktop polish the owner asked for is done (0.0.5b); installer research
+is in docs/INSTALLER.md; the owner wants our own web browser (phase 15B).
+On 2026-10-04 the owner said to keep going for the session.
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
 performance are requirements. See docs/DECISIONS.md.
@@ -148,7 +149,12 @@ All on 2026-10-04, on the 0.0.5a code.
     minimise, move and resize by mouse, stacking, software cursor.
   - Panel: launcher button + menu, task buttons, RAM %, clock and date.
   - Windows: Terminal (the kernel shell), About, System Monitor, Memory Map.
-  - Hotkeys: Alt+Tab, Alt+F4, Super, Super+T, Super+M.
+  - Hotkeys: Alt+Tab, Alt+F4, Super (on release, alone), Super+T, Super+M.
+  - Windows-style caption buttons; anti-aliased rounded corners (0.0.5b).
+  - Terminal scrollback of 1,000 lines: mouse wheel, Shift+Page Up/Down,
+    scrollbar; resizing keeps the text (0.0.5b, `test terminal`).
+  - Only changed pixels are written to the screen; frames follow input
+    immediately (0.0.5b).
   - Panics and exceptions switch back to the text console.
 
 ## Security and privacy state (honest summary)
@@ -218,10 +224,11 @@ QEMU/KVM with 4 CPUs: context switch 22–24 ns, system-call round trip
 (debug build), idle desktop 0% of ticks busy — all within budget. **Over
 budget: a minor page fault takes 2.0–2.9 µs against 2 µs** (not profiled).
 
-On VirtualBox (Hyper-V backend) a full-screen composite takes about 23 ms
-(about 130 MB/s into video memory), which is the likely cause of the laggy
-window dragging the owner reports there; the framebuffer's cache type has
-not been checked yet.
+On VirtualBox (Hyper-V backend) writing to the screen is slow (about 30
+million pixels per second, although the framebuffer is mapped
+write-combining there too). Since 0.0.5b only changed pixels are written,
+which cuts a drag to about a fifth of the writes; a full-screen change
+still takes 13–35 ms there.
 
 Known limits:
 
@@ -243,8 +250,8 @@ Known limits:
 - `init` only collects orphaned children; it starts nothing.
 - Phase 7 deviations from the spec are listed in docs/DECISIONS.md
   (2026-10-03, phase 7).
-- One terminal window (one kernel shell). No text selection, scrollback, or
-  escape sequences in the terminal.
+- One terminal window (one kernel shell). No text selection or escape
+  sequences in the terminal (scrollback exists since 0.0.5b).
 - Unregistered "Lumen-dev" and "Lumen" folders are left under `VirtualBox VMs` from
   VMs that were removed; they are not used.
 - Phase 8 deviations from the spec are listed in docs/DECISIONS.md
@@ -268,12 +275,11 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Next
 
-1. Get the owner's go-ahead: phase 9, or the desktop polish they asked for
-   on 2026-10-04 (Windows-style minimise/maximise/close buttons, rounder
-   and smoother window corners, smoother dragging — check the framebuffer's
-   cache type on VirtualBox first).
-2. Phase 9: VFS, tmpfs, initramfs, devfs, lumfs + `mkfs.lumfs`, page cache.
-3. Look at the minor-page-fault cost (over budget).
+1. Phase 9: VFS, tmpfs, initramfs, devfs, lumfs + `mkfs.lumfs`, page cache
+   (the owner said on 2026-10-04 to keep going).
+2. Look at the minor-page-fault cost (over budget).
+3. Desktop: window open/close animations; frame pacing from a one-shot
+   timer.
 
 ## Known bugs
 
@@ -281,10 +287,6 @@ Recorded in docs/DECISIONS.md (2026-10-03).
   "Clock skew detected" (drvfs timestamp rounding). Harmless so far.
 - Backtraces cannot name a function that faults inside its own prologue
   (inherent to RBP walking); tests avoid it by making a call before faulting.
-- Pressing Super as part of a shortcut (Super+M, Super+T) also toggles the
-  launcher menu. With the menu open, typed keys still reach the terminal.
-- The About window's CPU line is clipped at the window edge on long brand
-  strings (needs ellipsis on the value column).
 - `kmalloc`+`kfree` in the debug build sits at the edge of its 100 ns
   budget (80–101 ns between runs) now that the kernel has a stack
   protector.

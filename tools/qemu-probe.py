@@ -13,6 +13,7 @@ Usage: qemu-probe.py <iso> [--uefi OVMF_CODE.fd] [--wait SECONDS] [--smp N]
                 in order) in the serial output. Two directives are allowed:
                   !send <text>   type <text> + Enter into the serial console
                   !wait <secs>   pause before continuing
+                  (also !key, !mouse, !mouseto, !button, !wheel, !screenshot)
                 Directives execute after the initial --wait, in file order.
 Exit status: 0 if RIP is in the kernel's higher half and all expectations hold.
 """
@@ -61,6 +62,8 @@ def load_expect(path):
         elif line.startswith("!button "):           # !button <left|right|middle> <down|up>
             btn, state = line[8:].split()
             steps.append(("button", (btn, state == "down")))
+        elif line.startswith("!wheel "):            # !wheel <notches>  positive = up
+            steps.append(("wheel", int(line[7:])))
         elif line.startswith("!screenshot "):
             steps.append(("screenshot", line[12:]))
         else:
@@ -208,6 +211,13 @@ def main():
             time.sleep(0.2)
         elif kind == "button":
             mouse_button(q, *arg)
+            time.sleep(0.2)
+        elif kind == "wheel":
+            for _ in range(abs(arg)):
+                b = "wheel-up" if arg > 0 else "wheel-down"
+                mouse_button(q, b, True)
+                mouse_button(q, b, False)
+                time.sleep(0.05)
             time.sleep(0.2)
         elif kind == "screenshot":
             q.cmd("screendump", filename=os.path.abspath(arg), format="png")

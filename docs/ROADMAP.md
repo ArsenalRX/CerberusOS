@@ -13,7 +13,7 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-04**, at release **0.0.5a** (phase 8 complete).
+Last updated: **2026-10-04**, at release **0.0.5b** (phase 8 complete, desktop polish).
 
 ---
 
@@ -99,50 +99,18 @@ windows. The Spec programming language has not been started.
 
 ---
 
-## Next up: desktop polish and fixes (proposed for 0.0.5b)
+## Done in 0.0.5b: desktop polish
 
-Asked for by the owner on 2026-10-04. Not a spec phase; waiting for
-go-ahead.
-
-**Look**
-- [ ] Title-bar buttons in the Windows style: minimise (—), maximise (□,
-  or two squares when maximised) and close (✕), drawn as thin glyphs in
-  wide flat buttons at the right of the title bar; hover highlights the
-  button, close turns red on hover. Replaces the coloured macOS-style dots.
-- [ ] Rounder, smoother window corners: larger radius (about 10 px) drawn
-  with anti-aliasing (partial coverage at the edge pixels) instead of
-  hard stair-steps; same for the taskbar buttons, menu and shadows.
-- [ ] Softer, more even shadows that follow the rounded corners.
-- [ ] Title bar: a little taller, title text vertically centred, focused vs
-  unfocused windows clearly different.
-- [ ] Small open/close/minimise animations (fade and scale, about 150 ms).
-- [ ] Hover feedback on taskbar buttons and menu items; selected menu item
-  highlighted when using the keyboard.
-
-**Smoothness**
-- [ ] *(speed)* Check how the screen memory is mapped. On VirtualBox a
-  full-screen redraw takes 23 ms (about 130 MB/s), which suggests the
-  framebuffer is uncached. Mapping it write-combining (programming the
-  CPU's PAT) usually makes screen writes many times faster.
-- [ ] *(speed)* While dragging, merge all mouse movements that arrived since
-  the last frame and draw once, at most once per screen refresh.
-- [ ] *(speed)* Redraw only the uncovered strip and the window's new place
-  when a window moves; copy the window's ready-made image instead of
-  redrawing its contents.
-- [ ] *(speed)* Frame pacing from a one-shot timer instead of the 10 ms tick,
-  so animation runs at the display's 60 Hz.
-- [ ] *(speed)* Send keyboard and mouse interrupts to a core that is not busy
-  drawing.
-
-**Fixes**
-- [ ] *(fix)* Pressing Super as part of a shortcut (Super+M, Super+T) also
-  opens/closes the launcher menu. Open the menu only when Super is released
-  on its own, like Windows.
-- [ ] *(fix)* With the launcher menu open, typed keys still go to the
-  terminal behind it.
-- [ ] *(fix)* The About window cuts off long processor names; show "…".
-- [ ] *(fix)* The About window says the Spec compiler is "in progress"; it
-  has not been started.
+- [x] Windows-style caption buttons (— □ ✕, close turns red on hover).
+- [x] Larger, anti-aliased rounded corners on windows, buttons, menu.
+- [x] Terminal scrollback: 1,000 lines, mouse wheel, Shift+Page Up/Down,
+  scrollbar; resizing keeps the text.
+- [x] Only changed pixels are written to the screen (about 5× fewer while
+  dragging); frames drawn as soon as input arrives.
+- [x] Super opens the menu only on its own; the open menu takes all keys;
+  About window fixes.
+- [ ] Still to do: open/close animations; frame pacing from a one-shot
+  timer; send input interrupts to a core that is not drawing.
 
 ---
 
@@ -387,6 +355,38 @@ port BearSSL, or write our own.
 
 ---
 
+## Phase 15B — Our own web browser
+
+Decided by the owner on 2026-10-04. Needs phases 13–15 (toolkit,
+networking, HTTPS and the sandbox). Name still to choose.
+
+**Add**
+- [ ] HTTP/1.1 client (keep-alive, redirects, chunked, gzip) and HTTPS.
+- [ ] Cache and cookies (per site, per user, clearable; third-party
+  cookies off by default).
+- [ ] HTML parser following the web standard for common pages, tolerant of
+  broken markup; a document tree (DOM).
+- [ ] CSS for a documented subset: selectors, box model, colours, fonts,
+  borders, backgrounds, block/inline/flex basics, positioning.
+- [ ] Layout and painting: text wrapping, images (PNG, JPEG, GIF), basic
+  tables, smooth scrolling.
+- [ ] Browser window: address bar, back/forward/reload, tabs, bookmarks,
+  history, downloads, find in page, zoom.
+- [ ] Later (separate decision): JavaScript — write an engine or port
+  QuickJS.
+
+**Security**
+- [ ] Runs sandboxed: network and its own folder only; files only through
+  the trusted dialogs; tabs isolated from each other.
+- [ ] Every parser fuzzed; a bad page can crash a tab, never the system.
+- [ ] HTTPS by default, plain HTTP marked "not secure", no telemetry.
+
+**Done when:** `http://example.com/` and `https://example.com/` render
+readably; a set of test pages matches reference screenshots; fuzzing finds
+no crash; a page can't read files or other tabs.
+
+---
+
 ## Phase 16 — The Spec language compiles for Lumen
 
 Nothing of the compiler exists yet (`spec/` holds only empty folders).
@@ -471,17 +471,14 @@ menu.
 
 ## Known bugs and loose ends (fix list)
 
-- [ ] *(fix)* Super shortcuts toggle the launcher menu; keys leak to the
-  terminal while the menu is open (see "Next up").
-- [ ] *(fix)* About window clips long processor names.
 - [ ] *(fix)* Backtraces can't name a function that crashes in its first
   instructions (a limit of the frame-pointer method).
 - [ ] *(fix)* The shell polls the serial port every tick instead of using
   its interrupt.
 - [ ] *(fix)* `init` starts nothing yet; it only collects orphaned
   processes.
-- [ ] *(fix)* Terminal window: no selection, scrollback or colours (solved
-  by Ember in phase 13).
+- [ ] *(fix)* Terminal window: no selection or colours (solved by Ember in
+  phase 13).
 - [ ] *(fix)* Remove old diagnostic shell commands (`timermode`, `gui`,
   `irqs`) or fold them into Gauge and the test suite.
 - [ ] *(fix)* `early_map` should hand its addresses over to the VMM's
@@ -511,8 +508,8 @@ Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 
 **Improvements planned**
 - [ ] *(speed)* Profile and cut the minor page-fault cost under 2 µs.
-- [ ] *(speed)* Write-combining framebuffer; faster window dragging (see
-  "Next up").
+- [x] *(speed)* Faster window dragging: only changed pixels written
+  (0.0.5b). The framebuffer was already write-combining.
 - [ ] *(speed)* One-shot timer: frame pacing at the display rate, and later
   a tickless kernel (idle cores fully asleep, better for laptops).
 - [ ] *(speed)* Cheaper cross-core wake-ups: let an idle core poll briefly
@@ -532,7 +529,8 @@ Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 
 ## Decisions waiting on the owner
 
-1. Go-ahead for the desktop polish (above) and/or phase 9.
+1. Go-ahead for phase 9 (the desktop polish is 0.0.5b).
+   Answered 2026-10-04: our own web browser is wanted (phase 15B).
 2. TCP/IP: write our own or port lwIP (before phase 14).
 3. TLS/crypto: Mbed TLS (recommended), BearSSL, or our own (before
    phase 15).

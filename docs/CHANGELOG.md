@@ -18,6 +18,41 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5b — 2026-10-04
+
+Desktop polish: smoother, rounder, and the terminal scrolls.
+
+### Added
+- The terminal keeps the last 1,000 lines. Scroll with the mouse wheel or
+  Shift+Page Up / Shift+Page Down; a scrollbar shows where you are, and
+  typing jumps back to the bottom.
+- `test terminal` self-test (scrollback), included in `test all`.
+- `gui` reports the slowest frame since it was last asked and how many
+  pixels were actually written.
+
+### Changed
+- Window buttons look like Windows: minimise, maximise/restore and close as
+  thin symbols in flat buttons; close turns red under the mouse.
+- Rounded corners are larger and anti-aliased (smooth edges instead of
+  steps) on windows, taskbar buttons, the menu and the scrollbar.
+- The Super key opens the menu when pressed and released on its own; in a
+  shortcut such as Super+T it no longer toggles the menu.
+- Resizing the terminal keeps its text instead of clearing it.
+- The About window shortens long values with "…" and no longer claims the
+  Spec compiler is in progress (it has not been started).
+
+### Performance
+- Only pixels that changed are written to the screen. Dragging a window
+  writes about a fifth of the pixels it did (82,000 instead of about
+  424,000 per frame in a measured drag), which matters most in VirtualBox,
+  where writing to the screen is slow.
+- Frames are drawn as soon as mouse or keyboard input arrives (up to about
+  160 per second) instead of waiting for the next 10 ms timer tick; the
+  mouse pointer no longer reads back from video memory.
+
+### Fixed
+- Keys typed while the launcher menu is open no longer reach the terminal.
+
 ## 0.0.5a — 2026-10-04 (security release)
 
 Spec phase 8, SMP, is complete: Lumen now uses every processor.

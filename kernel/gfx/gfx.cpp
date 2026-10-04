@@ -119,18 +119,84 @@ void fill_rect(Surface& s, const Rect& r, Color c) {
     for (int y = rr.y; y < rr.bottom(); y++) span(s, rr.x, rr.right(), y, c);
 }
 
+namespace {
+
+// Corner coverage tables, one per radius in use (windows, buttons, menus use
+// a handful of radii), so the 8x8 supersampling runs once per radius.
+constexpr int MAX_RADIUS = 32;
+struct CornerTable {
+    int radius = -1;
+    u8 cov[MAX_RADIUS][MAX_RADIUS];
+};
+CornerTable g_corner_tables[6];
+int g_corner_next = 0;
+
+const CornerTable& corner_table(int radius) {
+    for (const CornerTable& t : g_corner_tables)
+        if (t.radius == radius) return t;
+    CornerTable& t = g_corner_tables[g_corner_next];
+    g_corner_next = (g_corner_next + 1) % (int)(sizeof g_corner_tables / sizeof g_corner_tables[0]);
+    t.radius = radius;
+    // Arc centre at (radius, radius); coordinates in 1/16 pixel so the 8x8
+    // sample points sit at odd sixteenths (pixel centres of the sub-grid).
+    int r2 = radius * radius * 256;
+    for (int dy = 0; dy < radius; dy++) {
+        for (int dx = 0; dx < radius; dx++) {
+            int inside = 0;
+            for (int j = 0; j < 8; j++) {
+                int sy = dy * 16 + j * 2 + 1 - radius * 16;
+                for (int i = 0; i < 8; i++) {
+                    int sx = dx * 16 + i * 2 + 1 - radius * 16;
+                    if (sx * sx + sy * sy <= r2) inside++;
+                }
+            }
+            t.cov[dy][dx] = inside == 64 ? 255 : (u8)(inside * 4);
+        }
+    }
+    return t;
+}
+
+inline int clamp_radius(const Rect& r, int radius) {
+    if (radius * 2 > r.w) radius = r.w / 2;
+    if (radius * 2 > r.h) radius = r.h / 2;
+    return radius > MAX_RADIUS ? MAX_RADIUS : radius;
+}
+
+inline void put_cov(Surface& s, int x, int y, Color c, u32 cov) {
+    if (!cov) return;
+    put(s, x, y, cov == 255 ? c : with_alpha(c, (u8)(alpha_of(c) * cov / 255)));
+}
+
+} // namespace
+
+u8 corner_coverage(int radius, int dx, int dy) {
+    if (radius <= 0) return 255;
+    if (radius > MAX_RADIUS) radius = MAX_RADIUS;
+    if (dx < 0 || dy < 0) return 0;
+    if (dx >= radius || dy >= radius) return 255;
+    return corner_table(radius).cov[dy][dx];
+}
+
 void fill_rect_rounded(Surface& s, const Rect& r, int radius, Color c) {
+    radius = clamp_radius(r, radius);
     if (radius <= 0) {
         fill_rect(s, r, c);
         return;
     }
-    if (radius * 2 > r.w) radius = r.w / 2;
-    if (radius * 2 > r.h) radius = r.h / 2;
+    const CornerTable& t = corner_table(radius);
     for (int dy = 0; dy < r.h; dy++) {
-        int inset = 0;
-        if (dy < radius) inset = corner_inset(radius, dy);
-        else if (dy >= r.h - radius) inset = corner_inset(radius, r.h - 1 - dy);
-        span(s, r.x + inset, r.right() - inset, r.y + dy, c);
+        int y = r.y + dy;
+        if (y < s.clip.y || y >= s.clip.bottom()) continue;
+        if (dy >= radius && dy < r.h - radius) {
+            span(s, r.x, r.right(), y, c);
+            continue;
+        }
+        int cy = dy < radius ? dy : r.h - 1 - dy;
+        for (int dx = 0; dx < radius; dx++) {
+            put_cov(s, r.x + dx, y, c, t.cov[cy][dx]);
+            put_cov(s, r.right() - 1 - dx, y, c, t.cov[cy][dx]);
+        }
+        span(s, r.x + radius, r.right() - radius, y, c);
     }
 }
 
@@ -142,29 +208,35 @@ void stroke_rect(Surface& s, const Rect& r, Color c) {
     draw_vline(s, r.right() - 1, r.y, r.bottom() - 1, c);
 }
 
+// A one-pixel anti-aliased outline: the coverage of the rounded rectangle
+// minus that of the same shape inset by one pixel.
 void stroke_rect_rounded(Surface& s, const Rect& r, int radius, Color c) {
-    if (radius <= 0) {
+    radius = clamp_radius(r, radius);
+    if (radius <= 1) {
         stroke_rect(s, r, c);
         return;
     }
-    if (radius * 2 > r.w) radius = r.w / 2;
-    if (radius * 2 > r.h) radius = r.h / 2;
-    int prev_inset = -1;
-    for (int dy = 0; dy < r.h; dy++) {
-        int inset = 0;
-        if (dy < radius) inset = corner_inset(radius, dy);
-        else if (dy >= r.h - radius) inset = corner_inset(radius, r.h - 1 - dy);
-        int y = r.y + dy;
-        if (dy == 0 || dy == r.h - 1) {
-            span(s, r.x + inset, r.right() - inset, y, c);
-        } else {
-            // Left/right edge pixels, plus the pixels uncovered by the change in inset.
-            int lo = inset, hi = prev_inset >= 0 ? prev_inset : inset;
-            if (lo > hi) { int t = lo; lo = hi; hi = t; }
-            span(s, r.x + lo, r.x + hi + 1, y, c);
-            span(s, r.right() - hi - 1, r.right() - lo, y, c);
+    const CornerTable& outer = corner_table(radius);
+    const CornerTable& inner = corner_table(radius - 1);
+    // Straight edges between the corners.
+    span(s, r.x + radius, r.right() - radius, r.y, c);
+    span(s, r.x + radius, r.right() - radius, r.bottom() - 1, c);
+    for (int y = r.y + radius; y < r.bottom() - radius; y++) {
+        put(s, r.x, y, c);
+        put(s, r.right() - 1, y, c);
+    }
+    // Corners.
+    for (int cy = 0; cy < radius; cy++) {
+        for (int cx = 0; cx < radius; cx++) {
+            int o = outer.cov[cy][cx];
+            int i = (cx >= 1 && cy >= 1) ? inner.cov[cy - 1][cx - 1] : 0;
+            int cov = o > i ? o - i : 0;
+            if (!cov) continue;
+            put_cov(s, r.x + cx, r.y + cy, c, (u32)cov);
+            put_cov(s, r.right() - 1 - cx, r.y + cy, c, (u32)cov);
+            put_cov(s, r.x + cx, r.bottom() - 1 - cy, c, (u32)cov);
+            put_cov(s, r.right() - 1 - cx, r.bottom() - 1 - cy, c, (u32)cov);
         }
-        prev_inset = inset;
     }
 }
 

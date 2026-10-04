@@ -4,9 +4,14 @@
 // Every change records a damage rectangle; a frame recomposites only the
 // damaged rectangles (wallpaper, then windows bottom-to-top with shadows and
 // decorations, then the launcher menu and the panel) into the back buffer and
-// copies just those rectangles to the framebuffer. The cursor is painted on
-// the framebuffer last and restored from the back buffer when it moves, so
-// moving the mouse never triggers recomposition.
+// copies just those rectangles to the framebuffer. A copy of what the screen
+// shows is kept in RAM (`front`), and only pixels that differ from it are
+// written: video memory is slow to write, very slow under some hypervisors,
+// and a moving window with a plain background changes far fewer pixels than
+// it covers. The cursor is blended from the back buffer straight onto the
+// screen (never reading video memory) and restored the same way, so moving
+// the mouse never triggers recomposition.
+#include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
 #include <boot/bootinfo.h>
 #include <drivers/fbconsole.h>
@@ -27,6 +32,7 @@
 #include <drivers/ps2.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <mm/vmm.h>
 #include <sched/sched.h>
 
 extern "C" const u8 _binary_font_8x16_start[];
@@ -53,10 +59,11 @@ constexpr Color BORDER_FOCUS = rgba(96, 165, 250, 210);
 constexpr Color BORDER = rgba(90, 96, 120, 200);
 constexpr Color PANEL = rgba(14, 17, 27, 232);
 constexpr Color PANEL_LINE = rgba(255, 255, 255, 22);
-constexpr Color BTN_CLOSE = rgb(239, 68, 68);
-constexpr Color BTN_MAX = rgb(34, 197, 94);
-constexpr Color BTN_MIN = rgb(234, 179, 8);
-constexpr Color BTN_GLYPH = rgba(0, 0, 0, 160);
+constexpr Color BTN_HOVER = rgba(255, 255, 255, 26);
+constexpr Color BTN_CLOSE_HOVER = rgb(196, 43, 28);
+constexpr Color BTN_GLYPH = rgb(226, 232, 240);
+constexpr Color BTN_GLYPH_INACTIVE = rgb(120, 128, 146);
+constexpr Color DOT_APP = rgb(34, 197, 94);
 constexpr Color TASK_BG = rgba(255, 255, 255, 18);
 constexpr Color TASK_FOCUS = rgba(96, 165, 250, 60);
 constexpr Color MENU_BG = rgba(24, 27, 38, 245);
@@ -66,19 +73,20 @@ constexpr Color CONTENT_BG = rgb(22, 24, 33);
 
 constexpr int TITLE_H = 32;
 constexpr int BORDER_W = 1;
-constexpr int RADIUS = 10;
+constexpr int RADIUS = 12;
 constexpr int SHADOW_PAD = 22;
 constexpr int SHADOW_OFF = 5;
 constexpr int SHADOW_BLUR = 9;
 constexpr int PANEL_H = 40;
 constexpr int RESIZE_BAND = 6;
-constexpr int BTN_R = 7;
-constexpr int BTN_GAP = 24;
+constexpr int BTN_W = 46;           // caption buttons: Windows-style, full title-bar height
 constexpr int MENU_W = 260;
 constexpr int MENU_ITEM_H = 38;
 } // namespace theme
 
-constexpr u64 FRAME_US = 16000;
+// Minimum time between frames. Input wakes the compositor at once, so a drag
+// is drawn as soon as the mouse reports (at most ~160 frames per second).
+constexpr u64 FRAME_US = 6000;
 constexpr int MAX_WINDOWS = 12;
 constexpr int MAX_DAMAGE = 24;
 
@@ -118,6 +126,7 @@ struct State {
     bool active = false;
     int W = 0, H = 0;
     Surface fb, back, wall, scratch;
+    u32* front = nullptr;       // what the framebuffer shows, cursor included
     Font font, font_big;
 
     Window windows[MAX_WINDOWS];
@@ -142,6 +151,8 @@ struct State {
     u8 drag_edges = 0;          // 1 left, 2 right, 4 top, 8 bottom
 
     bool menu_open = false;
+    bool super_down = false;    // Super is held...
+    bool super_chord = false;   // ...and another key was pressed with it
     int menu_hover = -1;
     int press_task = -1;
 
@@ -247,19 +258,15 @@ Rect menu_rect() {
 }
 Rect cursor_rect(int x, int y) { return {x, y, CURSOR_W, CURSOR_H}; }
 
-// Title-bar button centres, right to left: close, maximise, minimise.
-Point button_centre(const Window& w, int index) {
-    int cx = w.frame.right() - theme::BORDER_W - 16 - index * theme::BTN_GAP;
-    int cy = w.frame.y + theme::BORDER_W + theme::TITLE_H / 2;
-    return {cx, cy};
+// Title-bar buttons, right to left: close, maximise, minimise.
+Rect button_rect(const Window& w, int index) {
+    return {w.frame.right() - theme::BORDER_W - (index + 1) * theme::BTN_W, w.frame.y + theme::BORDER_W, theme::BTN_W,
+            theme::TITLE_H};
 }
 
 int button_at(const Window& w, int x, int y) {
-    for (int i = 0; i < 3; i++) {
-        Point c = button_centre(w, i);
-        int dx = x - c.x, dy = y - c.y;
-        if (dx * dx + dy * dy <= (theme::BTN_R + 3) * (theme::BTN_R + 3)) return i;
-    }
+    for (int i = 0; i < 3; i++)
+        if (button_rect(w, i).contains(x, y)) return i;
     return -1;
 }
 
@@ -459,7 +466,8 @@ void paint_lines_header(Surface& s, const char* heading) {
 
 int paint_kv(Surface& s, int y, const char* key, const char* value) {
     draw_text(s, g.font, 16, y, key, theme::TEXT_MUTED);
-    draw_text(s, g.font, 16 + 22 * 8, y, value, theme::TEXT);
+    int x = 16 + 22 * 8;
+    draw_text_ellipsis(s, g.font, x, y, value, s.width - x - 16, theme::TEXT);
     return y + 22;
 }
 
@@ -489,9 +497,9 @@ void paint_about(Surface& s) {
     y = paint_kv(s, y, "Machine", line);
     ksnprintf(line, sizeof line, "%dx%d, 32 bpp", g.W, g.H);
     y = paint_kv(s, y, "Display", line);
-    y = paint_kv(s, y, "Language", "Spec (compiler in progress)");
-    draw_text(s, g.font, 16, s.height - 30, "Alt+Tab switch, Alt+F4 close, Super = menu, Super+T terminal",
-              theme::TEXT_MUTED);
+    y = paint_kv(s, y, "Language", "Spec (planned; compiler not started)");
+    draw_text_ellipsis(s, g.font, 16, s.height - 30, "Alt+Tab switch, Alt+F4 close, Super menu, Super+T terminal",
+                       s.width - 32, theme::TEXT_MUTED);
 }
 
 void paint_sysmon(Surface& s) {
@@ -526,8 +534,9 @@ void paint_sysmon(Surface& s) {
               (unsigned long)(pm.largest_free_run * PAGE_SIZE / MIB));
     y = paint_kv(s, y, "Free", line);
 
-    ksnprintf(line, sizeof line, "%lu frames, last %lu us, %lu px copied", (unsigned long)g.stats.frames,
-              (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_present_pixels);
+    ksnprintf(line, sizeof line, "%lu frames, last %lu us, %lu of %lu px written", (unsigned long)g.stats.frames,
+              (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_written_pixels,
+              (unsigned long)g.stats.last_present_pixels);
     y = paint_kv(s, y, "Compositor", line);
     int open = 0;
     for (int i = 0; i < MAX_WINDOWS; i++) open += g.windows[i].used;
@@ -584,20 +593,40 @@ void paint_window_content(Window& w) {
     damage(cr);
 }
 
-void draw_button(Surface& s, Point c, Color fill, int glyph, bool hover) {
-    fill_circle_aa(s, c.x, c.y, theme::BTN_R, fill);
-    if (!hover) return;
-    Color gc = theme::BTN_GLYPH;
-    switch (glyph) {
-    case 0:     // close: x
-        draw_line(s, c.x - 3, c.y - 3, c.x + 3, c.y + 3, gc);
-        draw_line(s, c.x + 3, c.y - 3, c.x - 3, c.y + 3, gc);
+// Windows-style caption button: a flat cell the height of the title bar with
+// a thin glyph; hover lights the cell, and close turns red.
+void draw_button(Surface& s, const Window& w, int index, bool hover, bool focused) {
+    Rect r = button_rect(w, index);
+    if (hover) {
+        Color bg = index == 0 ? theme::BTN_CLOSE_HOVER : theme::BTN_HOVER;
+        if (index == 0) {
+            // The close button sits in the window's rounded top-right corner.
+            fill_rect_rounded(s, r, theme::RADIUS - theme::BORDER_W, bg);
+            fill_rect(s, {r.x, r.y, r.w - theme::RADIUS, r.h}, bg);
+            fill_rect(s, {r.right() - theme::RADIUS, r.y + theme::RADIUS, theme::RADIUS, r.h - theme::RADIUS}, bg);
+        } else {
+            fill_rect(s, r, bg);
+        }
+    }
+    Color gc = hover || focused ? theme::BTN_GLYPH : theme::BTN_GLYPH_INACTIVE;
+    if (hover && index == 0) gc = rgb(255, 255, 255);
+    int cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    switch (index) {
+    case 0:     // close: X
+        draw_line(s, cx - 5, cy - 5, cx + 5, cy + 5, gc);
+        draw_line(s, cx + 5, cy - 5, cx - 5, cy + 5, gc);
         break;
-    case 1:     // maximise: square
-        stroke_rect(s, {c.x - 3, c.y - 3, 7, 7}, gc);
+    case 1:     // maximise: a square; restore: two overlapping squares
+        if (w.maximised) {
+            stroke_rect(s, {cx - 5, cy - 3, 9, 9}, gc);
+            draw_hline(s, cx - 3, cx + 5, cy - 5, gc);
+            draw_vline(s, cx + 5, cy - 5, cy + 3, gc);
+        } else {
+            stroke_rect(s, {cx - 5, cy - 5, 11, 11}, gc);
+        }
         break;
-    case 2:     // minimise: bar
-        draw_hline(s, c.x - 3, c.x + 3, c.y, gc);
+    case 2:     // minimise: a bar
+        draw_hline(s, cx - 5, cx + 5, cy, gc);
         break;
     }
 }
@@ -630,29 +659,28 @@ void draw_window(Surface& back, Window& w) {
     Rect cr = content_rect(w);
     Surface view = content_view(w);
     blit(back, cr.x, cr.y, view);
-    // Mask the bottom corners back to the rounded shape.
+    // Blend the content's bottom corners back into what was underneath,
+    // weighted by the anti-aliased corner coverage.
     for (int dy = 0; dy < R; dy++) {
-        int inset = corner_inset(R, dy);
         int y = w.frame.bottom() - 1 - dy;
-        for (int dx = 0; dx < inset; dx++) {
+        for (int dx = 0; dx < R; dx++) {
+            u8 cov = corner_coverage(R, dx, dy);
+            if (cov == 255) continue;
             int xl = w.frame.x + dx, xr = w.frame.right() - 1 - dx;
-            if (back.clip.contains(xl, y)) back.row(y)[xl] = saved_l[dy][dx];
-            if (back.clip.contains(xr, y)) back.row(y)[xr] = saved_r[dy][dx];
+            if (back.clip.contains(xl, y)) back.row(y)[xl] = mix(saved_l[dy][dx], back.row(y)[xl], cov);
+            if (back.clip.contains(xr, y)) back.row(y)[xr] = mix(saved_r[dy][dx], back.row(y)[xr], cov);
         }
     }
-    stroke_rect_rounded(back, w.frame, R, focused ? theme::BORDER_FOCUS : theme::BORDER);
     draw_hline(back, cr.x, cr.right() - 1, cr.y - 1, rgba(255, 255, 255, 18));
 
-    // Title text and buttons.
-    int text_w = w.frame.w - 16 - 3 * theme::BTN_GAP - 24;
+    // Title text and buttons, then the outline over everything.
+    int text_w = w.frame.w - 14 - 3 * theme::BTN_W - 8;
     draw_text_ellipsis(back, g.font, w.frame.x + 14, w.frame.y + theme::BORDER_W + (theme::TITLE_H - g.font.height) / 2,
                        w.title, text_w, focused ? theme::TITLE_TEXT : theme::TEXT_MUTED);
     bool hover_bar = w.frame.contains(g.mx, g.my) && g.my < w.frame.y + theme::TITLE_H + theme::BORDER_W;
-    int hb = hover_bar ? button_at(w, g.mx, g.my) : -1;
-    Color dim = rgba(120, 124, 140, 255);
-    draw_button(back, button_centre(w, 0), focused || hover_bar ? theme::BTN_CLOSE : dim, 0, hb == 0);
-    draw_button(back, button_centre(w, 1), focused || hover_bar ? theme::BTN_MAX : dim, 1, hb == 1);
-    draw_button(back, button_centre(w, 2), focused || hover_bar ? theme::BTN_MIN : dim, 2, hb == 2);
+    int hb = hover_bar && g.drag == Drag::None ? button_at(w, g.mx, g.my) : -1;
+    for (int i = 0; i < 3; i++) draw_button(back, w, i, hb == i, focused);
+    stroke_rect_rounded(back, w.frame, R, focused ? theme::BORDER_FOCUS : theme::BORDER);
 }
 
 void draw_panel(Surface& back) {
@@ -680,7 +708,7 @@ void draw_panel(Surface& back) {
         if (tr.contains(g.mx, g.my)) bg = rgba(255, 255, 255, 40);
         fill_rect_rounded(back, tr, 8, bg);
         if (focused) fill_rect_rounded(back, {tr.x + 10, tr.bottom() - 4, tr.w - 20, 2}, 1, theme::ACCENT);
-        fill_circle_aa(back, tr.x + 14, tr.y + tr.h / 2, 4, w.kind == Kind::Terminal ? theme::ACCENT : theme::BTN_MAX);
+        fill_circle_aa(back, tr.x + 14, tr.y + tr.h / 2, 4, w.kind == Kind::Terminal ? theme::ACCENT : theme::DOT_APP);
         draw_text_ellipsis(back, g.font, tr.x + 26, tr.y + (tr.h - g.font.height) / 2, w.title, tr.w - 34,
                            w.minimised ? theme::TEXT_MUTED : theme::TEXT);
         g.task_rects[g.task_count] = tr;
@@ -719,18 +747,41 @@ void draw_menu(Surface& back) {
     }
 }
 
-// Framebuffer rows are copied with plain 32-bit stores, never `rep movsb`:
+// Framebuffer pixels are written with plain 32-bit stores, never `rep movsb`:
 // VirtualBox's Hyper-V backend emulates string instructions that touch video
-// memory one byte per exit and effectively never finishes a frame.
-inline void copy_to_fb(int x, int y, int w) {
-    const u32* src = g.back.row(y) + x;
-    u32* dst = g.fb.row(y) + x;
-    for (int i = 0; i < w; i++) dst[i] = src[i];
+// memory one byte per exit and effectively never finishes a frame. Only
+// pixels that differ from what the screen already shows are written.
+inline void present_px(int x, int y, u32 v) {
+    u32* f = g.front + (isize)y * g.W + x;
+    if (*f == v) return;
+    *f = v;
+    g.fb.row(y)[x] = v;
+    g.stats.last_written_pixels++;
 }
 
+inline void copy_to_fb(int x, int y, int w) {
+    const u32* src = g.back.row(y) + x;
+    u32* f = g.front + (isize)y * g.W + x;
+    u32* dst = g.fb.row(y) + x;
+    for (int i = 0; i < w; i++) {
+        if (f[i] == src[i]) continue;
+        f[i] = src[i];
+        dst[i] = src[i];
+        g.stats.last_written_pixels++;
+    }
+}
+
+// The cursor blended over the back buffer, written to the screen.
 void draw_cursor_on_fb() {
-    Rect cr = cursor_rect(g.mx, g.my);
-    blit_alpha(g.fb, cr.x, cr.y, g_cursor);
+    Rect cr = cursor_rect(g.mx, g.my).intersect({0, 0, g.W, g.H});
+    for (int y = cr.y; y < cr.bottom(); y++) {
+        for (int x = cr.x; x < cr.right(); x++) {
+            u32 c = g_cursor_px[(y - g.my) * CURSOR_W + (x - g.mx)];
+            u32 under = g.back.row(y)[x];
+            u8 a = alpha_of(c);
+            present_px(x, y, a == 0 ? under : a == 255 ? c : mix(under, c | 0xFF000000u, a));
+        }
+    }
     g.cursor_drawn = true;
     g.cursor_drawn_rect = cr;
 }
@@ -766,6 +817,7 @@ void compose(const Rect& r) {
 void flush_frame() {
     u64 t0 = refclock_now_us();
     g.stats.last_present_pixels = 0;
+    g.stats.last_written_pixels = 0;
     if (g.damage_all) {
         compose({0, 0, g.W, g.H});
     } else {
@@ -775,6 +827,10 @@ void flush_frame() {
     g.damage_count = 0;
     g.stats.frames++;
     g.stats.last_frame_us = refclock_now_us() - t0;
+    if (g.stats.last_frame_us > g.stats.worst_frame_us) {
+        g.stats.worst_frame_us = g.stats.last_frame_us;
+        g.stats.worst_written_pixels = g.stats.last_written_pixels;
+    }
     g.last_frame_us = refclock_now_us();
 }
 
@@ -1012,6 +1068,14 @@ void term_input_push(char c) {
     __atomic_store_n(&g.term_in_head, next, __ATOMIC_RELEASE);
 }
 
+void terminal_scroll(int lines, bool to_bottom = false) {
+    console_lock();
+    if (to_bottom) g.term.scroll_to_bottom();
+    else g.term.scroll(lines);
+    console_unlock();
+    g.term_dirty = true;
+}
+
 void cycle_focus() {
     if (g.order_count < 2) return;
     // Raise the bottom-most visible window (classic Alt+Tab rotation).
@@ -1027,14 +1091,29 @@ void cycle_focus() {
 void process_keyboard() {
     KeyEvent e;
     while (ps2kbd_poll_event(&e)) {
+        // Super opens the menu when released on its own, as on Windows; used
+        // with another key (Super+T, Super+M) it is only a modifier.
+        if (e.key == key::SUPER) {
+            if (e.pressed && !g.super_down) {
+                g.super_down = true;
+                g.super_chord = false;
+            } else if (!e.pressed) {
+                if (g.super_down && !g.super_chord) {
+                    if (g.menu_open) close_menu();
+                    else open_menu();
+                }
+                g.super_down = false;
+            }
+            continue;
+        }
         if (!e.pressed) continue;
-        bool alt = e.mods & mod::ALT, super_ = e.mods & mod::SUPER;
+        if (g.super_down) g.super_chord = true;
+        bool alt = e.mods & mod::ALT, super_ = e.mods & mod::SUPER, shift = e.mods & mod::SHIFT;
         if (alt && e.key == key::F1 + 3) {                 // Alt+F4
             if (g.focus >= 0) destroy_window(g.focus);
             continue;
         }
         if (alt && e.key == key::TAB) { cycle_focus(); continue; }
-        if (e.key == key::SUPER) { if (g.menu_open) close_menu(); else open_menu(); continue; }
         if (super_ && e.ascii == 't') { close_menu(); open_kind(Kind::Terminal); continue; }
         if (super_ && e.ascii == 'm') { if (g.focus >= 0) toggle_maximise(g.windows[g.focus]); continue; }
         if (e.key == key::ESCAPE && g.menu_open) { close_menu(); continue; }
@@ -1042,8 +1121,19 @@ void process_keyboard() {
             if (e.key == key::DOWN) { g.menu_hover = (g.menu_hover + 1) % MENU_COUNT; damage(menu_rect()); continue; }
             if (e.key == key::UP) { g.menu_hover = (g.menu_hover + MENU_COUNT - 1) % MENU_COUNT; damage(menu_rect()); continue; }
             if (e.key == key::ENTER && g.menu_hover >= 0) { Kind k = MENU_ITEMS[g.menu_hover].kind; close_menu(); open_kind(k); continue; }
+            continue;       // the open menu takes every other key
         }
-        if (g.focus >= 0 && g.focus == g.term_win && e.ascii) term_input_push(e.ascii);
+        if (g.focus < 0 || g.focus != g.term_win) continue;
+        // Shift+Page Up/Down scroll the terminal's history by a screen.
+        if (shift && (e.key == key::PAGE_UP || e.key == key::PAGE_DOWN)) {
+            int page = g.term.rows() > 2 ? g.term.rows() - 2 : 1;
+            terminal_scroll(e.key == key::PAGE_UP ? page : -page);
+            continue;
+        }
+        if (e.ascii) {
+            if (g.term.scrolled_back()) terminal_scroll(0, true);      // typing returns to the bottom
+            term_input_push(e.ascii);
+        }
     }
 }
 
@@ -1053,6 +1143,10 @@ void process_mouse() {
         if (e.dx || e.dy) {
             move_cursor(g.mx + e.dx, g.my + e.dy);
             on_motion();
+        }
+        if (e.dz) {
+            Hit h = hit_test(g.mx, g.my);
+            if (h.what == Hit::Content && h.win >= 0 && h.win == g.term_win) terminal_scroll(e.dz * 3);
         }
         u8 changed = e.buttons ^ g.buttons;
         g.buttons = e.buttons;
@@ -1107,6 +1201,12 @@ bool gui_init() {
     g.W = (int)fb.width;
     g.H = (int)fb.height;
     g.fb = Surface((u32*)fb.address, g.W, g.H, (int)(fb.pitch / 4));
+    {
+        int level = 0;
+        u64 leaf = vmm_kernel_leaf((vaddr_t)fb.address, &level);
+        kprintf("gui: framebuffer pte %#lx (level %d), PAT %#lx\n", (unsigned long)leaf, level,
+                (unsigned long)rdmsr(msr::PAT));
+    }
     g.font = font_from_psf2(_binary_font_8x16_start);
     g.font_big = font_from_psf2(_binary_font_16x32_start);
     if (!g.font.valid() || !g.font_big.valid()) {
@@ -1118,17 +1218,21 @@ bool gui_init() {
     u32* wall = alloc_pixels((usize)g.W * g.H);
     usize scratch_px = (usize)(g.W + 2 * theme::SHADOW_PAD) * (g.H + 2 * theme::SHADOW_PAD);
     u32* scratch = alloc_pixels(scratch_px);
-    constexpr int TERM_COLS = 200, TERM_ROWS = 40;
-    u8* cells = (u8*)kmalloc((usize)TERM_COLS * TERM_ROWS);
-    if (!back || !wall || !scratch || !cells) {
+    u32* front = alloc_pixels((usize)g.W * g.H);
+    constexpr int TERM_COLS = 200, TERM_HISTORY = 1000;
+    u8* cells = (u8*)kmalloc((usize)TERM_COLS * TERM_HISTORY);
+    if (!back || !wall || !scratch || !front || !cells) {
         kprintf("gui: out of memory for screen buffers\n");
         return false;
     }
     g.back = Surface(back, g.W, g.H, g.W);
     g.wall = Surface(wall, g.W, g.H, g.W);
     g.scratch = Surface(scratch, g.W + 2 * theme::SHADOW_PAD, g.H + 2 * theme::SHADOW_PAD, g.W + 2 * theme::SHADOW_PAD);
+    // Zero is never an opaque pixel, so the first frame writes every pixel.
+    memset(front, 0, (usize)g.W * g.H * 4);
+    g.front = front;
     g.term_cells = cells;
-    g.term.init(g.term_cells, TERM_COLS, TERM_ROWS, g.font);
+    g.term.init(g.term_cells, TERM_COLS, TERM_HISTORY, g.font);
 
     build_wallpaper();
     build_cursor();
@@ -1142,7 +1246,7 @@ bool gui_init() {
     damage_all();
     flush_frame();
     kprintf("gui: desktop up at %dx%d, %d windows, first frame %lu us (%lu px to the framebuffer)\n", g.W, g.H,
-            g.order_count, (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_present_pixels);
+            g.order_count, (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_written_pixels);
     return true;
 }
 
@@ -1216,6 +1320,13 @@ GuiStats gui_stats() {
     s.windows = 0;
     for (int i = 0; i < MAX_WINDOWS; i++) s.windows += g.windows[i].used;
     return s;
+}
+
+// Called from the shell's thread; a frame racing with it only makes the
+// next reading one frame late.
+void gui_reset_worst() {
+    g.stats.worst_frame_us = 0;
+    g.stats.worst_written_pixels = 0;
 }
 
 void gui_emergency_text_mode() {

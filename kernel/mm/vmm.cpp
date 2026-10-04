@@ -897,6 +897,12 @@ void AddressSpace::activate() {
 
 AddressSpace& vmm_kernel() { return g_kernel_space; }
 
+u64 vmm_kernel_leaf(vaddr_t v, int* level) {
+    Slot s = lookup(g_kernel_space.root(), v);
+    if (level) *level = s.level;
+    return *s.entry;
+}
+
 AddressSpace& vmm_current() {
     u64 irq = interrupts_save();
     AddressSpace* as = current_space();

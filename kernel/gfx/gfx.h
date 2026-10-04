@@ -74,9 +74,13 @@ Font font_from_psf2(const u8* blob);
 // Horizontal inset of a rounded corner of the given radius at row dy
 // (0 = the outermost row). Lets callers mask rectangles to rounded shapes.
 int corner_inset(int radius, int dy);
+// Anti-aliased coverage (0..255) of pixel (dx, dy) in the top-left corner box
+// of a rounded rectangle; 255 outside the box. Mirror dx/dy for the others.
+u8 corner_coverage(int radius, int dx, int dy);
 
 // ---- primitives (all clipped to surface.clip) ----
 void fill_rect(Surface& s, const Rect& r, Color c);
+// Rounded shapes are anti-aliased (8x8 supersampled corners).
 void fill_rect_rounded(Surface& s, const Rect& r, int radius, Color c);
 void stroke_rect(Surface& s, const Rect& r, Color c);
 void stroke_rect_rounded(Surface& s, const Rect& r, int radius, Color c);

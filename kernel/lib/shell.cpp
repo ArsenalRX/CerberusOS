@@ -79,8 +79,12 @@ int cmd_gui(int, char**) {
         return 1;
     }
     GuiStats s = gui_stats();
-    kprintf("gui: %lu frames, last frame %lu us, last present %lu px, %u windows\n", (unsigned long)s.frames,
-            (unsigned long)s.last_frame_us, (unsigned long)s.last_present_pixels, s.windows);
+    kprintf("gui: %lu frames, last frame %lu us, last present %lu px (%lu written), %u windows\n",
+            (unsigned long)s.frames, (unsigned long)s.last_frame_us, (unsigned long)s.last_present_pixels,
+            (unsigned long)s.last_written_pixels, s.windows);
+    kprintf("gui: slowest frame since the last 'gui': %lu us, %lu px written\n", (unsigned long)s.worst_frame_us,
+            (unsigned long)s.worst_written_pixels);
+    gui_reset_worst();
     return 0;
 }
 

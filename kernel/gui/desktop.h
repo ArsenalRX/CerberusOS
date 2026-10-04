@@ -32,7 +32,11 @@ void gui_emergency_text_mode();
 struct GuiStats {
     u64 frames;
     u64 last_frame_us;
-    u64 last_present_pixels;
+    u64 last_present_pixels;    // pixels of the frame's damaged area
+    u64 last_written_pixels;    // of those, pixels that changed and were written to the screen
+    u64 worst_frame_us;         // slowest frame since the last gui_reset_worst()
+    u64 worst_written_pixels;   // pixels written in that frame
     u32 windows;
 };
 GuiStats gui_stats();
+void gui_reset_worst();

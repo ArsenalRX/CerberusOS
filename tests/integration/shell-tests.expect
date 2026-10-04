@@ -27,11 +27,13 @@ lumen kernel shell
 == sched: PASS ==
 == test smp ==
 == smp: PASS ==
+== test terminal ==
+== terminal: PASS ==
 == test timer ==
 == timer: PASS ==
 == test idle ==
 == idle: PASS ==
-tests: 8 run, 0 failed
+tests: 9 run, 0 failed
 !send ticks
 !wait 1
 ticks=

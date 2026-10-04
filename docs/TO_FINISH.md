@@ -27,28 +27,19 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead (phase 9 or desktop polish)
+## Right now: phase 9 (filesystem)
 
-Version **0.0.5a** (phase 8, SMP) was released on 2026-10-04 (tag
-`v0.0.5a`; first release under the letter scheme, docs/SPEC.md §23.1). All
-24 integration tests pass in QEMU/KVM, and the build was walked through on
-VirtualBox with 4 CPUs. The tree is on `0.0.5b` development builds. The
-owner approves each phase's contents before work starts, so **do not start
-phase 9 until the owner says so**.
+Versions **0.0.5a** (phase 8, SMP) and **0.0.5b** (desktop polish: Windows-
+style buttons, anti-aliased corners, terminal scrollback, writing only
+changed pixels) were released on 2026-10-04. The tree is on `0.0.5c`
+development builds. On 2026-10-04 the owner said to keep going for the
+session ("just continue and do everything"), so phase 9 starts next.
 
-Owner requests of 2026-10-04, waiting for go-ahead:
-
-- **Desktop polish:** minimise/maximise/close buttons in the Windows style
-  (simple glyphs, close turns red on hover) instead of the coloured
-  macOS-style dots; rounder, smoother (anti-aliased) window corners;
-  smoother window dragging. On VirtualBox a full-screen composite takes
-  23 ms (about 130 MB/s into video memory): check whether the framebuffer
-  is mapped write-combining there (PAT) before anything else.
-- Fix: Super used in a shortcut also toggles the launcher menu; keys typed
-  with the menu open reach the terminal.
-- Overview for the owner: docs/ROADMAP.md.
+- Overview for the owner: docs/ROADMAP.md; explaining Lumen: docs/ABOUT.md.
 - **Installer and dual boot:** researched in docs/INSTALLER.md (feeds
   phase 18; NVMe would need adding to phase 10 for real PCs).
+- **Own web browser:** phase 15B (owner, 2026-10-04).
+- Desktop left-overs: open/close animations, one-shot-timer frame pacing.
 
 Open items carried over:
 
@@ -118,6 +109,10 @@ Open items carried over:
   reference clock (and a PIT race fixed); `test smp`,
   `test exceptions lo`. Deviations recorded in docs/DECISIONS.md. New
   version scheme (owner).
+- **Release 0.0.5b (2026-10-04): desktop polish.** Windows-style caption
+  buttons, anti-aliased rounded shapes, terminal scrollback (wheel,
+  Shift+PgUp/PgDn, scrollbar), only changed pixels written, input-paced
+  frames, Super-key and menu fixes, `test terminal`.
 
 ---
 
@@ -172,6 +167,10 @@ output.
   setuid), login and lock screens, `restrict` sandbox, permission prompts,
   keyring, TLS client with certificate store, audit log. *Owner decision
   needed first: TLS/crypto source.*
+- [ ] **Phase 15B — Our own web browser** (owner, 2026-10-04). HTTP/HTTPS,
+  HTML (WHATWG parsing, common cases), a CSS subset, block/inline layout,
+  images, tabbed UI; no JavaScript yet. Sandboxed, every parser fuzzed.
+  See docs/SPEC.md phase 15B.
 - [ ] **Phase 16 — Spec native backend** (was phase 14). x86-64 codegen, ELF
   emitter, stdlib, Lumen syscall bindings; rewrite ≥3 apps in Spec.
   (Spec = the spec's "Glint".)
@@ -234,10 +233,8 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
 
 - [ ] Backtraces can't name a function that faults in its own prologue
   (inherent to RBP walking).
-- [ ] About window's CPU line clips on long brand strings — add ellipsis to
-  the value column.
-- [ ] Terminal has no selection, scrollback, or escape sequences (Ember, the
-  real terminal, is phase 13).
+- [ ] Terminal has no selection or escape sequences (Ember, the real
+  terminal, is phase 13); scrollback done in 0.0.5b.
 - [ ] `make` on the Windows-mounted tree occasionally warns "Clock skew
   detected" (drvfs timestamps). Harmless.
 - [ ] Remove the phase-2/3 diagnostics (`timermode`, `gui`, `irqs`

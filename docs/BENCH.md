@@ -177,3 +177,27 @@ measured 6.9 MHz and is not used). No SMEP/SMAP/UMIP offered.
 | System-call round trip | 37 ns | 300 ns | within |
 | Idle desktop CPU use | 0 % of ticks | under 1 % | within |
 | Full-screen composite (maximised window, from the System Monitor) | 22,959 µs | 8,000 µs | **over**: about 130 MB/s into video memory, the likely cause of laggy dragging there |
+
+## 0.0.5b — 2026-10-04 (desktop polish)
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs, 512 MiB — `make bench`, one run
+
+Context switch 23 ns, wake-up 10 µs average / 72 µs worst, `kmalloc`+`kfree`
+83 ns, minor page fault 2,309 ns (**over**, unchanged), system call 31 ns,
+idle desktop 0 %, last composite 203 µs. No change from 0.0.5a outside run
+to run variation.
+
+### Desktop presentation (new measurements)
+
+| Case | Pixels in the damaged area | Pixels written | Frame time |
+|---|---|---|---|
+| QEMU/KVM, dragging the terminal 4 px per step (worst frame) | about 424,000 | 82,162 | 2,979 µs |
+| QEMU/KVM, first full frame at 1280×800 | 1,024,000 | 1,024,114 | 19,406 µs |
+| VirtualBox, 4 CPUs, first full frame at 1024×768 | 786,432 | 786,546 | 30,246 µs |
+| VirtualBox, maximising the terminal | — | 441,388 | 35,522 µs |
+| VirtualBox, restoring it | — | 445,210 | 12,887 µs |
+
+Writing only changed pixels cuts screen writes during a drag about
+fivefold. VirtualBox writes roughly 25–35 million pixels per second to the
+screen on this host (its Hyper-V backend), so a full-screen change still
+costs 13–35 ms there.

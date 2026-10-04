@@ -6,6 +6,7 @@
 
 namespace msr {
 constexpr u32 APIC_BASE = 0x1B;
+constexpr u32 PAT = 0x277;      // page attribute table: the cache type behind each PTE PAT/PCD/PWT combination
 constexpr u32 EFER = 0xC0000080;
 constexpr u32 STAR = 0xC0000081;
 constexpr u32 LSTAR = 0xC0000082;

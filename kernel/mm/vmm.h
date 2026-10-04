@@ -166,6 +166,9 @@ void vmm_init();
 void vmm_init_cpu();
 
 AddressSpace& vmm_kernel();
+// The raw page-table entry that maps v in the kernel half and its level (1 =
+// 4 KiB, 2 = 2 MiB, 3 = 1 GiB), for diagnostics.
+u64 vmm_kernel_leaf(vaddr_t v, int* level);
 // The address space loaded on the calling CPU, which is the calling
 // thread's own.
 AddressSpace& vmm_current();

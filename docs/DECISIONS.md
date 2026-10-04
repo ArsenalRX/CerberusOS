@@ -353,7 +353,8 @@ syscall layer yet, so it can be designed in from the start.
    incomplete for a long time. Needed before phase 14.
 4. **Confirm the v2 phase order and non-goals**, in particular: no own web
    browser (porting one later is possible), and offensive network tools
-   remain declined (see docs/TO_FINISH.md).
+   remain declined (see docs/TO_FINISH.md). *(Browser: answered 2026-10-04,
+   the owner wants our own; see below.)*
 
 **Evidence limits:** the research verified claims about libc porting, TLS
 library porting, kernel hardening and compositor IPC. It found no verified
@@ -950,3 +951,16 @@ microseconds, so they test the scheduler and not the clock; reader overlap
 in the reader-writer test is checked in a phase without a writer; latency
 checks in self-tests are sanity bounds (20 ms), the budgets are judged from
 `make bench` under QEMU/KVM.
+
+## 2026-10-04 — Our own web browser (owner)
+
+The owner asked for "cool features ie internet our own web browser". This
+reverses the spec v2 non-goal "writing our own web browser". It becomes
+**phase 15B** (docs/SPEC.md), after networking (14) and TLS and the
+sandbox (15), which it needs; numbering it 15B avoids renumbering phases
+16–19 everywhere. Scope for 15B: HTTP/HTTPS, an HTML parser following the
+WHATWG algorithm for common cases, a documented CSS subset, block and
+inline layout, images, a tabbed UI; no JavaScript (a script engine, written
+or a QuickJS port, is a later decision). Sandboxed, every parser fuzzed.
+The owner also said to get the current base running smoothly first, so the
+desktop polish (0.0.5b) and phases 9–15 come before it.

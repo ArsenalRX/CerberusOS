@@ -784,6 +784,52 @@ certificate is refused.
 
 ---
 
+## Phase 15B — Our own web browser (owner, 2026-10-04)
+
+Added by the owner ("cool features ie internet our own web browser"). Built
+on phase 13 (toolkit), 14 (sockets, DNS) and 15 (TLS, sandbox); the name is
+the owner's to choose. Written in-tree, from scratch.
+
+**Deliverables:**
+- **Networking:** HTTP/1.1 client with keep-alive, redirects (limited),
+  chunked transfer and gzip (zlib inflate, written or ported under §0
+  rule 14); HTTPS through the phase-15 TLS client; a bounded memory and
+  disk cache honouring `Cache-Control`; cookies scoped by site, kept per
+  user, cleared on request.
+- **HTML:** a tokenizer and tree builder following the WHATWG HTML
+  parsing algorithm for the common cases (implicit tags, entities,
+  malformed markup recovered, never crashed on); a DOM.
+- **CSS:** parser for a documented subset (selectors: type, class, id,
+  descendant, child, attribute, `:hover`; properties: box model, colours,
+  backgrounds, borders, fonts, text alignment, `display`
+  block/inline/inline-block/none/flex basics, `position` static/relative/
+  absolute); cascade and inheritance; a user-agent stylesheet.
+- **Layout and painting:** block and inline formatting contexts, line
+  breaking, tables (basic), images (PNG, JPEG, GIF first frame); painting
+  through libgfx with damage tracking; smooth scrolling.
+- **Browser UI** (Facet): address bar, back/forward/reload, tabs,
+  bookmarks, history (local only, clearable), downloads through the
+  trusted file dialog, find in page, zoom.
+- **No JavaScript in 15B.** A script engine (write one, or port QuickJS
+  under §0 rule 14) is a later owner decision; pages render without it.
+
+**Security and privacy:**
+- Runs under `restrict`: network and its own profile folder only; files
+  reach it only through the trusted dialogs; each tab's renderer is a
+  separate sandboxed process from the start of multi-tab work.
+- Every parser (HTTP, HTML, CSS, images, gzip, URLs) is bounds-checked and
+  fuzzed (`make fuzz`); a hostile page can crash a tab, never the browser
+  or the system.
+- HTTPS by default with certificate checking; plain HTTP is labelled "not
+  secure"; no telemetry; third-party cookies off by default.
+
+**Accept:** loads and renders `http://example.com/` and
+`https://example.com/` readably; a local test suite of HTML/CSS pages
+matches reference screenshots within a tolerance; 60 s of fuzzing per
+parser with no crash; a page cannot read files or other tabs' data.
+
+---
+
 ## Phase 16 — Glint native backend and retarget
 
 See §13. Deliverables: x86-64 code generation, ELF output, the Glint standard
@@ -1586,7 +1632,8 @@ Do not build these, and do not spend time discussing them:
 - Full POSIX compliance or certification. v2 does require a documented
   POSIX *subset* large enough to port real C software (phase 17).
 - Binary compatibility with Linux or anything else.
-- Writing our own web browser. Porting one is a possibility after phase 18.
+- (Removed 2026-10-04: the owner now wants our own web browser; see
+  phase 15B.)
 - Backwards compatibility with anything.
 - Inventing cryptography. Only published, standard algorithms, verified
   against official test vectors (§19.9).
