@@ -1,0 +1,12 @@
+# Phase 7: hostile arguments to every system call are refused with the right
+# error, unknown call numbers return ENOSYS, and the kernel keeps running.
+lumen kernel shell
+!send run /bin/badptr
+!wait 4
+badptr:
+0 wrong
+badptr: PASS: every bad argument was refused and the kernel is still running
+run: /bin/badptr exited with status 0
+!send run /bin/hello
+!wait 2
+run: /bin/hello exited with status 42

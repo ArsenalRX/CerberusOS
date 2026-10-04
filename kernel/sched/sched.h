@@ -60,8 +60,13 @@ struct Credentials {
     u32 gid;
 };
 
-// A process: an address space and the threads that run in it. The file
-// descriptor table and working directory are added with the VFS (phase 9).
+struct File;
+constexpr usize PROCESS_MAX_FDS = 32;
+
+// A process: an address space, the threads that run in it, its open files
+// and its place in the parent/child tree. The working directory is added
+// with the VFS (phase 9). Lifetime and the user-mode side are in
+// proc/process.h.
 struct Process {
     u32 pid;
     char name[32];
@@ -70,8 +75,15 @@ struct Process {
     u32 thread_count;
     Process* parent;
     Process* next;              // all processes
-    int exit_status;
+    Process* children;          // linked through sibling
+    Process* sibling;
+    bool zombie;                // exited; waiting for the parent to collect exit_status
+    bool auto_reap;             // nobody will wait: free it as soon as it exits
+    int exit_status;            // wait status: (code << 8) for exit, signal number if killed
     Credentials cred;
+    File* files[PROCESS_MAX_FDS];
+    WaitQueue child_wait;       // woken when a child of this process exits
+    vaddr_t mmap_hint;          // randomised base for the process's mmap region
 };
 
 struct Thread {
@@ -102,6 +114,7 @@ struct Thread {
     u64 preemptions;            // times switched out involuntarily
     void (*entry)(void*);
     void* arg;
+    u8* fpu;                    // FXSAVE area; null for threads that never run user code
 };
 
 struct SchedStats {
@@ -122,9 +135,11 @@ Thread* thread_current();
 Process* process_kernel();
 
 // Creates a thread in `process` (the kernel process if null) and makes it
-// runnable. Errors: NoMemory, Invalid (bad priority).
+// runnable. With `detached` the thread is freed by the reaper when it ends
+// and the returned pointer must not be used afterwards: the thread may
+// already have run and exited. Errors: NoMemory, Invalid (bad priority).
 Result<Thread*> kthread_create(void (*fn)(void*), void* arg, const char* name, u8 priority = prio::NORMAL,
-                               Process* process = nullptr);
+                               Process* process = nullptr, bool detached = false);
 // Ends the calling thread. Its stack is freed by thread_join, or by the
 // reaper if it was detached.
 [[noreturn]] void thread_exit(int code);
@@ -141,8 +156,26 @@ void thread_sleep_ms(u64 ms);
 // Sleeps until the `ticks`-th next timer tick (ticks >= 1).
 void thread_sleep_ticks(u64 ticks);
 
-// A new process with its own empty user address space. Error: NoMemory.
-Result<Process*> process_create(const char* name);
+// Gives the calling thread an FPU/SSE save area, which it needs before it
+// first runs user code. `initial` is a 512-byte FXSAVE image to start from
+// (fork copies the parent's), or null for the clean power-on state.
+// Error: NoMemory.
+Result<void> thread_enable_fpu(const u8* initial);
+// Writes the calling thread's live FPU/SSE registers into `out` (512 bytes).
+// The thread must have an FPU area.
+void thread_snapshot_fpu(u8* out);
+// Moves a thread to another process's thread list (used when a process
+// exits before its last thread has been freed).
+void thread_set_process(Thread* t, Process* p);
+
+// Puts the calling thread's FPU/SSE registers back to the clean power-on
+// state (a program that replaces itself with execve starts clean).
+void thread_reset_fpu();
+
+// A new process. With `space` null it gets its own empty user address
+// space; otherwise it takes ownership of the one given (fork passes a
+// copy-on-write clone). Error: NoMemory.
+Result<Process*> process_create(const char* name, AddressSpace* space = nullptr);
 // Frees a process and its address space. It must have no threads left.
 void process_destroy(Process* p);
 

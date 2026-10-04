@@ -7,6 +7,7 @@
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
 #include <mm/kheap.h>
+#include <proc/process.h>
 #include <sched/sched.h>
 #include <kernel/kbench.h>
 #include <kernel/ktest.h>
@@ -35,6 +36,7 @@ int cmd_irqs(int argc, char** argv);
 int cmd_heapstat(int, char**);
 int cmd_ps(int, char**);
 int cmd_bench(int, char**);
+int cmd_run(int argc, char** argv);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -47,6 +49,7 @@ const ShellCommandEntry COMMANDS[] = {
     {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
     {"ps", "list threads: state, priority level, CPU time, switches", cmd_ps},
     {"bench", "run the micro-benchmarks behind `make bench`", cmd_bench},
+    {"run", "run <path> [args]: start a user program and wait for it", cmd_run},
     {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
@@ -89,6 +92,30 @@ int cmd_idle(int argc, char** argv) {
 }
 
 int cmd_bench(int, char**) { return kbench_run(); }
+
+// run <path> [args...]: starts a user program from the boot archive, waits
+// for it, and reports how it ended.
+int cmd_run(int argc, char** argv) {
+    if (argc < 2) {
+        kprintf("usage: run <path> [arguments]\n");
+        return 1;
+    }
+    const char* args[ARGV_MAX + 1];
+    for (int i = 1; i < argc; i++) args[i - 1] = argv[i];
+    args[argc - 1] = nullptr;
+    Result<Process*> p = process_spawn(argv[1], args, false);
+    if (!p.ok()) {
+        kprintf("run: cannot start %s: %s\n", argv[1], error_name(p.error()));
+        return 1;
+    }
+    int status = process_wait(p.value());
+    if (status & 0x7F) {
+        kprintf("run: %s was killed (signal %d)\n", argv[1], status & 0x7F);
+        return 128 + (status & 0x7F);
+    }
+    kprintf("run: %s exited with status %d\n", argv[1], (status >> 8) & 0xFF);
+    return (status >> 8) & 0xFF;
+}
 
 int cmd_ps(int, char**) {
     sched_print_threads();

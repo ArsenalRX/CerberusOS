@@ -1,0 +1,11 @@
+# Driven by `make fuzz`: the long run of the random system-call fuzzer
+# (userland/bin/sysfuzz.cpp), then proof that the kernel still works.
+lumen kernel shell
+!send run /bin/sysfuzz 600 2000
+!wait 100
+sysfuzz: 600 children, 2000 calls each, seed
+sysfuzz: PASS: 600 children
+run: /bin/sysfuzz exited with status 0
+!send run /bin/hello
+!wait 2
+run: /bin/hello exited with status 42

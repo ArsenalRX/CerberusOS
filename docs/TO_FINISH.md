@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.6.0).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-03 (after release 0.7.0).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,20 +27,22 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 7
+## Right now: waiting for the owner's go-ahead on phase 8
 
-Version **0.6.0** (phase 6, threads and scheduling) was released on
-2026-10-03 (tag `v0.6.0`); all 16 integration tests pass in QEMU/KVM, and the
-build was checked on VirtualBox with 4 CPUs. The tree is on `0.6.1`
-development builds. The owner approves each phase's contents before work
-starts, so **do not start phase 7 until the owner says so**.
-
-Needed from the owner before phase 7: **the libc decision** (grow the
-in-tree libc, or port mlibc). Phase 7 writes the first libc code.
+Version **0.7.0** (phase 7, userland and system calls) was released on
+2026-10-03 (tag `v0.7.0`); all 22 integration tests pass in QEMU/KVM,
+`make fuzz` ran its 60 s per harness with no crash, and the build was
+checked on VirtualBox with 4 CPUs. The tree is on `0.7.1` development
+builds. The owner approves each phase's contents before work starts, so
+**do not start phase 8 until the owner says so**.
 
 Open items carried over:
 
-- **Minor page fault is over budget** (4.1 µs against 2 µs, docs/BENCH.md).
+- Phase 7 left-overs (docs/DECISIONS.md, phase 7): `/dev/random` (needs
+  devfs, phase 9); speculation hardening of the user-copy bounds check and
+  a retpoline decision (phase 8 audit); per-CPU stack guard if still wanted
+  (phase 8).
+- **Minor page fault is over budget** (2.2–3.3 µs against 2 µs, docs/BENCH.md).
   Profile it before changing anything.
 - Frame pacing is tied to the 10 ms tick (docs/DECISIONS.md, phase 6); a
   one-shot timer belongs with phase 8.
@@ -88,6 +90,14 @@ Open items carried over:
   stack; atomic `kprintf`; `ps`, `bench`, `make bench`, `docs/BENCH.md`;
   `test sched`; the test probe waits for output instead of fixed times.
   `Process` gets its file table and working directory in phase 9.
+- **Phase 7 — Userland and syscalls. Release 0.7.0 (2026-10-03).** Ring 3,
+  `syscall`/`sysret`, dispatch generated from `table.def`
+  (docs/SYSCALLS.md), validated user copies, hardened ELF64 loader (PIE
+  only), 14 system calls, `fork`/`execve`/`waitpid`, in-tree libc, `init`,
+  boot archive; SMEP/SMAP/UMIP, user ASLR, stack protector everywhere,
+  ChaCha20 CSPRNG + `getrandom`, `make fuzz` (ELF, tar, random system
+  calls); `run` shell command; system-call benchmark. Deviations recorded
+  in docs/DECISIONS.md.
 
 ---
 
@@ -101,16 +111,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 7 — Userland and syscalls.** Ring 3, `syscall`/`sysret`,
-  dispatch table from `table.def`, argument validation, ELF64 loader, minimal
-  libc, `init`. Acceptance: userland `hello`, `fork`+`execve`+`waitpid`,
-  `-EFAULT` on a bad pointer.
-  **+v2:** SMEP/SMAP/UMIP; single usercopy path; overflow-checked lengths;
-  no kernel pointers or uninitialised bytes to userland; userland ASLR and
-  PIE; stack protector (userland now, kernel once the canary is seeded);
-  ChaCha20 CSPRNG + `getrandom`; hardened, fuzzed ELF loader; `make fuzz`
-  starts here. *Owner decision on libc (in-tree vs mlibc) is best made
-  before this phase.*
 - [ ] **Phase 8 — SMP.** Start APs, per-CPU data, per-CPU run queues, work
   stealing, TLB shootdown. Audit every lock. `test smp`. The APs already
   are halted in `ap_park` (kernel text) since 0.5.1: restart them with
@@ -179,7 +179,8 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
 
 - [ ] TLS/cryptography source: port Mbed TLS (recommended), port BearSSL, or
   write in-tree. Before phase 15.
-- [ ] libc: in-tree or port mlibc. Before phase 17, ideally before phase 7.
+- [ ] libc: in-tree or port mlibc. Before phase 17 (phase 7 wrote the minimal
+  in-tree one).
 - [ ] TCP/IP: in-tree or port lwIP. Before phase 14.
 - [ ] Confirm the v2 phase order and non-goals.
 
@@ -233,10 +234,10 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
 
 - Build and test run in WSL2 Ubuntu-24.04:
   `wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make ...'`.
-- `make` builds, `make iso` builds the ISO, `make test` runs the 8 integration
-  tests headless in QEMU (KVM), `make dist` snapshots to `dist/`.
+- `make` builds, `make iso` builds the ISO, `make test` runs the integration
+  tests headless in QEMU (KVM), `make fuzz` runs the fuzz harnesses, `make dist` snapshots to `dist/`.
 - Run for real: double-click `run-lumen.cmd` (QEMU window via WSLg), or boot
-  `dist/lumen-0.0.1.iso` in VirtualBox VM "Lumen 0.0.1".
+  `dist/lumen.iso` in a VirtualBox VM.
 - Long builds: run detached (`setsid nohup … &`) and poll a log; the Bash tool
   caps at 10 minutes.
 - Write source files with the editor, not shell heredocs (quotes break the

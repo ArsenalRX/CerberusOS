@@ -709,3 +709,99 @@ Rejected: keeping a VM that the build owns (the owner removed it); printing
 instructions only (the same mistake had already happened twice); shipping a
 32-bit stub that explains the problem on screen (Limine prints its own
 message first, and it is a lot of code for a VM setting).
+
+## 2026-10-03 — The release ISO has one fixed name: dist/lumen.iso
+
+Owner direction, repeated: "when building the dist overwrite the old one so
+there is only one release I can choose from". `make dist` now writes
+`dist/lumen.iso` every time (and `dist/VERSION.txt` naming the version)
+instead of `dist/lumen-<version>.iso`. A fixed name also means a VirtualBox
+VM keeps working across releases without being re-pointed. The version is
+visible in the boot banner, the About window and VERSION.txt.
+
+Supersedes the file-naming part of "dist/ holds one ISO" (same date).
+
+## 2026-10-03 — Phase 7: user mode and system-call design
+
+- **One frame layout for every way into the kernel.** The `syscall` entry
+  builds the same `InterruptFrame` an interrupt does, on the thread's kernel
+  stack (found through per-CPU data behind `swapgs`). `fork` copies the
+  frame, `execve` rewrites it, and the first entry to ring 3 is an `iretq`
+  from one. Before `sysret` the dispatcher forces user segments, cleans the
+  flags and kills the process if the return address is not a user address
+  (a non-canonical one would fault in ring 0 on the user's stack).
+- **Dispatch is a `switch` generated from `kernel/syscall/table.def`**, not a
+  table of function pointers: nothing writable to overwrite, and an unknown
+  number falls through to `ENOSYS`. The number is also masked without a
+  branch before the switch, so an out-of-range value is not used
+  speculatively. `tools/gen-syscalls.py` writes `docs/SYSCALLS.md` and the
+  user library's numbers from the same file. Only implemented calls are
+  listed.
+- **User memory is touched only in `kernel/mm/usercopy*`.** Range check
+  (user half, no wrap), then a copy whose faults are fixed up to
+  `Error::Fault`. With SMAP these are the only `stac`/`clac` in the kernel,
+  and a kernel access to a user page from anywhere else is reported as a
+  kernel bug. System calls copy through a kernel buffer in chunks.
+- **Programs must be position-independent; the loader refuses anything
+  else.** Load base, mmap base and stack top are drawn from the CSPRNG per
+  `execve`. Segments that are writable and executable are refused, as is
+  `mmap` with both. The ELF parser and the tar reader depend only on
+  `lib/types.h`, so `make fuzz` builds the very same files for the host.
+- **CSPRNG: ChaCha20 with fast key erasure**, seeded from RDSEED/RDRAND when
+  present and always mixed with the time-stamp counter, the reference clock
+  and interrupt timing. It is initialised first thing in `kernel_main`, so
+  the kernel's stack guard, the heap's free-list secret and ASLR all draw
+  from it.
+- **Stack protector with one global guard** in the kernel and in each user
+  program (`-mstack-protector-guard=global`). A user program's guard is set
+  by its start-up code from 16 random bytes the kernel puts on its stack
+  (`AT_RANDOM`).
+- **FPU/SSE belongs to user programs.** The kernel is still built without
+  SSE; the state is saved and loaded only when a different user thread is
+  about to run.
+- **A faulting user program is killed, not the system.** The exit status
+  carries a Unix-style signal number (11, 8, 4) so `waitpid` callers can
+  tell; there is no signal delivery until phase 11.
+- **The boot archive** (`boot/initrd.tar`, a Limine module) holds the user
+  programs until the VFS exists. `open` reads from it, read-only. `init`
+  is pid 1; for now it only announces itself and collects orphaned
+  children.
+- **User programs are linked with the host linker.** The bare-metal cross
+  linker silently produces fixed-address executables when asked for PIE.
+  The objects are ordinary x86-64 ELF, so the host `ld` links them with our
+  linker script and no host libraries.
+- **`make fuzz`**: a small mutation driver of our own
+  (`tests/fuzz/driver.cpp`, AddressSanitizer + undefined-behaviour checks,
+  exact-size inputs, crash input saved, `tests/fuzz/corpus/` replayed as
+  regression tests) rather than libFuzzer, which would need clang on the
+  build host. System-call arguments are fuzzed inside the running system by
+  `/bin/sysfuzz`, whose children make random calls with hostile arguments.
+
+**libc.** Phase 7 wrote the minimal in-tree library that SPEC phase 7 lists
+as a deliverable (`userland/libc`: start-up code, system-call wrappers,
+`malloc` on `mmap`, strings, `printf`). That does not settle the open
+question for phase 17 (keep growing it, or port mlibc); no answer from the
+owner is recorded, so it stays open.
+
+Deviations from SPEC phase 7, for the owner to see:
+- **No `/dev/random` yet**: there is no device filesystem until phase 9.
+  `getrandom` (call 66) is there.
+- **The stack guard is one global value, not per-CPU** as §5A words it. A
+  per-CPU value adds nothing while there is one CPU; revisit in phase 8.
+- **The "direct dereference faults under SMAP" check lives in `test vmm`**,
+  not in a test system call: a deliberately unsafe call does not belong in
+  the ABI.
+- **`read` from the console returns 0** (no terminal input path to user
+  programs until the tty work in phases 9–10). `Process` now has a
+  file-descriptor table (32 entries) ahead of the VFS; no working directory.
+- **Speculation hardening is partial**: the system-call number is masked;
+  the user-copy bounds check is a plain branch, and whether this CPU needs
+  retpolines has not been evaluated. Left for the phase 8 audit.
+- **`fork` is not in the random system-call fuzzer** (children would
+  multiply); `forktest` covers it.
+
+Rejected: a writable function-pointer table for dispatch; letting the page
+fault handler accept any kernel-mode fault on a user address (hides kernel
+bugs; SMAP would be pointless); loading fixed-address executables "for
+now" (ASLR would then be optional forever); a separate interrupt-style
+`int 0x80` path (two entry paths to keep correct instead of one).

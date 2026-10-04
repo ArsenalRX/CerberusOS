@@ -6,6 +6,7 @@ bits 64
 section .text
 
 extern interrupt_dispatch
+extern g_smap_enabled
 
 %macro ISR_NOERR 1
 isr_%1:
@@ -21,6 +22,13 @@ isr_%1:
 %endmacro
 
 isr_common:
+    ; The stack holds vector, error code, then the CPU's frame (rip, cs, ...).
+    ; Coming from ring 3, GS still holds the user's base: switch to the
+    ; kernel's per-CPU data (see percpu.h).
+    test byte [rsp + 24], 3
+    jz .entered
+    swapgs
+.entered:
     push rax
     push rbx
     push rcx
@@ -36,6 +44,14 @@ isr_common:
     push r13
     push r14
     push r15
+    ; If the interrupt arrived in the middle of a user copy, the window that
+    ; lets ring 0 touch user memory is still open (RFLAGS.AC). Close it for
+    ; the handler and for any thread the handler switches to; iretq puts the
+    ; interrupted code's flags back.
+    cmp byte [rel g_smap_enabled], 0
+    je .dispatch
+    clac
+.dispatch:
     mov rdi, rsp
     cld
     call interrupt_dispatch
@@ -54,6 +70,10 @@ isr_common:
     pop rcx
     pop rbx
     pop rax
+    test byte [rsp + 24], 3     ; returning to ring 3: give GS back to the user
+    jz .leave
+    swapgs
+.leave:
     add rsp, 16                 ; vector + error code
     iretq
 

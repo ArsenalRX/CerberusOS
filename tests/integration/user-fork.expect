@@ -1,0 +1,14 @@
+# Phase 7: fork + execve + waitpid, copy-on-write between parent and child,
+# and SSE state kept separate between processes.
+lumen kernel shell
+!send run /bin/forktest
+!wait 4
+changed its copy and exited with 7; the parent's copy is unchanged
+args: argv[0] = args
+args: argv[1] = one
+args: argv[2] = two
+args: env GREETING=hi
+ran /bin/args through execve and exited with 3
+floating-point state stayed separate across 4000 switches
+forktest: PASS
+run: /bin/forktest exited with status 0

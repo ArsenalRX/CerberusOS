@@ -6,7 +6,9 @@
 #include <lib/kprintf.h>
 #include <lib/string.h>
 #include <mm/kheap.h>
+#include <mm/usercopy.h>
 #include <mm/vmm.h>
+#include <proc/process.h>
 #include <sched/sched.h>
 #include <sched/sync.h>
 
@@ -44,16 +46,22 @@ u64 kbench_context_switch_ns(u32 rounds) {
     // The caller sleeps in join while the two threads hand the CPU back and
     // forth. Divide by the switches that really happened: a yield with no
     // other thread at the same level does not switch.
-    // Same level as the caller, so neither starts until the caller blocks.
-    Result<Thread*> a = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-a", prio::NORMAL);
-    Result<Thread*> b = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-b", prio::NORMAL);
+    // Both threads run at the lowest level. There they can never be more
+    // urgent than the caller (which may itself have been demoted), so neither
+    // starts before both exist; and a timer tick cannot demote one of them
+    // away from the other, which would leave each yielding to nobody.
+    // The clock and the counter are read before the threads exist, so that
+    // nothing they do can fall outside the measurement; the cost of creating
+    // them is included and is small against the run.
+    u64 s0 = sched_stats().context_switches;
+    u64 t0 = refclock_now_us();
+    Result<Thread*> a = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-a", prio::LOW);
+    Result<Thread*> b = kthread_create(yielder, (void*)(u64)rounds, "bench-yield-b", prio::LOW);
     if (!a.ok() || !b.ok()) {
         if (a.ok()) thread_join(a.value());
         if (b.ok()) thread_join(b.value());
         return 0;
     }
-    u64 s0 = sched_stats().context_switches;
-    u64 t0 = refclock_now_us();
     thread_join(a.value());
     thread_join(b.value());
     u64 t1 = refclock_now_us();
@@ -97,14 +105,40 @@ u64 kbench_page_fault_ns(u32 pages) {
     if (region.ok()) {
         AddressSpace& before = vmm_current();
         p->space->activate();
-        volatile u8* mem = (volatile u8*)region.value();
+        // One byte per page through the user-copy path: the same fault a
+        // program's first touch takes, plus a few instructions of copy.
+        u8 one = 1;
+        bool ok = true;
         u64 t0 = refclock_now_us();
-        for (u32 i = 0; i < pages; i++) mem[(usize)i * PAGE_SIZE] = 1;
-        ns = (refclock_now_us() - t0) * 1000 / pages;
+        for (u32 i = 0; i < pages; i++) ok &= copy_to_user(region.value() + (usize)i * PAGE_SIZE, &one, 1).ok();
+        if (ok) ns = (refclock_now_us() - t0) * 1000 / pages;
         before.activate();
     }
     process_destroy(p);
     return ns;
+}
+
+namespace {
+
+// Microseconds to start /bin/sysbench with `calls` calls and wait for it; 0 on failure.
+u64 sysbench_run_us(u32 calls) {
+    char count[16];
+    ksnprintf(count, sizeof count, "%u", calls);
+    const char* const argv[] = {"sysbench", count, nullptr};
+    u64 t0 = refclock_now_us();
+    Result<Process*> p = process_spawn("/bin/sysbench", argv, false);
+    if (!p.ok()) return 0;
+    if (process_wait(p.value()) != 0) return 0;
+    u64 us = refclock_now_us() - t0;
+    return us ? us : 1;
+}
+
+} // namespace
+
+u64 kbench_syscall_ns(u32 calls) {
+    u64 empty = sysbench_run_us(0), full = sysbench_run_us(calls);
+    if (!empty || !full || full <= empty) return 0;
+    return (full - empty) * 1000 / calls;
 }
 
 u32 kbench_busy_percent(u64 ms) {
@@ -123,6 +157,7 @@ int kbench_run() {
     kprintf("bench: wake_latency_max=%lu us\n", (unsigned long)w.max_us);
     kprintf("bench: kmalloc_kfree_pair=%lu ns\n", (unsigned long)kbench_kmalloc_pair_ns(200000));
     kprintf("bench: minor_page_fault=%lu ns\n", (unsigned long)kbench_page_fault_ns(2048));
+    kprintf("bench: syscall_round_trip=%lu ns\n", (unsigned long)kbench_syscall_ns(2000000));
     kprintf("bench: idle_cpu_busy=%u %%\n", kbench_busy_percent(3000));
     if (gui_active()) {
         GuiStats g = gui_stats();

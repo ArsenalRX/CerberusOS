@@ -3,7 +3,10 @@
 // shell run as threads.
 #include <arch/x86_64/acpi.h>
 #include <arch/x86_64/cpu.h>
+#include <arch/x86_64/cpufeatures.h>
 #include <arch/x86_64/cpuid.h>
+#include <arch/x86_64/percpu.h>
+#include <lib/csprng.h>
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/interrupts.h>
 #include <boot/bootinfo.h>
@@ -25,8 +28,10 @@
 #include <lib/version.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <fs/file.h>
 #include <lib/string.h>
 #include <mm/vmm.h>
+#include <proc/process.h>
 #include <sched/sched.h>
 
 namespace {
@@ -77,12 +82,28 @@ void print_banner() {
 void init_thread(void*) {
     strlcpy(thread_current()->name, "shell", sizeof thread_current()->name);
     if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
+    // The first user process. It is not waited for: it runs for as long as
+    // the system does.
+    if (files_archive_present()) {
+        const char* const argv[] = {"init", nullptr};
+        Result<Process*> init = process_spawn("/bin/init", argv, true);
+        if (!init.ok()) kprintf("init: could not start /bin/init: %s\n", error_name(init.error()));
+    }
     shell_run();
 }
 
 } // namespace
 
+extern "C" u64 __stack_chk_guard;
+
 extern "C" [[noreturn]] void kernel_main() {
+    // Randomness first: the stack-protector guard must be set before any
+    // function that will return has been entered under the old value. Only
+    // this function, which never returns, straddles the change. The low byte
+    // stays zero so a string overrun cannot copy the guard.
+    csprng_init();
+    __stack_chk_guard = csprng_u64() & ~0xFFull;
+
     serial_init();
     kprintf("lumen: serial console up\n");
 
@@ -101,6 +122,8 @@ extern "C" [[noreturn]] void kernel_main() {
     pmm_init();
 
     gdt_init_bsp();
+    percpu_init_bsp();
+    cpu_features_init();
     kprintf("gdt: loaded (kernel cs=%#x ds=%#x, user cs=%#x ds=%#x, tss=%#x)\n", seg::KCODE, seg::KDATA,
             seg::UCODE, seg::UDATA, seg::TSS);
     interrupts_init();
@@ -114,6 +137,7 @@ extern "C" [[noreturn]] void kernel_main() {
         if (!stack.ok()) PANIC("out of memory for exception stack %u", slot);
         tss_set_ist(0, slot, stack.value());
     }
+    process_init();
 
     pic_init();
     kprintf("pic: remapped to 0x20-0x2f and masked\n");

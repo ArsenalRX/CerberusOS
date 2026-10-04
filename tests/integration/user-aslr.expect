@@ -1,0 +1,9 @@
+# Phase 7: two runs of the same program get different stack, mmap and code
+# addresses.
+lumen kernel shell
+!send run /bin/aslr
+!wait 3
+aslr: pid
+aslr: pid
+aslr: all three differ from the previous run: PASS
+run: /bin/aslr exited with status 0

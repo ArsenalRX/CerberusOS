@@ -78,3 +78,58 @@ system call, application start, page-cache read rate and TCP throughput have
 budgets but no benchmark, because the features they measure do not exist or
 the benchmark has not been written. First-frame time at boot varies between
 21 and 39 ms from run to run and is not used as a benchmark.
+
+---
+
+## 0.7.0 — 2026-10-03 (phase 7: userland and system calls)
+
+Commit: the `v0.7.0` tag. Debug build. The kernel is now compiled with the
+stack protector, and SMEP/SMAP/UMIP are on under QEMU/KVM.
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs (1 active), 512 MiB — `make bench`
+
+Five runs over the evening; the range is given where they differed.
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch (two threads yielding) | 14–16 ns | 2,000 ns | within |
+| Wake-up latency, interactive thread, average | 6–7 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 23–127 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 80–101 ns | 100 ns | at the limit (one run of five was 1 ns over) |
+| Minor page fault (first touch, through the user-copy path) | 2,247–3,278 ns | 2,000 ns | **over** |
+| System-call round trip (`getpid` from ring 3) | 35–37 ns | 300 ns | within |
+| Idle desktop CPU use (3 s sample) | 0 % of ticks | under 1 % | within |
+| Last composite (partial frame) | 161–258 µs | 8,000 µs | not comparable yet |
+
+Notes:
+- **Minor page fault is still over budget**, though lower than 0.6.0's
+  4,107 ns. The benchmark changed: it now touches each page through
+  `copy_to_user` (a direct kernel write to a user page is forbidden under
+  SMAP), so the two blocks are not strictly like for like. The spread
+  between runs is large; not profiled yet.
+- **`kmalloc`/`kfree` is at its limit in the debug build.** The stack
+  protector added a few instructions to every function with a local buffer.
+  Accepted for the debug build; a `DEBUG=0` build was not measured this
+  time.
+- The system-call figure is the difference between running `/bin/sysbench`
+  with 2,000,000 `getpid` calls and with none, divided by the count; it
+  includes the user-side loop.
+- The context-switch benchmark was corrected in this release: its two
+  threads now run at the lowest priority level, so they cannot start
+  before both exist and a timer tick cannot separate them. Earlier
+  implausible readings on VirtualBox (2 ns, 0 ns) came from that, not from
+  the guest clock as the 0.6.0 block guessed.
+
+### VirtualBox 7.2.6 (Hyper-V backend), temporary VM, 4 CPUs, 2 GiB — `bench` typed in the shell
+
+No SMEP/SMAP/UMIP offered to the guest there.
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 15 ns | 2,000 ns | within |
+| Wake-up latency, average | 30 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 480 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 104 ns | 100 ns | **over** (debug build) |
+| Minor page fault | 19,356 ns | 2,000 ns | **over** (the budgets are defined for QEMU/KVM) |
+| System-call round trip | 37 ns | 300 ns | within |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |

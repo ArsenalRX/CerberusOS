@@ -17,6 +17,56 @@ completed spec phase.
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-03 (security release)
+
+Spec phase 7, userland and system calls, is complete.
+
+### Security
+- Programs now run in user mode (ring 3), each in its own address space,
+  and reach the kernel only through system calls. A program that crashes,
+  touches kernel memory or runs a privileged instruction is ended and
+  reported; the system carries on.
+- Every system-call argument is checked. Bad pointers, lengths that wrap
+  and unknown flags are refused with an error instead of reaching kernel
+  code; the kernel reads and writes program memory through one guarded
+  path only.
+- SMEP, SMAP and UMIP are turned on when the CPU has them: the kernel can
+  neither run nor casually touch program memory.
+- Address-space layout randomisation: a program's code, stack and `mmap`
+  memory land at different addresses on every run. Only
+  position-independent programs are loaded, and nothing can be mapped
+  writable and executable.
+- A kernel random-number generator (ChaCha20, seeded from the CPU's
+  hardware generator and interrupt timing) now supplies all randomness;
+  programs get it through `getrandom`.
+- Stack-overflow detection (stack protector) in the kernel and in every
+  program.
+- `make fuzz`: the program loader, the boot-archive reader and the
+  system-call interface are attacked with damaged and random input on every
+  release.
+
+### Added
+- System calls `exit write read open close mmap munmap fork execve waitpid
+  getpid yield sleep_ms getrandom` (reference: `docs/SYSCALLS.md`, generated
+  from the kernel's table).
+- A small C library for programs (`userland/libc`) and the first programs,
+  carried in a boot archive: `init` (process 1), `hello`, and test programs.
+- Shell command `run <path> [arguments]` starts a program and reports how
+  it ended, for example `run /bin/hello`.
+- `bench` measures a system-call round trip.
+
+### Fixed
+- The context-switch benchmark (`bench`, `test sched`) no longer reports
+  nonsense, or fails, when the shell thread happens to have been lowered in
+  priority; this showed up on VirtualBox.
+
+- A program's output line can no longer be split in the middle by a kernel
+  message.
+
+### Changed
+- `dist/` holds exactly one file to boot, always named `lumen.iso`;
+  `dist/VERSION.txt` says which version it is.
+
 ## 0.6.0 — 2026-10-03
 
 Spec phase 6, threads and scheduling, is complete.

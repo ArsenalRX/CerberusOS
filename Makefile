@@ -46,7 +46,9 @@ BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # ---------------------------------------------------------------------------
 # -ftrivial-auto-var-init=zero: no stack variable is ever uninitialised, so a
 # forgotten initialiser cannot leak old stack contents (SPEC §5A phase 4).
-KCXXFLAGS := -std=c++20 -ffreestanding -fno-stack-protector -fno-stack-check \
+# -fstack-protector-strong with a global guard: see kernel/lib/stack_protector.cpp.
+KCXXFLAGS := -std=c++20 -ffreestanding -fstack-protector-strong -mstack-protector-guard=global \
+             -fno-stack-check \
              -ftrivial-auto-var-init=zero \
              -fno-omit-frame-pointer -fno-optimize-sibling-calls \
              -fno-pic -fno-pie -mno-red-zone -mcmodel=kernel \
@@ -121,9 +123,9 @@ QEMU_DISPLAY ?= -display gtk,zoom-to-fit=on
 # ---------------------------------------------------------------------------
 # Top-level targets
 # ---------------------------------------------------------------------------
-.PHONY: all kernel iso run run-headless run-uefi debug gdb test bench clean check-tools vbox vbox-log dist help
+.PHONY: all kernel iso run run-headless run-uefi debug gdb test bench fuzz clean check-tools vbox vbox-log dist help
 
-all: check-tools kernel
+all: check-tools kernel $(INITRD) $(SYSCALL_MD)
 
 kernel: $(KERNEL_ELF) $(KERNEL_SYM)
 
@@ -177,7 +179,7 @@ clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test bench clean vbox vbox-log dist check-tools"
+	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test bench fuzz clean vbox vbox-log dist check-tools"
 
 # ---------------------------------------------------------------------------
 # Kernel build rules
@@ -236,16 +238,118 @@ $(KERNEL_SYM): $(KERNEL_ELF)
 -include $(KERNEL_DEPS)
 
 # ---------------------------------------------------------------------------
+# System-call table: one definition file generates the reference document and
+# the user library's call numbers (docs/SPEC.md §7).
+# ---------------------------------------------------------------------------
+GEN         := $(BUILD)/gen
+SYSCALL_DEF := $(ROOT)/kernel/syscall/table.def
+SYSCALL_HDR := $(GEN)/lumen/syscall_nr.h
+SYSCALL_MD  := $(ROOT)/docs/SYSCALLS.md
+
+$(SYSCALL_HDR) $(SYSCALL_MD) &: $(SYSCALL_DEF) $(ROOT)/tools/gen-syscalls.py
+	@mkdir -p $(dir $(SYSCALL_HDR))
+	$(PYTHON) $(ROOT)/tools/gen-syscalls.py $(SYSCALL_DEF) --md $(SYSCALL_MD) --header $(SYSCALL_HDR)
+
+# ---------------------------------------------------------------------------
+# Userland: the C library and the programs in userland/bin, each linked as a
+# static position-independent executable, packed into the boot archive that
+# the bootloader hands to the kernel as a module.
+# ---------------------------------------------------------------------------
+USER_DIR  := $(ROOT)/userland
+UBUILD    := $(BUILD)/user
+# SSE is on here (the kernel saves it per thread). The stack protector uses a
+# global guard that the start-up code seeds from the kernel's AT_RANDOM bytes.
+UCXXFLAGS := -std=c++20 -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics \
+             -fno-use-cxa-atexit -fno-builtin -nostdinc++ \
+             -fPIE -fvisibility=hidden -fstack-protector-strong -mstack-protector-guard=global \
+             -fstack-clash-protection \
+             -Wall -Wextra -Werror=return-type -O2 -g -MMD -MP \
+             -I$(USER_DIR)/libc/include -I$(GEN)
+# -z text: refuse to link if code would need to be patched at load time.
+ULDFLAGS  := -nostdlib -pie --no-dynamic-linker -z text -z noexecstack -z max-page-size=0x1000 -S \
+             -T $(USER_DIR)/libc/user.ld
+LIBGCC    := $(shell $(CXX) -print-libgcc-file-name 2>/dev/null)
+# User programs are linked with the host linker: the bare-metal cross linker
+# (x86_64-elf) has no support for position-independent executables and
+# silently produces a fixed-address one, which the kernel refuses to load.
+# The object files are ordinary x86-64 ELF, so either linker accepts them.
+USER_LD   ?= ld
+
+LIBC_SRCS := $(sort $(wildcard $(USER_DIR)/libc/src/*.cpp))
+LIBC_OBJS := $(patsubst $(USER_DIR)/%.cpp,$(UBUILD)/%.o,$(LIBC_SRCS))
+CRT0      := $(UBUILD)/libc/src/crt0.o
+USER_PROGS := $(sort $(basename $(notdir $(wildcard $(USER_DIR)/bin/*.cpp))))
+USER_BINS  := $(addprefix $(UBUILD)/bin/,$(USER_PROGS))
+USER_DEPS  := $(LIBC_OBJS:.o=.d) $(addsuffix .d,$(USER_BINS))
+INITRD     := $(BUILD)/initrd.tar
+
+$(UBUILD)/%.o: $(USER_DIR)/%.cpp $(SYSCALL_HDR) $(ROOT)/Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) $(UCXXFLAGS) -c $< -o $@
+
+$(CRT0): $(USER_DIR)/libc/src/crt0.S $(ROOT)/Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) -c $< -o $@
+
+.PRECIOUS: $(UBUILD)/bin/%.o
+$(UBUILD)/bin/%: $(UBUILD)/bin/%.o $(CRT0) $(LIBC_OBJS) $(USER_DIR)/libc/user.ld $(ROOT)/Makefile
+	$(USER_LD) $(ULDFLAGS) $(CRT0) $< $(LIBC_OBJS) $(LIBGCC) -o $@
+
+# A fixed owner, date and order make the archive identical for identical input.
+$(INITRD): $(USER_BINS)
+	rm -rf $(BUILD)/initrd_root
+	mkdir -p $(BUILD)/initrd_root/bin
+	cp $(USER_BINS) $(BUILD)/initrd_root/bin/
+	chmod 755 $(BUILD)/initrd_root/bin/*
+	tar --format=ustar --sort=name --owner=0 --group=0 --numeric-owner --mtime='2026-01-01 00:00:00' \
+	    -C $(BUILD)/initrd_root -cf $@ bin
+
+-include $(USER_DEPS)
+
+# ---------------------------------------------------------------------------
+# Fuzzing (docs/SPEC.md §19.11). The parsers of untrusted input are built for
+# the host with AddressSanitizer and fed mutated files for FUZZ_SECONDS each
+# (tests/fuzz/driver.cpp); files under tests/fuzz/corpus/<name>/ are replayed
+# first as regression tests. System-call arguments are fuzzed inside the
+# running system by /bin/sysfuzz.
+# ---------------------------------------------------------------------------
+FUZZ_SECONDS ?= 60
+HOST_CXX     ?= g++
+FUZZ_DIR     := $(BUILD)/fuzz
+FUZZ_FLAGS   := -std=c++20 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined \
+                -fno-sanitize-recover=all -Wall -Wextra -I$(ROOT)/kernel
+
+$(FUZZ_DIR)/fuzz-elf: $(ROOT)/tests/fuzz/driver.cpp $(ROOT)/tests/fuzz/fuzz_elf.cpp \
+                      $(ROOT)/kernel/proc/elf.cpp $(ROOT)/kernel/proc/elf.h
+	@mkdir -p $(dir $@)
+	$(HOST_CXX) $(FUZZ_FLAGS) $(filter %.cpp,$^) -o $@
+
+$(FUZZ_DIR)/fuzz-ustar: $(ROOT)/tests/fuzz/driver.cpp $(ROOT)/tests/fuzz/fuzz_ustar.cpp \
+                        $(ROOT)/kernel/fs/ustar.cpp $(ROOT)/kernel/fs/ustar.h
+	@mkdir -p $(dir $@)
+	$(HOST_CXX) $(FUZZ_FLAGS) $(filter %.cpp,$^) -o $@
+
+fuzz: $(FUZZ_DIR)/fuzz-elf $(FUZZ_DIR)/fuzz-ustar $(ISO)
+	@cd $(FUZZ_DIR) && ./fuzz-elf $(FUZZ_SECONDS) $(USER_BINS) $(wildcard $(ROOT)/tests/fuzz/corpus/elf/*)
+	@cd $(FUZZ_DIR) && ./fuzz-ustar $(FUZZ_SECONDS) $(INITRD) $(wildcard $(ROOT)/tests/fuzz/corpus/ustar/*)
+	@if $(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 6 --expect $(ROOT)/tests/fuzz/sysfuzz.expect > $(BUILD)/fuzz-syscall.log 2>&1; then \
+	    grep -a 'sysfuzz: PASS' $(BUILD)/fuzz-syscall.log | head -1; \
+	else \
+	    echo "fuzz-syscall: FAILED (see build/fuzz-syscall.log)"; exit 1; \
+	fi
+
+# ---------------------------------------------------------------------------
 # ISO: Limine (UEFI + BIOS hybrid) + kernel + initramfs
 # ---------------------------------------------------------------------------
 $(LIMINE_BIN): $(LIMINE)/limine.c
 	@mkdir -p $(dir $@)
 	cc -g -O2 -pipe -std=c99 $< -o $@
 
-$(ISO): $(KERNEL_ELF) $(LIMINE_BIN) $(ROOT)/limine.conf
+$(ISO): $(KERNEL_ELF) $(INITRD) $(LIMINE_BIN) $(ROOT)/limine.conf
 	rm -rf $(BUILD)/iso_root
 	mkdir -p $(BUILD)/iso_root/boot/limine $(BUILD)/iso_root/EFI/BOOT
 	cp $(KERNEL_ELF) $(BUILD)/iso_root/boot/lumen.elf
+	cp $(INITRD) $(BUILD)/iso_root/boot/initrd.tar
 	cp $(ROOT)/limine.conf $(LIMINE)/limine-bios.sys $(LIMINE)/limine-bios-cd.bin \
 	   $(LIMINE)/limine-uefi-cd.bin $(BUILD)/iso_root/boot/limine/
 	cp $(LIMINE)/BOOTX64.EFI $(BUILD)/iso_root/EFI/BOOT/
@@ -295,16 +399,19 @@ vbox-log:
 	@$(PYTHON) -c "import re,sys; t=open('$(VBOX_LOG)',errors='replace').read(); print(re.sub(r'\x1b\[[0-9;?]*[A-Za-z]','',t))"
 
 # The ISO to try in a VM (dist/ is not cleaned by `make clean`). dist/ holds
-# exactly one ISO: a new one replaces whatever was there (owner's rule,
-# 2026-10-03). Every powered-off VirtualBox VM that boots an ISO from dist/
-# is pointed at the new file and, if it was created 32-bit, switched to
-# 64-bit (tools/vbox-attach.sh).
+# exactly one file with a fixed name, dist/lumen.iso, and each release
+# overwrites it, so there is only ever one to choose (owner's rule,
+# 2026-10-03). The version is shown in the boot banner and the About window,
+# and written to dist/VERSION.txt. Every powered-off VirtualBox VM that boots
+# an ISO from dist/ is pointed at the file and, if it was created 32-bit,
+# switched to 64-bit (tools/vbox-attach.sh).
 dist: $(ISO)
 	@mkdir -p $(ROOT)/dist
 	@rm -f $(ROOT)/dist/lumen*.iso
-	cp $(ISO) $(ROOT)/dist/lumen-$(VERSION).iso
-	@echo "snapshot: $(ROOT)/dist/lumen-$(VERSION).iso"
-	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/lumen-$(VERSION).iso
+	cp $(ISO) $(ROOT)/dist/lumen.iso
+	@echo "Lumen $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
+	@echo "snapshot: $(ROOT)/dist/lumen.iso (Lumen $(VERSION))"
+	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/lumen.iso
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)

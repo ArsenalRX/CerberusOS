@@ -1,7 +1,9 @@
 // Scheduler core: run queues, the sleep list, wait queues, thread and process
 // lifetime. See sched.h for the policy and the locking rules.
 #include <arch/x86_64/cpu.h>
+#include <arch/x86_64/cpufeatures.h>
 #include <arch/x86_64/gdt.h>
+#include <arch/x86_64/percpu.h>
 #include <drivers/lapic.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -33,9 +35,10 @@ struct Cpu {
     Thread* idle;
     bool need_resched;
     u32 irq_depth;
+    Thread* fpu_owner;      // the user thread whose FPU/SSE state is in the registers
 };
 
-Cpu g_cpu;
+Cpu g_local;
 RunQueue g_rq[prio::COUNT];
 Thread* g_sleepers = nullptr;       // sorted by wake_tick
 Thread* g_all = nullptr;
@@ -130,29 +133,37 @@ void make_ready(Thread* t) {
     t->state = ThreadState::Ready;
     t->waiting_on = nullptr;
     enqueue(t);
-    Thread* cur = g_cpu.current;
-    if (cur->is_idle || t->priority < cur->priority) g_cpu.need_resched = true;
+    Thread* cur = g_local.current;
+    if (cur->is_idle || t->priority < cur->priority) g_local.need_resched = true;
 }
 
 // Interrupts off. Picks the next thread and switches to it. Returns when the
 // calling thread is next scheduled.
 void schedule() {
-    Thread* prev = g_cpu.current;
+    Thread* prev = g_local.current;
     if (prev->state == ThreadState::Running) {
         prev->state = ThreadState::Ready;
         if (!prev->is_idle) enqueue(prev);
     }
     Thread* next = dequeue_highest();
-    if (!next) next = g_cpu.idle;
-    g_cpu.need_resched = false;
+    if (!next) next = g_local.idle;
+    g_local.need_resched = false;
     next->state = ThreadState::Running;
     next->slice = SLICE_TICKS;
     if (next == prev) return;
 
-    g_cpu.current = next;
+    g_local.current = next;
     next->switches++;
     g_switches++;
     tss_set_kernel_stack(0, next->stack_top);
+    percpu_set_kernel_stack(next->stack_top);
+    // FPU/SSE registers are only used by user threads, so they change hands
+    // only when a different user thread is about to run.
+    if (next->fpu && g_local.fpu_owner != next) {
+        if (g_local.fpu_owner) fpu_save(g_local.fpu_owner->fpu);
+        fpu_restore(next->fpu);
+        g_local.fpu_owner = next;
+    }
     // Each thread carries the address space it was running in; reload CR3
     // only when the two differ.
     prev->space = &vmm_current();
@@ -163,15 +174,15 @@ void schedule() {
 // After a wake-up made from thread context: switch now if a more urgent
 // thread became runnable. `flags` are the caller's saved RFLAGS.
 void resched_if_needed(u64 flags) {
-    if (!g_running || !g_cpu.need_resched || g_cpu.irq_depth || !(flags & RFLAGS_IF)) return;
+    if (!g_running || !g_local.need_resched || g_local.irq_depth || !(flags & RFLAGS_IF)) return;
     u64 irq = interrupts_save();
     schedule();
     interrupts_restore(irq);
 }
 
 void block_current(WaitQueue* wq, u64 wake_tick) {
-    Thread* t = g_cpu.current;
-    ASSERT_ALWAYS(!t->is_idle && g_cpu.irq_depth == 0);
+    Thread* t = g_local.current;
+    ASSERT_ALWAYS(!t->is_idle && g_local.irq_depth == 0);
     t->state = wq ? ThreadState::Blocked : ThreadState::Sleeping;
     t->timed_out = false;
     t->waiting_on = wq;
@@ -203,12 +214,15 @@ void unlink_thread(Thread* t) {
 void free_thread(Thread* t) {
     u64 irq = interrupts_save();
     unlink_thread(t);
+    if (g_local.fpu_owner == t) g_local.fpu_owner = nullptr;
     interrupts_restore(irq);
     vmm_free_kernel_stack(t->stack_top, THREAD_STACK_SIZE);
+    kfree(t->fpu);
     kfree(t);
 }
 
 Result<Thread*> create_thread(void (*fn)(void*), void* arg, const char* name, u8 priority, Process* process,
+                              bool detached,
                               bool is_idle) {
     if (priority >= prio::COUNT) return Error::Invalid;
     Thread* t = (Thread*)kzalloc(sizeof(Thread));
@@ -224,6 +238,7 @@ Result<Thread*> create_thread(void (*fn)(void*), void* arg, const char* name, u8
     t->base_priority = t->priority = priority;
     t->slice = SLICE_TICKS;
     t->is_idle = is_idle;
+    t->detached = detached;
     t->cpu_affinity = ~0u;
     t->process = process;
     t->space = process->space;
@@ -310,7 +325,7 @@ void WaitQueue::wait() {
 bool WaitQueue::wait_ticks(u64 ticks) {
     u64 irq = interrupts_save();
     block_current(this, g_ticks + (ticks ? ticks : 1));
-    bool woken = !g_cpu.current->timed_out;
+    bool woken = !g_local.current->timed_out;
     interrupts_restore(irq);
     return woken;
 }
@@ -342,19 +357,21 @@ void sched_block_locked(WaitQueue& wq) { block_current(&wq, 0); }
 // ================================================================= threads ==
 
 bool sched_running() { return g_running; }
-Thread* thread_current() { return g_running ? g_cpu.current : nullptr; }
+Thread* thread_current() { return g_running ? g_local.current : nullptr; }
 Process* process_kernel() { return &g_kernel_process; }
 
-Result<Thread*> kthread_create(void (*fn)(void*), void* arg, const char* name, u8 priority, Process* process) {
-    return create_thread(fn, arg, name, priority, process, false);
+Result<Thread*> kthread_create(void (*fn)(void*), void* arg, const char* name, u8 priority, Process* process,
+                               bool detached) {
+    return create_thread(fn, arg, name, priority, process, detached, false);
 }
 
 [[noreturn]] void thread_exit(int code) {
     interrupts_disable();
-    Thread* t = g_cpu.current;
+    Thread* t = g_local.current;
     ASSERT_ALWAYS(!t->is_idle);
     t->exit_code = code;
     t->state = ThreadState::Zombie;
+    if (g_local.fpu_owner == t) g_local.fpu_owner = nullptr;    // its FPU state dies with it
     while (Thread* j = wq_pop(&t->joiners)) make_ready(j);
     if (t->detached) {
         t->next = g_dead;
@@ -366,7 +383,7 @@ Result<Thread*> kthread_create(void (*fn)(void*), void* arg, const char* name, u
 }
 
 int thread_join(Thread* t) {
-    ASSERT_ALWAYS(t != g_cpu.current && !t->detached);
+    ASSERT_ALWAYS(t != g_local.current && !t->detached);
     u64 irq = interrupts_save();
     while (t->state != ThreadState::Zombie) sched_block_locked(t->joiners);
     interrupts_restore(irq);
@@ -405,18 +422,75 @@ void thread_sleep_ms(u64 ms) {
     thread_sleep_ticks((ms + SCHED_TICK_MS - 1) / SCHED_TICK_MS + 1);
 }
 
+Result<void> thread_enable_fpu(const u8* initial) {
+    Thread* t = g_local.current;
+    if (!t->fpu) {
+        u8* area = (u8*)kmalloc(FPU_STATE_SIZE);        // 16-byte aligned, as FXSAVE requires
+        if (!area) return Error::NoMemory;
+        if (initial) memcpy(area, initial, FPU_STATE_SIZE);
+        else fpu_init_state(area);
+        u64 irq = interrupts_save();
+        t->fpu = area;
+        // Load it now: this thread is running and now owns the registers.
+        if (g_local.fpu_owner && g_local.fpu_owner != t) fpu_save(g_local.fpu_owner->fpu);
+        fpu_restore(t->fpu);
+        g_local.fpu_owner = t;
+        interrupts_restore(irq);
+    }
+    return {};
+}
+
+void thread_snapshot_fpu(u8* out) {
+    u64 irq = interrupts_save();
+    Thread* t = g_local.current;
+    ASSERT_ALWAYS(t->fpu);
+    if (g_local.fpu_owner == t) fpu_save(t->fpu);
+    memcpy(out, t->fpu, FPU_STATE_SIZE);
+    interrupts_restore(irq);
+}
+
+void thread_reset_fpu() {
+    u64 irq = interrupts_save();
+    Thread* t = g_local.current;
+    ASSERT_ALWAYS(t->fpu);
+    fpu_init_state(t->fpu);
+    if (g_local.fpu_owner && g_local.fpu_owner != t) fpu_save(g_local.fpu_owner->fpu);
+    fpu_restore(t->fpu);
+    g_local.fpu_owner = t;
+    interrupts_restore(irq);
+}
+
+void thread_set_process(Thread* t, Process* p) {
+    u64 irq = interrupts_save();
+    for (Thread** link = &t->process->threads; *link; link = &(*link)->proc_next) {
+        if (*link == t) {
+            *link = t->proc_next;
+            break;
+        }
+    }
+    t->process->thread_count--;
+    t->process = p;
+    t->proc_next = p->threads;
+    p->threads = t;
+    p->thread_count++;
+    interrupts_restore(irq);
+}
+
 // =============================================================== processes ==
 
-Result<Process*> process_create(const char* name) {
+Result<Process*> process_create(const char* name, AddressSpace* existing) {
     Process* p = (Process*)kzalloc(sizeof(Process));
     if (!p) return Error::NoMemory;
-    Result<AddressSpace*> space = AddressSpace::create();
-    if (!space.ok()) {
-        kfree(p);
-        return space.error();
+    if (!existing) {
+        Result<AddressSpace*> space = AddressSpace::create();
+        if (!space.ok()) {
+            kfree(p);
+            return space.error();
+        }
+        existing = space.value();
     }
     strlcpy(p->name, name, sizeof p->name);
-    p->space = space.value();
+    p->space = existing;
     p->parent = &g_kernel_process;
     u64 irq = interrupts_save();
     p->pid = g_next_pid++;
@@ -437,8 +511,10 @@ void process_destroy(Process* p) {
     }
     interrupts_restore(irq);
     // The caller may still have this space loaded if it just ran there.
-    if (&vmm_current() == p->space) vmm_kernel().activate();
-    p->space->destroy();
+    if (p->space) {             // an exited process has already given its space up
+        if (&vmm_current() == p->space) vmm_kernel().activate();
+        p->space->destroy();
+    }
     kfree(p);
 }
 
@@ -447,7 +523,7 @@ void process_destroy(Process* p) {
 void sched_tick() {
     if (!g_running) return;
     g_ticks++;
-    Thread* cur = g_cpu.current;
+    Thread* cur = g_local.current;
     cur->run_ticks++;
     if (cur->is_idle) g_idle_ticks++;
 
@@ -482,16 +558,16 @@ void sched_tick() {
 
     if (!cur->is_idle && cur->slice && --cur->slice == 0) {
         if (cur->priority < prio::LOW) cur->priority++;     // used the whole slice: CPU-bound
-        g_cpu.need_resched = true;
+        g_local.need_resched = true;
     }
 }
 
-void sched_irq_enter() { g_cpu.irq_depth++; }
+void sched_irq_enter() { g_local.irq_depth++; }
 
 void sched_irq_exit() {
-    g_cpu.irq_depth--;
-    if (!g_running || g_cpu.irq_depth || !g_cpu.need_resched) return;
-    Thread* cur = g_cpu.current;
+    g_local.irq_depth--;
+    if (!g_running || g_local.irq_depth || !g_local.need_resched) return;
+    Thread* cur = g_local.current;
     if (cur->state == ThreadState::Running && !cur->is_idle) cur->preemptions++;
     schedule();
 }
@@ -544,13 +620,13 @@ void sched_print_threads() {
     g_boot_context.priority = g_boot_context.base_priority = prio::LOW;
     g_boot_context.process = &g_kernel_process;
     g_boot_context.space = &vmm_current();
-    g_cpu.current = &g_boot_context;
+    g_local.current = &g_boot_context;
 
-    Result<Thread*> idle = create_thread(idle_main, nullptr, "idle", prio::LOW, nullptr, true);
-    Result<Thread*> reaper = create_thread(reaper_main, nullptr, "reaper", prio::NORMAL, nullptr, false);
-    Result<Thread*> first = create_thread(init, arg, "init", prio::NORMAL, nullptr, false);
+    Result<Thread*> idle = create_thread(idle_main, nullptr, "idle", prio::LOW, nullptr, false, true);
+    Result<Thread*> reaper = create_thread(reaper_main, nullptr, "reaper", prio::NORMAL, nullptr, false, false);
+    Result<Thread*> first = create_thread(init, arg, "init", prio::NORMAL, nullptr, false, false);
     if (!idle.ok() || !reaper.ok() || !first.ok()) PANIC("sched: out of memory creating the first threads");
-    g_cpu.idle = idle.value();
+    g_local.idle = idle.value();
 
     lapic_timer_set_hook(sched_tick);
     g_running = true;

@@ -21,6 +21,11 @@ const char* error_name(Error e) {
     case Error::TooBig: return "too-big";
     case Error::Deadlock: return "deadlock";
     case Error::Timeout: return "timeout";
+    case Error::BadFd: return "bad-fd";
+    case Error::NoChild: return "no-child";
+    case Error::NoProcess: return "no-process";
+    case Error::TooManyFiles: return "too-many-files";
+    case Error::NotExecutable: return "not-executable";
     }
     return "unknown";
 }

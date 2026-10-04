@@ -25,6 +25,11 @@ enum class Error : u8 {
     TooBig,
     Deadlock,
     Timeout,
+    BadFd,              // not an open file descriptor
+    NoChild,            // no child process to wait for
+    NoProcess,
+    TooManyFiles,
+    NotExecutable,
 };
 
 // Short lowercase name for logs ("no-memory", "invalid", ...).

@@ -1,0 +1,16 @@
+# Phase 7: a short run of the random system-call fuzzer (the long run is
+# `make fuzz`). Children make random calls with hostile arguments; the kernel
+# and the parent survive, and an ordinary program still runs afterwards.
+lumen kernel shell
+!send run /bin/sysfuzz 40 500
+!wait 20
+sysfuzz: 40 children, 500 calls each, seed
+sysfuzz: PASS: 40 children
+run: /bin/sysfuzz exited with status 0
+!send run /bin/hello
+!wait 2
+run: /bin/hello exited with status 42
+!send test heap
+!wait 10
+leaks: 0
+test heap: PASS

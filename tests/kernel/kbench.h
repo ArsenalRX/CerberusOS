@@ -25,6 +25,11 @@ u64 kbench_kmalloc_pair_ns(u32 rounds);
 // map). 0 on failure.
 u64 kbench_page_fault_ns(u32 pages);
 
+// Nanoseconds per system-call round trip (getpid from ring 3): runs
+// /bin/sysbench with no calls and with `calls`, and divides the difference.
+// 0 on failure or without the boot archive.
+u64 kbench_syscall_ns(u32 calls);
+
 // Share of timer ticks (0-100) spent outside the idle thread while the
 // caller sleeps for `ms`.
 u32 kbench_busy_percent(u64 ms);

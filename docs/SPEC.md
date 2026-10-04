@@ -2147,7 +2147,7 @@ Three numbers, `MAJOR.MINOR.PATCH`. No letters.
 - The file `VERSION` at the repository root holds the number and nothing
   else. It is the only place the number is written by hand. The build reads
   it for the boot banner, `uname`, the About window, and the ISO name
-  (`lumen-<version>.iso`).
+  (`lumen-<version>.iso` in the name of a development ISO; the release file is always `dist/lumen.iso`).
 - `make RELEASE=1`, run on the tagged release commit with a clean working
   tree, produces a **release build** that shows the plain number. Every
   other build is a **development build** and shows
@@ -2182,9 +2182,9 @@ behaviour adds its line there in the same commit.
    `## <version> — <date>`, adding a fresh empty `## Unreleased` above it.
 3. Update `docs/STATUS.md`. Commit as `release: <version>`.
 4. Tag the commit `v<version>`. Build from the tag with
-   `make RELEASE=1 dist`, which writes `dist/lumen-<version>.iso`, deletes
-   the previous ISO from `dist/` (it holds exactly one), and points the
-   VirtualBox VM "Lumen" at the new file.
+   `make RELEASE=1 dist`, which overwrites `dist/lumen.iso` (the folder
+   holds exactly one ISO, always under that name), and points any
+   VirtualBox VM that boots it at the file.
 5. Bump `VERSION` to the next patch number in a following commit
    (`release: begin <next>`), so development builds are labelled correctly.
 

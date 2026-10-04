@@ -20,7 +20,9 @@
 #include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <mm/probe.h>
+#include <mm/usercopy.h>
 #include <mm/vmm.h>
+#include <proc/process.h>
 
 extern "C" {
 extern char __kernel_start[], __kernel_end[];
@@ -254,8 +256,25 @@ void free_user_table(paddr_t table, int level) {
 // ------------------------------------------------------------ page faults --
 void page_fault(InterruptFrame* f, void*) {
     vaddr_t addr = read_cr2();
-    AddressSpace* as = addr >= KERNEL_HALF ? &g_kernel_space : g_current;
-    if (as->handle_fault(addr, f->error)) return;
+    bool from_user = f->cs & 3;
+    bool user_addr = addr < KERNEL_HALF;
+    if (from_user) {
+        // A user program touched memory it has not been given yet (demand
+        // paging, copy-on-write) or is not allowed to touch at all.
+        if (user_addr && g_current->handle_fault(addr, f->error)) return;
+        user_exception(f);
+    }
+    if (user_addr) {
+        // Ring 0 may touch user memory only inside the user-copy routines;
+        // only there is a fault resolved, or turned into an error return.
+        // Anywhere else it is a kernel bug (and SMAP makes the CPU say so).
+        if (usercopy_is_access(f->rip)) {
+            if (g_current->handle_fault(addr, f->error)) return;
+            if (usercopy_fixup(f, addr, f->error)) return;
+        }
+    } else if (g_kernel_space.handle_fault(addr, f->error)) {
+        return;
+    }
     if (probe_fixup(f, addr, f->error)) return;
     exception_fatal(f);
 }

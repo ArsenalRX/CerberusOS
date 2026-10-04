@@ -1,0 +1,31 @@
+# Phase 7: a misbehaving program is killed and reported; the kernel and other
+# programs carry on. Null dereference, reading kernel memory, a privileged
+# instruction, executing data, a smashed stack, division by zero.
+lumen kernel shell
+!send run /bin/crash null
+!wait 2
+killed: #PF Page Fault
+run: /bin/crash was killed (signal 11)
+!send run /bin/crash kernel
+!wait 2
+killed: #PF Page Fault
+run: /bin/crash was killed (signal 11)
+!send run /bin/crash priv
+!wait 2
+killed: #GP General Protection Fault
+run: /bin/crash was killed (signal 11)
+!send run /bin/crash exec
+!wait 2
+killed: #PF Page Fault
+run: /bin/crash was killed (signal 11)
+!send run /bin/crash smash
+!wait 2
+stack smashing detected
+run: /bin/crash exited with status 134
+!send run /bin/crash divide
+!wait 2
+killed: #DE Divide Error
+run: /bin/crash was killed (signal 8)
+!send run /bin/hello
+!wait 2
+run: /bin/hello exited with status 42

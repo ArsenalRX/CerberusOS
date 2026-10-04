@@ -11,6 +11,7 @@
 #include <kernel/ktest.h>
 #include <lib/kprintf.h>
 #include <mm/kheap.h>
+#include <mm/usercopy.h>
 #include <mm/vmm.h>
 #include <sched/sched.h>
 #include <sched/sync.h>
@@ -154,10 +155,10 @@ volatile bool g_space_mismatch;
 // uses too, and checks after every switch that it still reads its own.
 void space_worker(void* arg) {
     u64 tag = (u64)arg;
-    volatile u64* cell = (volatile u64*)PRIVATE_ADDR;
-    *cell = tag;
+    if (!copy_to_user(PRIVATE_ADDR, &tag, sizeof tag).ok()) g_space_mismatch = true;
     for (int i = 0; i < 2000; i++) {
-        if (*cell != tag) g_space_mismatch = true;
+        u64 seen = 0;
+        if (!copy_from_user(&seen, PRIVATE_ADDR, sizeof seen).ok() || seen != tag) g_space_mismatch = true;
         thread_yield();
     }
 }

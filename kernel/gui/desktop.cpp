@@ -1195,9 +1195,8 @@ void compositor_main(void*) {
 } // namespace
 
 bool gui_start_compositor() {
-    Result<Thread*> t = kthread_create(compositor_main, nullptr, "compositor", prio::INTERACTIVE);
+    Result<Thread*> t = kthread_create(compositor_main, nullptr, "compositor", prio::INTERACTIVE, nullptr, true);
     if (!t.ok()) return false;
-    thread_detach(t.value());
     ps2_set_input_hook(input_arrived);
     return true;
 }

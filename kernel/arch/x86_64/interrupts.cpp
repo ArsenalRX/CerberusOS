@@ -8,7 +8,9 @@
 #include <lib/panic.h>
 #include <lib/string.h>
 #include <lib/symbols.h>
+#include <lib/csprng.h>
 #include <mm/vmm.h>
+#include <proc/process.h>
 #include <sched/sched.h>
 
 extern "C" const u64 isr_stub_table[256];
@@ -176,9 +178,11 @@ extern "C" void interrupt_dispatch(InterruptFrame* f) {
     if (f->vector < 32) {
         // CPU exception: handled in place (page faults), or fatal.
         if (r.fn) r.fn(f, r.ctx);
+        else if (f->cs & 3) user_exception(f);      // a user program's fault ends that program only
         else exception_fatal(f);
         return;
     }
+    csprng_add_timing();
     // Device interrupt. The scheduler is told so that a wake-up or the end
     // of a time slice inside the handler turns into a thread switch on the
     // way out, after the handler has acknowledged the interrupt.

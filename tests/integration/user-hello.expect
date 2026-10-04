@@ -1,0 +1,18 @@
+# Phase 7: a program runs in ring 3, prints through write(1, ...), and its
+# exit status is reported by the kernel. init is already running as pid 1.
+cpu: protections on:
+files: boot archive
+init: started as pid 1
+lumen kernel shell
+!send run /bin/hello first second
+!wait 2
+hello: written with write(1, ...)
+hello: user mode, pid
+3 argument(s) ("three"), program name /bin/hello
+run: /bin/hello exited with status 42
+!send run /bin/none
+!wait 2
+exited with status 127
+!send ps
+!wait 1
+init

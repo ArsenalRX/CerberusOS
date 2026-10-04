@@ -12,6 +12,7 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpuid.h>
 #include <boot/bootinfo.h>
+#include <lib/csprng.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
 #include <lib/string.h>
@@ -369,32 +370,11 @@ void* alloc(usize size, u64 caller) {
 
 inline bool is_large_pointer(const void* p) { return ((u64)p & (PAGE_SIZE - 1)) == 0; }
 
-u64 mix64(u64 x) {
-    x += 0x9E3779B97F4A7C15ull;
-    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
-    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
-    return x ^ (x >> 31);
-}
-
 } // namespace
 
 void kheap_init() {
-    // Per-boot secret for the free-list links. RDRAND when the CPU has it,
-    // always mixed with the time-stamp counter. The kernel CSPRNG (phase 7)
-    // replaces this as the source.
-    u64 seed = mix64(rdtsc());
-    if (cpuid(1).ecx & (1u << 30)) {
-        for (int tries = 0; tries < 10; tries++) {
-            u64 r = 0;
-            u8 ok = 0;
-            asm volatile("rdrand %0; setc %1" : "=r"(r), "=qm"(ok));
-            if (ok) {
-                seed ^= r;
-                break;
-            }
-        }
-    }
-    g_secret = mix64(seed ^ rdtsc());
+    // Per-boot secret for the free-list links, from the kernel CSPRNG.
+    g_secret = csprng_u64();
     g_ram_top = g_boot_info.total_bytes();
     g_ready = true;
     kprintf("kheap: slab classes 16-%lu bytes, %lu bytes of overhead per object (%s build)\n",
