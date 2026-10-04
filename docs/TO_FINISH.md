@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5c).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5e).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,16 +27,16 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: waiting for the owner's go-ahead on phase 10
+## Right now: phase 11 (IPC and the window-server foundation)
 
-Version **0.0.5c** (phase 9, files and file systems; the OS renamed
-**Cerberus**, the file system **cerfs**) was released on 2026-10-04. The
-tree is on `0.0.5d` development builds. The owner approves each phase's
-contents before it starts (docs/ROADMAP.md lists phase 10).
+Version **0.0.5e** (phase 10, drivers) was released on 2026-10-04. The tree
+is on `0.0.5f` development builds. The owner said on 2026-10-04 to "finish
+all phases": do not stop to ask between phases; finish, verify and release
+each, then go on.
 
-- Moved from phase 9 to phase 11: file-backed `mmap` (docs/DECISIONS.md,
-  phase 9).
-- Already done for phase 10: AHCI (SATA, DMA, polled), IDE, PCI enumeration.
+- Phase 11 also takes file-backed `mmap` (moved from phase 9).
+- Phase 10 left-overs: MSI-X (NVMe and virtio-blk are polled), keyboard
+  LEDs, layouts other than US.
 - **Minor page fault is over budget** (docs/BENCH.md). Profile it first.
 - Desktop left-overs: open/close animations, one-shot-timer frame pacing.
 - Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md;
@@ -112,6 +112,13 @@ contents before it starts (docs/ROADMAP.md lists phase 10).
   IDE drivers (from phase 10), 25 new system calls, file tools, shell
   redirection; tests: acceptance (IDE and AHCI), power cut and recovery,
   cache, permissions, in-kernel fuzzing. The OS renamed Cerberus.
+- **Release 0.0.5d (2026-10-04): anti-aliased text.** Build-time rendered
+  DejaVu fonts (`tools/gen-fonts.py`, `kernel/gfx/fonts.bin`), smooth close
+  button, dithered wallpaper.
+- **Phase 10 — Drivers. Release 0.0.5e (2026-10-04).** Driver model, PCI
+  MSI, AHCI by interrupt, NVMe, virtio transport + virtio-blk, PS/2
+  keyboard in set 2 with the full map, `/dev/input`, `/dev/fb0`, device
+  access rule, ACPI power off and restart, `runas`, sticky `/tmp`.
 
 ---
 
@@ -125,12 +132,6 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 10 — Drivers.** (AHCI with DMA, IDE and PCI enumeration were
-  done early, in phase 9.) PCI MSI, AHCI interrupts, full PS/2 keyboard+mouse
-  behind `/dev/input` (replace the early drivers), RTC, driver model.
-  **+v2:** virtio transport + virtio-blk; device-supplied values
-  bounds-checked; `/dev/input/*` and `/dev/fb0` restricted to the window
-  server; ACPI shutdown/reboot.
 - [ ] **Phase 11 — IPC and window-server foundation.** Ports, shared memory,
   signals, futex, userland threading. `port`/`shm` self-tests.
   **+v2:** port access control with kernel-supplied sender identity; bounded

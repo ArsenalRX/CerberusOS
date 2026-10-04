@@ -22,7 +22,7 @@ SYSCALL(3,  open,      "int open(const char* path, int flags, int mode)",
 SYSCALL(4,  close,     "int close(int fd)",
         "Closes a descriptor. EBADF.")
 SYSCALL(5,  seek,      "long seek(int fd, long off, int whence)",
-        "Moves the file offset (SEEK_SET 0, SEEK_CUR 1, SEEK_END 2); returns the new offset. Directories only rewind to 0. EBADF, EINVAL, ESPIPE (devices).")
+        "Moves the file offset (SEEK_SET 0, SEEK_CUR 1, SEEK_END 2); returns the new offset. Directories only rewind to 0; stream devices ignore the offset. EBADF, EINVAL.")
 SYSCALL(6,  stat,      "int stat(const char* path, struct stat* out)",
         "Describes a file, following symbolic links. ENOENT, EACCES, ENOTDIR, ELOOP, ENAMETOOLONG, EFAULT.")
 SYSCALL(7,  fstat,     "int fstat(int fd, struct stat* out)",
@@ -70,6 +70,8 @@ SYSCALL(39, sleep_ms,  "int sleep_ms(uint64_t ms)",
 
 SYSCALL(60, time_ms,   "uint64_t time_ms(void)",
         "Milliseconds since the system started (monotonic).")
+SYSCALL(64, reboot,    "int reboot(int how)",
+        "Writes every file system to disk, then powers the machine off (how = 1) or restarts it (how = 2). Root only. Returns only on failure: EPERM, EINVAL, ENOSYS (power off not available).")
 SYSCALL(66, getrandom, "long getrandom(void* buf, size_t n, unsigned flags)",
         "Fills buf with random bytes from the kernel generator; returns the number written (at most 1 MiB per call). flags must be 0. EINVAL, EFAULT.")
 

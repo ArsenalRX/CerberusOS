@@ -301,7 +301,7 @@ $(UBUILD)/bin/%: $(UBUILD)/bin/%.o $(CRT0) $(LIBC_OBJS) $(USER_DIR)/libc/user.ld
 
 # A fixed owner, date and order make the archive identical for identical input.
 # One program (userland/bin/fileutils.cpp) answers to all these names.
-FILEUTILS_NAMES := rmdir mv cp touch stat ln sync mount umount pwd write
+FILEUTILS_NAMES := rmdir mv cp touch stat ln sync mount umount pwd write poweroff reboot
 
 $(INITRD): $(USER_BINS) $(wildcard $(USER_DIR)/etc/*)
 	rm -rf $(BUILD)/initrd_root

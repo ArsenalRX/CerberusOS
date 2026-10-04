@@ -115,6 +115,22 @@ void Semaphore::down() {
     sched_unlock(irq);
 }
 
+bool Semaphore::down_ticks(u64 ticks) {
+    u64 irq = sched_lock();
+    u64 deadline = sched_ticks() + (ticks ? ticks : 1);
+    while (count <= 0) {
+        u64 now = sched_ticks();
+        if (now >= deadline || !sched_block_locked_ticks(waiters, deadline - now)) {
+            if (count > 0) break;
+            sched_unlock(irq);
+            return false;
+        }
+    }
+    count--;
+    sched_unlock(irq);
+    return true;
+}
+
 bool Semaphore::try_down() {
     u64 irq = sched_lock();
     bool got = count > 0;

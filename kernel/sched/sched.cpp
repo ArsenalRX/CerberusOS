@@ -485,6 +485,12 @@ void WaitQueue::wake_all() {
 
 void sched_block_locked(WaitQueue& wq) { block_current(&wq, 0); }
 
+bool sched_block_locked_ticks(WaitQueue& wq, u64 ticks) {
+    Thread* self = this_cpu()->current;
+    block_current(&wq, g_ticks + (ticks ? ticks : 1));
+    return !self->timed_out;
+}
+
 // ================================================================= threads ==
 
 bool sched_running() { return g_running; }

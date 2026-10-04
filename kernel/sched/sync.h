@@ -85,6 +85,8 @@ struct Semaphore {
     // Takes one unit, sleeping until one is available.
     void down();
     bool try_down();
+    // As down, but gives up after `ticks` timer ticks; false on timeout.
+    bool down_ticks(u64 ticks);
     // Returns one unit and wakes a waiter. Interrupt-safe.
     void up();
 };

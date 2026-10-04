@@ -89,7 +89,13 @@ void fs_init() {
             make_node(path, VType::BlockDev, 0600, dev::make(dev::DISK, i));
         }
     }
-    mount_tmpfs("tmpfs", "/tmp", vfs::MNT_NOSUID | vfs::MNT_NODEV);
+    // /tmp: anyone may create files; the sticky bit keeps users from removing
+    // each other's.
+    if (Mount* tmp = mount_tmpfs("tmpfs", "/tmp", vfs::MNT_NOSUID | vfs::MNT_NODEV)) {
+        vfs_lock();
+        tmp->root->mode = 01777;
+        vfs_unlock();
+    }
     vfs_lock();
     vfs_root()->mode = 0755;
     vfs_unlock();

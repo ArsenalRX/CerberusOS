@@ -23,8 +23,15 @@ static unsigned long rnd() {
 }
 static unsigned long below(unsigned long n) { return rnd() % n; }
 
-static const long CALLS[] = {SYS_write, SYS_read,    SYS_open,   SYS_close, SYS_mmap,     SYS_munmap,
-                             SYS_execve, SYS_waitpid, SYS_getpid, SYS_yield, SYS_sleep_ms, SYS_getrandom};
+static const long CALLS[] = {
+    SYS_write,  SYS_read,   SYS_open,     SYS_close,    SYS_mmap,   SYS_munmap,  SYS_execve, SYS_waitpid,
+    SYS_getpid, SYS_yield,  SYS_sleep_ms, SYS_getrandom,
+    // Files (phase 9). The paths offered are in the read-only root or under /tmp.
+    SYS_openat, SYS_seek,   SYS_stat,     SYS_lstat,    SYS_fstat,  SYS_mkdir,   SYS_rmdir,  SYS_unlink,
+    SYS_rename, SYS_readdir, SYS_chdir,   SYS_getcwd,   SYS_dup,    SYS_dup2,    SYS_ioctl,  SYS_truncate,
+    SYS_symlink, SYS_readlink, SYS_chmod, SYS_fsync,    SYS_mount,  SYS_umount,
+};
+static const char* const PATHS[] = {"/bin/hello", "/tmp/fz", "/tmp/fz/a", "/tmp", "/", "/dev/null", "tmpfs", "."};
 
 static const unsigned long HOSTILE[] = {
     0,                      1,                      2,                      3,
@@ -47,7 +54,8 @@ static unsigned long argument() {
     case 2: return HOSTILE[below(sizeof HOSTILE / sizeof HOSTILE[0])];
     case 3: return (unsigned long)g_scratch + below(SCRATCH + 4096);                // in or just past real memory
     case 4: return (unsigned long)g_scratch + (below(17) << 12);                    // page-aligned, same
-    case 5: return below(2) ? (unsigned long)"/bin/hello" : (unsigned long)g_argv;  // a real path, a real argv
+    case 5:                                                                         // a real path, a real argv
+        return below(4) ? (unsigned long)PATHS[below(sizeof PATHS / sizeof PATHS[0])] : (unsigned long)g_argv;
     case 6: return below(64);
     default: return rnd();
     }
@@ -63,6 +71,9 @@ static void child(unsigned long calls) {
         if (nr == SYS_exit || nr == SYS_fork) continue;
         unsigned long a[6];
         for (unsigned long& v : a) v = argument();
+        // The fuzzer runs as root: a valid reboot request would end the test
+        // (and the machine). Invalid ones are still tried.
+        if (nr == SYS_reboot && (a[0] == 1 || a[0] == 2)) continue;
         // A sleep that would be accepted is kept to one tick, and that rarely.
         if (nr == SYS_sleep_ms && a[0] <= (1ul << 31)) a[0] = below(16) == 0;
         // Unmapping most of the address space takes the child's own code

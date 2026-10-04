@@ -1,6 +1,7 @@
 // See pci.h.
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/io.h>
+#include <boot/bootinfo.h>
 #include <drivers/pci.h>
 #include <lib/kprintf.h>
 
@@ -118,6 +119,41 @@ u64 pci_bar_address(const PciDevice& d, u32 index) {
     u64 addr = b & ~0xFull;
     if (((b >> 1) & 3) == 2 && index < 5) addr |= (u64)d.bar[index + 1] << 32;    // 64-bit BAR
     return addr;
+}
+
+u8 pci_read8(const PciDevice& d, u8 offset) {
+    return (u8)(raw_read(d.bus, d.dev, d.func, offset & 0xFC) >> ((offset & 3) * 8));
+}
+
+u8 pci_find_capability(const PciDevice& d, u8 id, u8 after) {
+    if (!(pci_read16(d, 0x06) & (1 << 4))) return 0;        // status: no capability list
+    u8 ptr = after ? pci_read8(d, (u8)(after + 1)) : pci_read8(d, 0x34);
+    for (int guard = 0; guard < 48 && ptr >= 0x40; guard++) {
+        ptr &= 0xFC;
+        if (pci_read8(d, ptr) == id) return ptr;
+        ptr = pci_read8(d, (u8)(ptr + 1));
+    }
+    return 0;
+}
+
+bool pci_enable_msi(const PciDevice& d, u8 vector) {
+    u8 cap = pci_find_capability(d, 0x05);
+    if (!cap) return false;
+    u16 control = pci_read16(d, (u8)(cap + 2));
+    bool is64 = control & (1 << 7);
+    // Message address: the local APIC of the bootstrap CPU; data: the vector
+    // (fixed delivery, edge triggered).
+    pci_write32(d, (u8)(cap + 4), 0xFEE00000u | (g_boot_info.bsp_lapic_id << 12));
+    if (is64) {
+        pci_write32(d, (u8)(cap + 8), 0);
+        pci_write16(d, (u8)(cap + 12), vector);
+    } else {
+        pci_write16(d, (u8)(cap + 8), vector);
+    }
+    control = (u16)((control & ~(7u << 4)) | 1);            // one message, enabled
+    pci_write16(d, (u8)(cap + 2), control);
+    pci_write16(d, 0x04, (u16)(pci_read16(d, 0x04) | (1 << 10)));   // INTx off
+    return true;
 }
 
 void pci_print() {

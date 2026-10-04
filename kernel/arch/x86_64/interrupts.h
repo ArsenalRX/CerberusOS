@@ -34,6 +34,9 @@ void interrupts_load();
 // Handlers for vectors >= 32 must acknowledge the interrupt controller.
 bool interrupt_register(u8 vector, InterruptHandler fn, void* ctx = nullptr);
 void interrupt_unregister(u8 vector);
+// A free vector for a device interrupt (0x40-0xEF), or 0 if none is left.
+// The vector is reserved; register a handler for it next.
+u8 interrupt_alloc_vector();
 
 const char* exception_name(u8 vector);
 // Number of times a vector has been dispatched since boot (diagnostics).

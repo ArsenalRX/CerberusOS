@@ -173,6 +173,18 @@ bool interrupt_register(u8 vector, InterruptHandler fn, void* ctx) {
 
 void interrupt_unregister(u8 vector) { g_handlers[vector] = {nullptr, nullptr}; }
 
+u8 interrupt_alloc_vector() {
+    static u8 next = 0x40;
+    u64 irq = interrupts_save();
+    u8 v = 0;
+    while (next < 0xF0 && !v) {
+        if (!g_handlers[next].fn) v = next;
+        next++;
+    }
+    interrupts_restore(irq);
+    return v;
+}
+
 const char* exception_name(u8 vector) { return vector < 32 ? EXCEPTION_NAMES[vector] : "IRQ"; }
 
 u64 g_interrupt_counts[256];

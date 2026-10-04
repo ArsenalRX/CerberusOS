@@ -13,7 +13,7 @@ re-ordered or re-scoped, so that "What it can do today" and "Where it's
 going" stay true. Keep the language names from docs/DECISIONS.md (Spec,
 `specc`, `.spec`), never the older name used in SPEC.md.
 
-Last updated: **2026-10-04**, at release **0.0.5c**. (The system was called Lumen until that day.)
+Last updated: **2026-10-04**, at release **0.0.5e**. (The system was called Lumen until that day.)
 
 ---
 
@@ -41,7 +41,7 @@ everyday computer.
 - **Who makes it.** A personal project by one developer, the project owner,
   built with an AI coding assistant (Claude Code) working from a written
   design document.
-- **Where it stands.** The current release is **0.0.5c** (2026-10-04). It
+- **Where it stands.** The current release is **0.0.5e** (2026-10-04). It
   runs in the VirtualBox and QEMU virtual machines from a single ISO file,
   on old BIOS or modern UEFI, and can keep files on a virtual hard disk. It
   cannot yet connect to the internet or be installed on a real PC.
@@ -317,7 +317,7 @@ instructions, and finally writes an ELF program file Cerberus can run.
 Phase 16 is done when `specc hello.spec -o hello` makes a program that runs
 on Cerberus and a Spec application with windows runs on the desktop.
 
-## What it can do today (0.0.5c)
+## What it can do today (0.0.5e)
 
 - Boots in VirtualBox and QEMU from one ISO, with BIOS or UEFI, in about a
   second, and uses every processor core.
@@ -333,7 +333,7 @@ on Cerberus and a Spec application with windows runs on the desktop.
 - Has a built-in terminal shell that runs programs by name, with output
   redirection, system information and self-tests; the terminal scrolls back
   1,000 lines.
-- Has the security protections listed above, checked by 30 automated tests
+- Has the security protections listed above, checked by 35 automated tests
   and fuzzing.
 
 It cannot yet use the network, play sound, use USB, have user accounts,
@@ -341,10 +341,8 @@ install to a disk, or run Windows or Linux software.
 
 ## Where it's going
 
-- **Done so far:** phases 0–9 (boot, memory, scheduling, user programs,
-  multi-core, files and disks) and a round of desktop polish.
-- **Next, phase 10:** the rest of the drivers: keyboard and mouse as proper
-  devices, faster disk paths, power off.
+- **Done so far:** phases 0–10 (boot, memory, scheduling, user programs,
+  multi-core, files and disks, drivers) and desktop polish with smooth text.
 - **Phase 11:** programs talking to each other (messages, shared memory).
 - **Phase 12:** Pane, the window server as a separate program.
 - **Phase 13:** the Facet toolkit, desktop shell and applications.

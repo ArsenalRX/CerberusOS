@@ -8,6 +8,6 @@
 // I/O error, never waited on forever.
 #pragma once
 
-// Probes both legacy channels and registers each disk found as a block
-// device. Prints one line per disk.
-void ata_init();
+// Registers the driver; when the driver model attaches it, both legacy
+// channels are probed and each disk found becomes a block device.
+void ata_register();

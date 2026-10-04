@@ -22,28 +22,28 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Latest release: **0.0.5d** (2026-10-04, tag `v0.0.5d`): anti-aliased text on the
-desktop. Before it, **0.0.5c** (2026-10-04, tag `v0.0.5c`): phase 9, files and
-file systems; the OS renamed **Cerberus** (it was Lumen) and its file
-system **cerfs**. Before it on the same day: 0.0.5b (desktop polish) and
-0.0.5a (phase 8). Every release moves one letter (`0.0.5a` … `0.0.5j`, then
-`0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep their old
-numbers. The release is always `dist/cerberus.iso` (`dist/VERSION.txt`
-names the version); each release overwrites it. The tree now builds as
-`0.0.5e-dev+<commit>`. History: docs/CHANGELOG.md.
+Latest release: **0.0.5e** (2026-10-04, tag `v0.0.5e`): phase 10, drivers.
+Before it on the same day: 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
+files; the OS renamed **Cerberus**, formerly Lumen), 0.0.5b (desktop
+polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
+`0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
+their old numbers. The release is always `dist/cerberus.iso`
+(`dist/VERSION.txt` names the version); each release overwrites it. The
+tree now builds as `0.0.5f-dev+<commit>`. History: docs/CHANGELOG.md.
 
 ---
 
 ## Current phase
 
-**Phase 9 — Files and file systems: COMPLETE (2026-10-04).** Phases 0–3
-complete 2026-09-14; phases 4–7 complete 2026-10-03; phase 8 and the desktop
-polish complete 2026-10-04. Desktop preview (owner-requested, brought forward
-from phases 12-13) runs in its own thread.
+**Phase 10 — Drivers: COMPLETE (2026-10-04).** Phases 0–3 complete
+2026-09-14; phases 4–7 complete 2026-10-03; phases 8, 9 and 10 complete
+2026-10-04. Desktop preview (owner-requested, brought forward from phases
+12-13) runs in its own thread.
 
-Next up: **Phase 10 — Drivers** (SPEC §5 and §5A). The owner approves each
-phase's contents before it starts; phase 10 has not been approved yet. AHCI
-(DMA, polled), IDE and PCI enumeration were already done in phase 9.
+Next up: **Phase 11 — IPC and the window-server foundation** (SPEC §5 and
+§5A). The owner said on 2026-10-04 to "finish all phases": phases follow
+one another without waiting for a go-ahead, each ending in a verified
+release.
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
 performance are requirements; our own web browser is phase 15B (owner,
@@ -51,27 +51,27 @@ performance are requirements; our own web browser is phase 15B (owner,
 
 ## Last verified
 
-All on 2026-10-04, on the 0.0.5c code.
+All on 2026-10-04, on the 0.0.5e code.
 
-- `make test` in QEMU/KVM, 4 CPUs: all **30** integration tests passed (the
-  24 of 0.0.5a plus `cerfs`, `cerfs-ahci`, `cerfs-cache`, `cerfs-crash-1`,
-  `cerfs-crash-2`, `cerfs-mkfs`). The disk tests end with an independent
-  check of the image on the build machine (`mkfs.cerfs --check`).
+- `make test` in QEMU/KVM, 4 CPUs: all **35** integration tests passed (the
+  30 of 0.0.5c plus `cerfs-nvme`, `cerfs-virtio`, `drivers`, `input`,
+  `poweroff`). The disk tests end with an independent check of the image
+  on the build machine (`mkfs.cerfs --check`).
 - `make fuzz` (60 s per harness): ELF loader 4.7 million mutated inputs, tar
-  reader 37 thousand, no crash; random system calls (now including the file
-  calls): 600 processes, up to 1.2 million calls; cerfs: 5,013 damaged disk
-  images mounted and exercised; the kernel still running after each. (Run
-  before the last reference-clock change, which touches none of them.)
+  reader 35 thousand, no crash; random system calls (now including the file
+  calls): 600 processes, up to 1.2 million calls; cerfs: 5,031 damaged disk
+  images mounted and exercised; the kernel still running after each.
 - `make bench`: recorded in docs/BENCH.md.
 - **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with 4 CPUs,
-  2 GiB, BIOS, a blank 128 MiB SATA disk**: booted; the disk found by the
-  AHCI driver; `mkfs.cerfs -y`, mount, a 3-level tree, a 4 MiB file written
-  and verified byte for byte after a remount and again after powering the
-  VM off and on; `test all` (10 tests) passed twice in a row; `bench`.
+  2 GiB, BIOS, a blank 128 MiB SATA disk**: booted; keyboard in scancode
+  set 2 (every shifted symbol typed correctly); `drivers`; `mkfs.cerfs -y`,
+  mount, an 8 MiB file written and verified; `test all` (10 tests) passed;
+  `poweroff` powered the VM off through ACPI. The SATA controller there has
+  no MSI, so the disk is polled.
 - Not run this session: UEFI boot, software emulation (TCG), a `DEBUG=0`
   build (last checked on 0.5.0), the fatal-error tests on VirtualBox, a
   power cut on VirtualBox (done in QEMU only), mouse dragging on VirtualBox
-  (VBoxManage cannot move the mouse).
+  (VBoxManage cannot move the mouse), NVMe and virtio disks outside QEMU.
 
 ## How to run it
 
@@ -154,6 +154,12 @@ All on 2026-10-04, on the 0.0.5c code.
   file API. Programs: `ls cat echo mkdir rm rmdir mv cp touch stat ln sync
   mount umount pwd write fstest mkfs.cerfs`. Shell: programs by name, `>`
   and `>>`, `cd`, `pwd`, `mount`. `test vfs`, `test cerfsfuzz`.
+- Phase 10: drivers. A driver registry (`drivers`); PCI capabilities and MSI;
+  AHCI by interrupt where MSI exists; NVMe and virtio-blk (polled); the
+  keyboard in scancode set 2 with the full key map, Num Lock and repeat;
+  input events through `/dev/input/kbd0` and `mouse0`; `/dev/fb0`; ACPI
+  power off and restart (`poweroff`, `reboot`, system call 64); `runas`;
+  sticky `/tmp`.
 - Fatal-error tests (each halts by design): `test exceptions
   de|ud|pf|pfw|gp|bp` (CPU exceptions), `so` (a runaway thread reported as
   a kernel stack overflow), `ub` (undefined behaviour), `fl|waf|df` (heap
@@ -228,6 +234,8 @@ In place (each demonstrated by a test):
   (0.0.5c)
 - `/dev/random` and `/dev/urandom` exist; screen and input device nodes are
   mode 0600. (0.0.5c)
+- A program that is not root cannot open the screen, the keyboard, the
+  mouse or a disk (`drivers` test, as uid 1000); `/tmp` is sticky. (0.0.5e)
 
 Still missing:
 
@@ -239,8 +247,7 @@ Still missing:
   kernel has only its software checks.
 - Retpolines have not been evaluated; the stack-protector guard is one
   global value, not per CPU.
-- `/dev/fb0` and `/dev/input/*` exist as names only (no driver behind them
-  until phase 10); nothing is encrypted on disk (phase 18).
+- Nothing is encrypted on disk (phase 18).
 - No kernel ASLR (phase 19).
 - No networking, so nothing leaves the machine. Files written to a cerfs
   disk persist, unencrypted.
@@ -264,8 +271,9 @@ trustworthy (docs/DECISIONS.md, 2026-10-04).
 
 Known limits:
 
-- One VFS lock serialises all file-system work; disk drivers poll instead
-  of using interrupts (a thread reading a disk keeps its CPU busy).
+- One VFS lock serialises all file-system work. NVMe, virtio and (on
+  VirtualBox) SATA disks are polled: a thread reading a disk keeps its CPU
+  busy. One command at a time per disk.
 - Frame pacing follows the 10 ms tick (no one-shot timer). Input is handled
   immediately.
 - Waking a thread on another CPU costs an inter-processor interrupt; one
@@ -297,7 +305,6 @@ Known limits:
 
 Recorded in docs/DECISIONS.md (2026-10-03).
 
-1. **Approve phase 10** (drivers; contents in docs/ROADMAP.md).
 2. **libc: grow the in-tree libc or port mlibc.** Phase 7 wrote the minimal
    in-tree library the spec asks for; the choice matters from phase 17.
 3. TCP/IP: write in-tree (current plan) or port lwIP. Needed before
@@ -310,12 +317,12 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Next
 
-1. Get the owner's go-ahead for phase 10: PCI MSI and a driver model, AHCI
-   interrupts, virtio-blk, full PS/2 keyboard and mouse behind
-   `/dev/input`, `/dev/fb0`, ACPI power off (and NVMe, proposed).
+1. Phase 11: ports (named message channels with access control), shared
+   memory, signals, futex, threads in programs, event waiting; file-backed
+   `mmap` (moved from phase 9).
 2. Look at the minor-page-fault cost (over budget).
 3. Desktop: window open/close animations; frame pacing from a one-shot
-   timer; a file manager needs phase 13.
+   timer.
 
 ## Known bugs
 

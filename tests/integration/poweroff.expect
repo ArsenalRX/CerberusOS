@@ -1,0 +1,19 @@
+#!disk new 32M poweroff
+#!hostcheck poweroff
+# Phase 10: `poweroff` writes the file systems out and powers the machine
+# off through ACPI (the virtual machine reports the shutdown state); the
+# disk it was writing to is consistent afterwards.
+power: ACPI power off available
+cerberus kernel shell
+!send mount -t cerfs /dev/disk/sda /mnt
+!wait 2
+cerfs: mounted
+!send fstest write /mnt/data.bin 1
+!wait 4
+fstest: wrote 1 MiB
+!send echo last words > /mnt/note.txt
+!wait 1
+!send poweroff
+!wait 2
+powering off
+!poweredoff

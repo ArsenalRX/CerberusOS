@@ -7,6 +7,8 @@
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
 #include <mm/kheap.h>
+#include <arch/x86_64/power.h>
+#include <drivers/driver.h>
 #include <drivers/pci.h>
 #include <fs/file.h>
 #include <fs/pagecache.h>
@@ -45,6 +47,9 @@ int cmd_cd(int argc, char** argv);
 int cmd_pwd(int, char**);
 int cmd_mount(int argc, char** argv);
 int cmd_pci(int, char**);
+int cmd_drivers(int, char**);
+int cmd_runas(int argc, char** argv);
+int cmd_poweroff(int, char**);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -62,12 +67,15 @@ const ShellCommandEntry COMMANDS[] = {
     {"pwd", "print the shell's working directory", cmd_pwd},
     {"mount", "mount: list mounted file systems (with arguments: run /bin/mount)", cmd_mount},
     {"pci", "list PCI devices", cmd_pci},
+    {"drivers", "list drivers and how many devices each has attached", cmd_drivers},
     {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
     {"gui", "compositor statistics", cmd_gui},
     {"irqs", "interrupt counts per vector", cmd_irqs},
     {"panic", "trigger a kernel panic", cmd_panic},
+    {"runas", "runas <uid> <program> [args]: run a program as another user id", cmd_runas},
+    {"poweroff", "write everything to disk and power the machine off (ACPI)", cmd_poweroff},
     {"halt", "halt the CPU", cmd_halt},
     {"reboot", "reset the machine", cmd_reboot},
 };
@@ -116,7 +124,7 @@ const Credentials ROOT_CRED = {0, 0};
 // Starts a program and waits. "> file" and ">> file" anywhere in the
 // arguments redirect its standard output. With `verbose` (the `run`
 // command) the exit status is always reported; otherwise only failures.
-int run_program(const char* path, int argc, char** argv, bool verbose) {
+int run_program(const char* path, int argc, char** argv, bool verbose, const Credentials* cred = nullptr) {
     const char* args[ARGV_MAX + 1];
     int n = 0;
     File* out = nullptr;
@@ -143,7 +151,7 @@ int run_program(const char* path, int argc, char** argv, bool verbose) {
         args[n++] = argv[i];
     }
     args[n] = nullptr;
-    Result<Process*> p = process_spawn(path, args, false, out);
+    Result<Process*> p = process_spawn(path, args, false, out, cred);
     if (out) file_unref(out);
     if (!p.ok()) {
         kprintf("%s: cannot start %s: %s\n", verbose ? "run" : argv[0], path, error_name(p.error()));
@@ -164,6 +172,46 @@ int cmd_run(int argc, char** argv) {
         return 1;
     }
     return run_program(argv[1], argc - 1, argv + 1, true);
+}
+
+// Resolves a command name to a program path: as given if it has a slash,
+// else in /bin.
+void program_path(const char* name, char* path, usize cap) {
+    if (strchr(name, '/')) strlcpy(path, name, cap);
+    else ksnprintf(path, cap, "/bin/%s", name);
+}
+
+int cmd_runas(int argc, char** argv) {
+    if (argc < 3) {
+        kprintf("usage: runas <uid> <program> [arguments]\n");
+        return 1;
+    }
+    u32 uid = 0;
+    for (const char* p = argv[1]; *p; p++) {
+        if (*p < '0' || *p > '9') {
+            kprintf("runas: '%s' is not a user id\n", argv[1]);
+            return 1;
+        }
+        uid = uid * 10 + (u32)(*p - '0');
+    }
+    Credentials cred{uid, uid};
+    char path[PATH_MAX];
+    program_path(argv[2], path, sizeof path);
+    return run_program(path, argc - 2, argv + 2, false, &cred);
+}
+
+// Writes file systems out, then powers off through ACPI.
+int cmd_poweroff(int, char**) {
+    kprintf("powering off\n");
+    vfs_sync();
+    power_off();
+    kprintf("poweroff: ACPI power off is not available on this machine; it is now safe to switch off\n");
+    return 1;
+}
+
+int cmd_drivers(int, char**) {
+    drivers_print();
+    return 0;
 }
 
 int cmd_pci(int, char**) {
@@ -339,12 +387,8 @@ int cmd_halt(int, char**) {
 
 int cmd_reboot(int, char**) {
     kprintf("rebooting\n");
-    // Pulse the keyboard controller reset line; fall back to a triple fault.
-    asm volatile("cli");
-    asm volatile("outb %0, %1" ::"a"((u8)0xFE), "Nd"((u16)0x64));
-    struct __attribute__((packed)) { u16 limit; u64 base; } null_idt{0, 0};
-    asm volatile("lidt %0; int3" ::"m"(null_idt));
-    halt_forever();
+    vfs_sync();
+    power_reboot();
 }
 
 int read_line(char* buf, usize cap) {
@@ -415,8 +459,7 @@ int split_args(char* line, char** argv, int max) {
         if (!found) {
             // Not built in: a program in /bin (or a path) of that name.
             char path[PATH_MAX];
-            if (strchr(argv[0], '/')) strlcpy(path, argv[0], sizeof path);
-            else ksnprintf(path, sizeof path, "/bin/%s", argv[0]);
+            program_path(argv[0], path, sizeof path);
             Result<Vnode*> v = vfs_resolve(process_kernel()->cwd, path, ROOT_CRED, LookupFlags{});
             if (!v.ok()) {
                 kprintf("unknown command '%s'\n", argv[0]);

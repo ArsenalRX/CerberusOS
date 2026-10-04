@@ -1,0 +1,37 @@
+#!bus nvme
+#!disk new 128M nvme
+#!hostcheck nvme
+# The same acceptance test with the disk attached as nvme.
+# Phase 9 acceptance: a disk formatted with mkfs.cerfs is mounted, a
+# directory tree 5 levels deep and a 4 MiB file are written, the file system
+# is unmounted and mounted again, and every byte reads back the same. The
+# image is then checked on the build machine by an independent reader.
+nvme
+cerberus kernel shell
+!send mount -t cerfs /dev/disk/sda /mnt
+!wait 2
+cerfs: mounted /dev/disk/sda
+!send mkdir -p /mnt/one/two/three/four/five
+!wait 1
+!send fstest write /mnt/one/two/three/four/five/data.bin 4
+!wait 8
+fstest: wrote 4 MiB
+!send umount /mnt
+!wait 3
+!send mount -t cerfs /dev/disk/sda /mnt
+!wait 2
+cerfs: mounted /dev/disk/sda
+!send fstest verify /mnt/one/two/three/four/five/data.bin 4
+!wait 8
+fstest: verified 4 MiB of /mnt/one/two/three/four/five/data.bin, every byte matches
+!send ls -l /mnt/one/two/three/four/five
+!wait 1
+4194304 data.bin
+!send rm -r /mnt/one
+!wait 2
+!send ls /mnt
+!wait 1
+!send umount /mnt
+!wait 3
+!send ls /mnt
+!wait 1

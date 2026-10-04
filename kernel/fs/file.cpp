@@ -117,7 +117,13 @@ Result<usize> file_read(File* f, void* buf, usize n) {
     if (!file_readable(f)) return Error::BadFd;
     Vnode* v = f->vnode;
     if (v->type == VType::Dir) return Error::IsDir;
-    if (v->type == VType::CharDev) return vfs_read(v, 0, buf, n);
+    if (v->type == VType::CharDev) {
+        // No position lock: a read from a device may wait for a long time,
+        // and stream devices ignore the offset anyway.
+        Result<usize> r = vfs_read(v, f->offset, buf, n);
+        if (r.ok()) __atomic_add_fetch(&f->offset, r.value(), __ATOMIC_RELAXED);
+        return r;
+    }
     MutexGuard g(f->pos_lock);
     Result<usize> r = vfs_read(v, f->offset, buf, n);
     if (r.ok()) f->offset += r.value();
@@ -127,7 +133,11 @@ Result<usize> file_read(File* f, void* buf, usize n) {
 Result<usize> file_write(File* f, const void* buf, usize n) {
     if (!file_writable(f)) return Error::BadFd;
     Vnode* v = f->vnode;
-    if (v->type == VType::CharDev) return vfs_write(v, 0, buf, n);
+    if (v->type == VType::CharDev) {
+        Result<usize> r = vfs_write(v, f->offset, buf, n);
+        if (r.ok()) __atomic_add_fetch(&f->offset, r.value(), __ATOMIC_RELAXED);
+        return r;
+    }
     MutexGuard g(f->pos_lock);
     if (f->flags & abi::O_APPEND) f->offset = v->size;
     Result<usize> r = vfs_write(v, f->offset, buf, n);
@@ -137,7 +147,6 @@ Result<usize> file_write(File* f, const void* buf, usize n) {
 
 Result<u64> file_seek(File* f, i64 off, u32 whence) {
     Vnode* v = f->vnode;
-    if (v->type == VType::CharDev) return Error::Invalid;
     MutexGuard g(f->pos_lock);
     i64 base;
     switch (whence) {

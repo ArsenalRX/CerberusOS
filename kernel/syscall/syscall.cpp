@@ -2,6 +2,7 @@
 // rules every handler follows.
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/gdt.h>
+#include <arch/x86_64/power.h>
 #include <drivers/refclock.h>
 #include <fs/file.h>
 #include <fs/vfs.h>
@@ -154,7 +155,6 @@ i64 sys_close(u64 fd, u64, u64, u64, u64, u64, InterruptFrame*) {
 i64 sys_seek(u64 fd, u64 off, u64 whence, u64, u64, u64, InterruptFrame*) {
     File* f = fd_file(fd);
     if (!f) return -err::BADF;
-    if (f->vnode->type == VType::CharDev) return -err::SPIPE;
     Result<u64> r = file_seek(f, (i64)off, (u32)whence);
     return r.ok() ? (i64)r.value() : errno_of(r.error());
 }
@@ -480,6 +480,16 @@ i64 sys_sleep_ms(u64 ms, u64, u64, u64, u64, u64, InterruptFrame*) {
 }
 
 i64 sys_time_ms(u64, u64, u64, u64, u64, u64, InterruptFrame*) { return (i64)(refclock_now_us() / 1000); }
+
+i64 sys_reboot(u64 how, u64, u64, u64, u64, u64, InterruptFrame*) {
+    if (self()->cred.uid != 0) return -err::PERM;
+    if (how != 1 && how != 2) return -err::INVAL;
+    if (how == 1 && !power_can_power_off()) return -err::NOSYS;
+    vfs_sync();
+    if (how == 2) power_reboot();
+    power_off();
+    return -err::IO;
+}
 
 i64 sys_getrandom(u64 buf, u64 n, u64 flags, u64, u64, u64, InterruptFrame*) {
     if (flags) return -err::INVAL;

@@ -1110,3 +1110,61 @@ offset in the blob. The text console (boot log, panics) keeps the PSF fonts.
   wallpaper computed with 8 extra bits per channel and ordered dithering.
 - Rejected: smoothing the enlarged bitmap font (still blurry, still a pixel
   font); writing the TrueType rasteriser now (phase 13).
+
+## 2026-10-04 — Phase 10: drivers
+
+The owner said "finish all phases" on 2026-10-04, so phases follow one
+another without waiting for a go-ahead; each still ends with a verified
+release.
+
+Design:
+
+- **Driver model** (`drivers/driver.h`): a `Driver` record with name, bus
+  (platform or PCI), PCI class match, `probe`, `attach`, `detach`, in one
+  registry. `drivers_probe_all` probes platform drivers once and offers each
+  PCI device to the matching drivers. AHCI, NVMe, virtio-blk and ATA use it;
+  the PS/2, timer and interrupt-controller code is brought up by hand
+  during early boot as before.
+- **Interrupts for PCI devices are MSI only.** Routing a legacy INTx line
+  needs the `_PRT` methods in ACPI's AML, and the kernel has no AML
+  interpreter. A device without MSI is polled. Vectors 0x40–0xEF are handed
+  out by `interrupt_alloc_vector`; messages go to the bootstrap CPU.
+- **AHCI** completes commands by MSI (QEMU) with a semaphore the handler
+  raises; it falls back to polling where there is no MSI (VirtualBox).
+- **NVMe** and **virtio-blk** are polled (their interrupts are MSI-X,
+  which is not implemented yet). NVMe: one admin and one I/O queue,
+  namespace 1, 512-byte blocks. virtio: the modern PCI transport and split
+  queues in `drivers/virtio.cpp`, written to be reused by virtio-net.
+  NVMe was not in the spec's phase 10; it is added because most current PCs
+  boot from it (docs/INSTALLER.md), as proposed to the owner.
+- **Keyboard:** scancode set 2 untranslated, each code mapped to the key's
+  set-1 make code (the controller's own table) so one key map serves both
+  modes; set 1 through the controller remains the fallback. Repeats come
+  from the keyboard (500 ms, 30 per second) and are marked on the event.
+  US layout only; other layouts belong with the settings application.
+- **Input events** (`drivers/input.cpp`): 24-byte records in a ring per
+  device, read through `/dev/input/kbd0` and `/dev/input/mouse0` (blocking,
+  whole records). The in-kernel desktop still reads the drivers' own
+  queues; the device files are what the userland window server will use.
+- **Access rule:** "only the window server's credential" is, until users
+  exist (phase 15), "root only": the nodes are mode 0600. `runas` (shell)
+  and a credential parameter on `process_spawn` exist to test it.
+- **Power:** S5 through the FADT's PM1 control ports, with the sleep type
+  taken from the `\_S5_` package found by name in the DSDT (no AML
+  interpreter); restart through the FADT reset register, then the keyboard
+  controller, then a triple fault. `reboot` is system call 64.
+- **/tmp** is mode 1777 and the VFS enforces the sticky rule.
+
+Deviations from SPEC phase 10, for the owner to see:
+
+- No MSI-X; NVMe and virtio-blk are polled. No legacy INTx routing.
+- NCQ is not used (optional in the spec); one command at a time per disk.
+- The real-time clock is read once at boot and kept by the reference clock,
+  not by counting timer ticks.
+- The desktop does not yet take its input from `/dev/input` (it is still in
+  the kernel until phase 12).
+- No keyboard LEDs.
+
+Rejected: an AML interpreter now (large; only `_S5` and interrupt routing
+need it so far); keeping the controller's translation as the only mode (it
+cannot express some keys and hides the keyboard's real codes).

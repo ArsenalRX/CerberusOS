@@ -60,7 +60,9 @@ void process_init();
 // The new process starts in the kernel's working directory (the shell's
 // `cd`). Standard output goes to `out` when given (shell redirection),
 // otherwise to the console like standard input and error.
-Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out = nullptr);
+// `cred` (default: root) is the identity the program runs as.
+Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out = nullptr,
+                               const Credentials* cred = nullptr);
 // Blocks until `child` (a child of the kernel) exits, frees it, and returns
 // its wait status.
 int process_wait(Process* child);

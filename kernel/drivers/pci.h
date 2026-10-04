@@ -31,5 +31,15 @@ void pci_enable_dma(const PciDevice& d);
 // Physical address of a memory BAR (handles 64-bit BARs); 0 if it is an I/O BAR.
 u64 pci_bar_address(const PciDevice& d, u32 index);
 
+// Config-space offset of capability `id` (5 = MSI, 0x11 = MSI-X, 9 = vendor),
+// searching from `after` (0 = the first); 0 if absent. The list is walked
+// with a bound, so a looping list from a broken device ends.
+u8 pci_find_capability(const PciDevice& d, u8 id, u8 after = 0);
+u8 pci_read8(const PciDevice& d, u8 offset);
+// Delivers the device's interrupt as a message (MSI) on `vector` to the
+// bootstrap CPU and turns the legacy INTx line off. False if the device has
+// no MSI capability.
+bool pci_enable_msi(const PciDevice& d, u8 vector);
+
 // One line per device (the `pci` shell command).
 void pci_print();

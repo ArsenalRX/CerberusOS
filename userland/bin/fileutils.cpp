@@ -1,6 +1,6 @@
 // Small file tools in one program, chosen by the name it is started as
 // (like busybox): rmdir, mv, cp, touch, stat, ln, sync, mount, umount, pwd,
-// write. The boot archive carries one copy per name.
+// write, poweroff, reboot. The boot archive carries one copy per name.
 #include <cerberus.h>
 
 namespace {
@@ -186,6 +186,10 @@ int main(int argc, char** argv) {
         write(fd, "\n", 1);
         close(fd);
         return 0;
+    }
+    if (!strcmp(tool, "poweroff") || !strcmp(tool, "reboot")) {
+        reboot(tool[0] == 'p' ? REBOOT_POWER_OFF : REBOOT_RESTART);
+        return fail(tool, "the system");
     }
     dprintf(2, "fileutils: started as unknown name '%s'\n", tool);
     return 2;

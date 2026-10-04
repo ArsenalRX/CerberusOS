@@ -179,6 +179,36 @@ void* calloc(size_t count, size_t size);
 void* realloc(void* p, size_t n);
 void free(void* p);
 
+// ---- machine ----
+#define REBOOT_POWER_OFF 1
+#define REBOOT_RESTART 2
+// Writes everything to disk, then powers off or restarts. Root only;
+// returns only on failure.
+int reboot(int how);
+uint64_t time_ms(void);
+
+// ---- input devices (/dev/input/kbd0, /dev/input/mouse0; root only) ----
+#define EV_KEY 1        // code: key code; value: 1 press, 0 release, 2 repeat
+#define EV_REL 2        // code: REL_X, REL_Y, REL_WHEEL; value: movement
+#define EV_BUTTON 3     // code: 0 left, 1 right, 2 middle; value: 1 press, 0 release
+#define REL_X 0
+#define REL_Y 1
+#define REL_WHEEL 2
+struct input_event {
+    uint64_t time_us;
+    uint16_t type, code;
+    int32_t value;
+    uint32_t unicode;
+    uint16_t mods;      // 1 shift, 2 ctrl, 4 alt, 8 super, 16 caps lock, 32 num lock
+    uint16_t reserved;
+};
+
+// ---- the screen (/dev/fb0; root only) ----
+#define FBIO_GET_INFO 0x4600
+struct fb_info {
+    uint32_t width, height, pitch, bpp;
+};
+
 // ---- randomness ----
 long getrandom(void* buf, size_t n, unsigned flags);
 

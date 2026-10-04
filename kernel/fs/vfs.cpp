@@ -283,6 +283,13 @@ Result<Vnode*> resolve_locked(Vnode* start, const char* path, const Credentials&
     }
 }
 
+// In a directory with the sticky bit (01000, as on /tmp) a name may be
+// removed or renamed only by the file's owner, the directory's owner, or root.
+bool sticky_allows(const Vnode* dir, const Vnode* target, const Credentials& cred) {
+    if (!(dir->mode & 01000) || cred.uid == 0) return true;
+    return cred.uid == target->uid || cred.uid == dir->uid;
+}
+
 void add_type(const char* name, MountFn fn) {
     if (g_type_count < sizeof g_types / sizeof g_types[0]) g_types[g_type_count++] = {name, fn};
 }
@@ -417,6 +424,7 @@ Result<void> vfs_unlink(Vnode* start, const char* path, const Credentials& cred,
         if (!t.ok()) r = t.error();
         else {
             if (t.value()->mounted_here) r = Error::Busy;
+            else if (!sticky_allows(dir, t.value(), cred)) r = Error::Perm;
             unref_locked(t.value());
         }
     }
@@ -473,6 +481,15 @@ Result<void> vfs_rename(Vnode* start, const char* from, const char* to, const Cr
         if (walk) unref_locked(walk);
     }
     if (r.ok() && src->mounted_here) r = Error::Busy;
+    if (r.ok() && !sticky_allows(fd, src, cred)) r = Error::Perm;
+    if (r.ok()) {
+        // Replacing someone else's file in a sticky directory is deleting it.
+        Result<Vnode*> old = td->ops->lookup ? td->ops->lookup(td, tname, strlen(tname)) : Result<Vnode*>(Error::NotFound);
+        if (old.ok()) {
+            if (!sticky_allows(td, old.value(), cred)) r = Error::Perm;
+            unref_locked(old.value());
+        }
+    }
     if (src) unref_locked(src);
     if (r.ok()) {
         dcache_forget(fd, fname, strlen(fname));

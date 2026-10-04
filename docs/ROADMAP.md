@@ -13,11 +13,11 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-04**, at release **0.0.5c** (phase 9 complete; the OS renamed Cerberus).
+Last updated: **2026-10-04**, at release **0.0.5e** (phase 10 complete).
 
 ---
 
-## What Cerberus can do today (0.0.5c)
+## What Cerberus can do today (0.0.5e)
 
 Cerberus is a 64-bit operating system written from scratch. It boots in
 QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
@@ -58,7 +58,9 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   About.
 - Keyboard shortcuts: Alt+Tab, Alt+F4, Super (menu), Super+T (terminal),
   Super+M (maximise).
-- PS/2 keyboard and mouse (with wheel).
+- PS/2 keyboard (every key, keypad, repeat) and mouse (with wheel).
+- Smooth, anti-aliased text everywhere.
+- `poweroff` and `reboot` work.
 
 **Files and disks**
 - Real files and folders: `/` (read-only, from the boot archive), `/tmp`
@@ -66,7 +68,7 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
 - **cerfs**, Cerberus's own disk format, with a journal: pulling the plug
   while it writes never leaves the disk broken. Format a disk with
   `mkfs.cerfs -y /dev/disk/sda`, then `mount -t cerfs /dev/disk/sda /mnt`.
-- SATA disks (fast, DMA) and older IDE disks.
+- SATA, NVMe, virtio and older IDE disks.
 - File permissions, read-only and no-programs mounts, and a disk in use
   can't be overwritten.
 - A page cache and a name cache make repeated reads come from memory.
@@ -152,34 +154,19 @@ windows. The Spec programming language has not been started.
 
 ---
 
-## Phase 10 — Drivers
+## Done in 0.0.5e: Phase 10 — Drivers
 
-**Add**
-- [ ] PCI: device enumeration exists (phase 9, `pci` command); still to add:
-  message-signalled interrupts (MSI/MSI-X) and a driver match table.
-- [ ] Driver model: name, probe, attach, detach, and a registry.
-- [x] **AHCI/SATA** disk driver with DMA (done early, in phase 9; still to
-  add: interrupts instead of polling).
-- [x] Simple IDE disk driver (done early, in phase 9).
-- [ ] **virtio-blk** disk driver and the shared virtio transport (QEMU's fast
-  path; reused for networking).
-- [ ] *(proposed)* **NVMe** disk driver: most current PCs use NVMe; needed
-  before installing on real hardware (see docs/INSTALLER.md).
-- [ ] Full PS/2 keyboard driver (scancode set 2, full key map, modifiers,
-  key repeat, Unicode) and mouse driver, replacing today's early drivers.
-- [ ] Input events delivered through `/dev/input/*`.
-- [ ] Real-time clock kept current from the timer.
-- [ ] ACPI shutdown and reboot (a real "power off").
-
-**Security**
-- [ ] Every value a device reports is treated as untrusted and checked.
-- [ ] Only the window server may open `/dev/input/*` and `/dev/fb0`: no
-  other program can read keystrokes or the screen.
-
-**Done when:** typing gives the right characters (shift, caps, symbols);
-the mouse moves the cursor; a file written to the SATA disk survives a
-reboot (already true since phase 9); a normal program is refused the keyboard and screen devices;
-`poweroff` turns the VM off.
+- [x] Driver model with a registry (`drivers`); PCI capabilities and
+  message interrupts (MSI).
+- [x] Disks: SATA (AHCI, by interrupt where the controller offers MSI),
+  NVMe, virtio, IDE.
+- [x] Full keyboard driver (native scancode set 2, whole key map, keypad
+  and Num Lock, repeat) and mouse, both readable from `/dev/input`.
+- [x] `/dev/fb0`; screen, input and disk devices closed to non-root
+  programs; sticky `/tmp`.
+- [x] `poweroff` and `reboot` through ACPI.
+- [ ] Left for later: MSI-X (NVMe and virtio disks are polled), keyboard
+  LEDs, other keyboard layouts.
 
 ---
 
@@ -526,9 +513,9 @@ Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 
 ## Decisions waiting on the owner
 
-1. Go-ahead for phase 10 (drivers), listed above.
-   Answered 2026-10-04: our own web browser is wanted (phase 15B); the OS
-   is called Cerberus.
+1. None blocking right now: on 2026-10-04 the owner said to finish all
+   phases, so they follow one another. Answered that day: our own web
+   browser is wanted (phase 15B); the OS is called Cerberus.
 2. TCP/IP: write our own or port lwIP (before phase 14).
 3. TLS/crypto: Mbed TLS (recommended), BearSSL, or our own (before
    phase 15).
@@ -537,4 +524,4 @@ Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 6. Confirm the scope of the network toolbox: connecting with your own
    credentials, a password manager for your own secrets, diagnostics for
    machines you own. Breaking into other people's Wi-Fi is not built.
-7. Proposed: add NVMe to phase 10 so real PCs can be installed on.
+7. (Done in 0.0.5e: NVMe support.)

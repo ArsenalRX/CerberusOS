@@ -242,3 +242,14 @@ Clock: PIT (the TSC is not trusted there, docs/DECISIONS.md).
 | Minor page fault | 8,513 ns | 2,000 ns | **over** (the budgets are defined for QEMU/KVM) |
 | System-call round trip | 30 ns | 300 ns | within |
 | Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+
+## 0.0.5e — 2026-10-04 (phase 10: drivers)
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs, 512 MiB — `make bench`, one run
+
+Context switch 25 ns, wake-up 8 µs average / 53 µs worst, `kmalloc`+`kfree`
+81 ns, minor page fault 2,052 ns (**over**, unchanged), system call 32 ns,
+idle desktop 0 %, last composite 141 µs. No change from 0.0.5c outside
+run-to-run variation. All four disk drivers (AHCI by interrupt, NVMe,
+virtio-blk, IDE) pass the cerfs acceptance test; they were not timed
+against each other.

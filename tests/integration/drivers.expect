@@ -1,0 +1,45 @@
+#!disk blank 16M drivers
+# Phase 10: the driver model lists its drivers, the keyboard runs in scancode
+# set 2, the SATA disk completes commands by interrupt, and the screen and
+# input devices are closed to a program that is not root (uid 1000), while
+# the same program can still run and use ordinary files.
+ps2kbd: scancode set 2
+power: ACPI power off available
+ahci: sda: port 0, 16 MiB, "QEMU HARDDISK" (DMA, interrupts)
+cerberus kernel shell
+!send drivers
+!wait 1
+ahci
+nvme
+virtio-blk
+ata
+!send pci
+!wait 1
+SATA controller (AHCI)
+!send runas 1000 cat /dev/fb0
+!wait 2
+cat: /dev/fb0: permission denied
+!send runas 1000 cat /dev/input/kbd0
+!wait 2
+cat: /dev/input/kbd0: permission denied
+!send runas 1000 cat /dev/input/mouse0
+!wait 2
+cat: /dev/input/mouse0: permission denied
+!send runas 1000 cat /dev/disk/sda
+!wait 2
+cat: /dev/disk/sda: permission denied
+!send runas 1000 cat /etc/hostname
+!wait 2
+cerberus
+!send runas 1000 touch /tmp/mine
+!wait 2
+!send ls -l /tmp
+!wait 2
+1000 1000
+!send runas 1001 rm /tmp/mine
+!wait 2
+rm: /tmp/mine: operation not permitted
+!send runas 1000 rm /tmp/mine
+!wait 2
+!send ls /tmp
+!wait 1

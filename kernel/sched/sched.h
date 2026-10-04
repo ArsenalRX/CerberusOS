@@ -215,6 +215,9 @@ void sched_unlock(u64 saved);
 // With the lock held: blocks the calling thread on `wq`. Returns with the
 // lock held again, possibly on another CPU.
 void sched_block_locked(WaitQueue& wq);
+// As sched_block_locked, but wakes after `ticks` timer ticks at the latest;
+// false if it was the timeout.
+bool sched_block_locked_ticks(WaitQueue& wq, u64 ticks);
 // With the lock held: the wake functions.
 bool sched_wake_one_locked(WaitQueue& wq);
 void sched_wake_all_locked(WaitQueue& wq);

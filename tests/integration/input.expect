@@ -1,0 +1,37 @@
+# Phase 10: keyboard and mouse events can be read from /dev/input by a root
+# program as they happen: key codes, press and release, the character typed
+# with Shift applied, and mouse movement and buttons. (The typed keys also
+# reach the shell, which then complains about the unknown commands.)
+ps2kbd: scancode set 2
+ps2mouse: streaming
+cerberus kernel shell
+!send inputtest kbd 4
+!wait 2
+inputtest: reading 4 event(s) from /dev/input/kbd0
+!key a
+!wait 2
+inputtest: key 0x1e press 'a'
+inputtest: key 0x1e release
+inputtest: key 0x1c press
+inputtest: done
+!send inputtest kbd 6
+!wait 2
+inputtest: reading 6 event(s)
+!key A
+!wait 2
+inputtest: key 0x2a press
+inputtest: key 0x1e press 'A' mods 0x21
+inputtest: done
+!send inputtest mouse 3
+!wait 2
+inputtest: reading 3 event(s) from /dev/input/mouse0
+!mouse 12 0
+!button left down
+!button left up
+!wait 2
+inputtest: move x
+inputtest: button 0 press
+inputtest: done
+!send runas 1000 inputtest kbd 1
+!wait 2
+inputtest: /dev/input/kbd0: permission denied

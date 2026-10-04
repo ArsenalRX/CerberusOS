@@ -76,6 +76,7 @@ int main(int, char**, char**) {
     longpath[0] = '/';
     longpath[sizeof longpath - 1] = 0;
     expect("open(path too long)", CALL(SYS_open, longpath, 0, 0, 0, 0, 0), -ENAMETOOLONG);
+    expect("reboot(unknown request)", CALL(SYS_reboot, 99, 0, 0, 0, 0, 0), -EINVAL);
     expect("mount(unknown type)", CALL(SYS_mount, "none", "/mnt", "nosuchfs", 0, 0, 0), -ENODEV);
     // A string pointer array whose entries point at bad addresses.
     unsigned long argv_bad[] = {(unsigned long)"ok", KERNEL, 0};

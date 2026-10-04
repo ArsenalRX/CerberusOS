@@ -14,6 +14,7 @@ Usage: qemu-probe.py <iso> [--uefi OVMF_CODE.fd] [--wait SECONDS] [--smp N]
                   !send <text>   type <text> + Enter into the serial console
                   !wait <secs>   pause before continuing
                   !kill          SIGKILL QEMU at once (a power cut)
+                  !poweredoff    the guest must have powered itself off
                   (also !key, !mouse, !mouseto, !button, !wheel, !screenshot)
                 Directives execute after the initial --wait, in file order.
 Exit status: 0 if RIP is in the kernel's higher half and all expectations hold.
@@ -49,10 +50,12 @@ def load_setup(path):
       #!disk new <size> <name>      a fresh cerfs image build/disk-<name>.img (mkfs.cerfs)
       #!disk blank <size> <name>    an all-zero image (nothing on it)
       #!disk keep <name>            reuse that image as left by an earlier test
+      #!bus ide|nvme|virtio         how disks are attached (default ide: AHCI on
+                                    q35, the legacy IDE controller on pc)
       #!hostcheck <name>            after the run: mkfs.cerfs --check must pass
       #!hostcheck-replay <name>     after the run: replay the journal on a copy, then check
     """
-    setup = {"machine": None, "disks": [], "checks": []}
+    setup = {"machine": None, "disks": [], "checks": [], "bus": "ide"}
     for raw in open(path, encoding="utf-8"):
         line = raw.strip()
         if not line.startswith("#!"):
@@ -60,6 +63,8 @@ def load_setup(path):
         words = line[2:].split()
         if words[:1] == ["machine"] and len(words) == 2:
             setup["machine"] = words[1]
+        elif words[:1] == ["bus"] and len(words) == 2 and words[1] in ("ide", "nvme", "virtio"):
+            setup["bus"] = words[1]
         elif words[:2] == ["disk", "new"] and len(words) == 4:
             setup["disks"].append(("new", words[3], words[2]))
         elif words[:2] == ["disk", "blank"] and len(words) == 4:
@@ -104,6 +109,8 @@ def load_expect(path):
             steps.append(("screenshot", line[12:]))
         elif line.strip() == "!kill":                # pull the plug: SIGKILL, no shutdown
             steps.append(("kill", None))
+        elif line.strip() == "!poweredoff":          # the guest must have powered itself off (ACPI S5)
+            steps.append(("poweredoff", None))
         else:
             steps.append(("expect", line))
     return steps
@@ -162,7 +169,7 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="cerberus-qmp-")
     sock = os.path.join(tmp, "qmp.sock")
-    setup = load_setup(a.expect) if a.expect else {"machine": None, "disks": [], "checks": []}
+    setup = load_setup(a.expect) if a.expect else {"machine": None, "disks": [], "checks": [], "bus": "ide"}
     if setup["machine"]:
         a.machine = setup["machine"]
     for mode, name, size in setup["disks"]:
@@ -196,7 +203,14 @@ def main():
     if a.uefi:
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={a.uefi}"]
     for i, d in enumerate(a.disk):
-        cmd += ["-drive", f"file={d},format=raw,if=ide,index={i},media=disk"]
+        if setup["bus"] == "nvme":
+            cmd += ["-drive", f"file={d},format=raw,if=none,id=disk{i}",
+                    "-device", f"nvme,drive=disk{i},serial=cerberus{i}"]
+        elif setup["bus"] == "virtio":
+            cmd += ["-drive", f"file={d},format=raw,if=none,id=disk{i}",
+                    "-device", f"virtio-blk-pci,drive=disk{i}"]
+        else:
+            cmd += ["-drive", f"file={d},format=raw,if=ide,index={i},media=disk"]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
 
@@ -259,12 +273,25 @@ def main():
         time.sleep(a.wait)
     q = Qmp(sock)
     killed = False
+    power_failed = False
     for index, (kind, arg) in enumerate(steps):
         if kind == "kill":
             proc.kill()
             proc.wait()
             killed = True
             break
+        if kind == "poweredoff":
+            # With -no-shutdown QEMU stops in the "shutdown" state instead of exiting.
+            deadline = time.time() + 15
+            state = "?"
+            while time.time() < deadline:
+                state = (q.cmd("query-status") or {}).get("status", "?")
+                if state == "shutdown":
+                    break
+                time.sleep(0.3)
+            print(f"power state: {state}")
+            power_failed = state != "shutdown"
+            continue
         if kind == "send":
             proc.stdin.write((arg + "\n").encode()); proc.stdin.flush()
             time.sleep(0.3)
@@ -328,7 +355,13 @@ def main():
             rip = int(line.split()[0][4:], 16)
             print(line.strip()); break
     ok = rip is not None and rip >= KERNEL_BASE
-    if killed:
+    if power_failed:
+        print("poweredoff FAILED: the machine is still running")
+        ok = False
+    elif any(kind == "poweredoff" for kind, _ in steps):
+        ok = True       # a powered-off CPU is not "in the kernel"; that is the point
+        print("kernel entered: YES (machine powered itself off)")
+    elif killed:
         ok = True
         print("kernel entered: YES (machine killed on purpose by !kill)")
     else:

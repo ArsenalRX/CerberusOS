@@ -13,7 +13,7 @@ every other register is preserved. Numbers never change. Only implemented calls 
 | 2 | `long read(int fd, void* buf, size_t n)` | Reads up to n bytes; returns the number read, 0 at end of file. The console has no input yet and returns 0. EBADF, EFAULT. |
 | 3 | `int open(const char* path, int flags, int mode)` | Opens a file; relative paths start at the working directory. flags: O_RDONLY/O_WRONLY/O_RDWR plus O_CREAT, O_EXCL, O_TRUNC, O_APPEND, O_NONBLOCK, O_DIRECTORY, O_NOFOLLOW, O_CLOEXEC. A new file gets mode & ~umask. Returns the lowest free descriptor. ENOENT, EACCES, EEXIST, EISDIR, ENOTDIR, ELOOP, EROFS, ENODEV, EINVAL, EMFILE, ENAMETOOLONG, EFAULT. |
 | 4 | `int close(int fd)` | Closes a descriptor. EBADF. |
-| 5 | `long seek(int fd, long off, int whence)` | Moves the file offset (SEEK_SET 0, SEEK_CUR 1, SEEK_END 2); returns the new offset. Directories only rewind to 0. EBADF, EINVAL, ESPIPE (devices). |
+| 5 | `long seek(int fd, long off, int whence)` | Moves the file offset (SEEK_SET 0, SEEK_CUR 1, SEEK_END 2); returns the new offset. Directories only rewind to 0; stream devices ignore the offset. EBADF, EINVAL. |
 | 6 | `int stat(const char* path, struct stat* out)` | Describes a file, following symbolic links. ENOENT, EACCES, ENOTDIR, ELOOP, ENAMETOOLONG, EFAULT. |
 | 7 | `int fstat(int fd, struct stat* out)` | Describes an open file. EBADF, EFAULT. |
 | 8 | `int mkdir(const char* path, int mode)` | Creates a directory with mode & ~umask. EEXIST, ENOENT, EACCES, EROFS, ENOSPC, ENAMETOOLONG, EFAULT. |
@@ -36,6 +36,7 @@ every other register is preserved. Numbers never change. Only implemented calls 
 | 38 | `int yield(void)` | Gives up the rest of the time slice. Returns 0. |
 | 39 | `int sleep_ms(uint64_t ms)` | Sleeps at least ms milliseconds (at most 2^31). Returns 0. EINVAL. |
 | 60 | `uint64_t time_ms(void)` | Milliseconds since the system started (monotonic). |
+| 64 | `int reboot(int how)` | Writes every file system to disk, then powers the machine off (how = 1) or restarts it (how = 2). Root only. Returns only on failure: EPERM, EINVAL, ENOSYS (power off not available). |
 | 66 | `long getrandom(void* buf, size_t n, unsigned flags)` | Fills buf with random bytes from the kernel generator; returns the number written (at most 1 MiB per call). flags must be 0. EINVAL, EFAULT. |
 | 120 | `int openat(int dirfd, const char* path, int flags, int mode)` | As open, relative to the directory open as dirfd (AT_FDCWD -100: the working directory). EBADF, ENOTDIR, and those of open. |
 | 121 | `int rmdir(const char* path)` | Removes an empty directory. ENOTEMPTY, ENOTDIR, EBUSY (a mount point), ENOENT, EACCES, EROFS, EFAULT. |

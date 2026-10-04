@@ -22,6 +22,44 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5e — 2026-10-04 (security release)
+
+Spec phase 10, drivers, is complete.
+
+### Security
+- The screen (`/dev/fb0`), keyboard and mouse (`/dev/input/*`) and disks can
+  be opened by root only; a program running as another user is refused
+  (tested with a program run as user 1000).
+- `/tmp` is writable by everyone, and only a file's owner can delete or
+  rename it there (the "sticky" rule).
+- Everything a device reports (sizes, counts, queue positions) is checked
+  before it is used, in every new driver.
+
+### Added
+- `poweroff` switches the machine off and `reboot` restarts it, through
+  ACPI, after writing everything to disk (also as the `reboot` system call).
+- NVMe disks (the kind most current PCs have) and virtio disks (QEMU's fast
+  disk) work alongside SATA and IDE.
+- Keyboard and mouse events can be read from `/dev/input/kbd0` and
+  `/dev/input/mouse0`: key codes, press, release and repeat, the character
+  typed, the modifier keys; mouse movement, wheel and buttons.
+- The whole keyboard works: the numeric keypad with Num Lock, the menu key,
+  Print Screen, Pause, right-hand Ctrl and Alt, keypad Enter and `/`.
+- `drivers` lists the drivers and what each has attached; `runas <uid>
+  <program>` runs a program as another user.
+- `/dev/fb0`: the screen as a file, with its size from an ioctl.
+
+### Changed
+- The keyboard is read in its native mode (scancode set 2) instead of the
+  controller's translation, falling back to the old mode if a keyboard
+  refuses.
+- Drivers are found and started through one registry (the driver model).
+
+### Performance
+- SATA commands are completed by an interrupt (MSI) where the controller
+  offers it, so the processor is free while the disk works; VirtualBox's
+  controller does not, and is polled as before.
+
 ## 0.0.5d — 2026-10-04
 
 Smooth text: the desktop no longer looks pixelated.

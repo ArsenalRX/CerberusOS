@@ -1,6 +1,7 @@
 // See ata.h.
 #include <arch/x86_64/io.h>
 #include <drivers/ata.h>
+#include <drivers/driver.h>
 #include <drivers/refclock.h>
 #include <fs/block.h>
 #include <lib/kprintf.h>
@@ -177,12 +178,17 @@ void probe(Channel* ch, bool slave) {
             slave ? "slave" : "master", (unsigned long)(sectors / 2048), lba48 ? "LBA48" : "LBA28", d->dev.model);
 }
 
-} // namespace
-
-void ata_init() {
+Result<void> attach(const PciDevice*) {
     for (Channel& ch : g_channels) {
         probe(&ch, false);
         probe(&ch, true);
     }
-    if (!block_count()) kprintf("ata: no disks\n");
+    return {};
 }
+
+Driver g_driver = {"ata", "IDE disks (legacy ports, programmed I/O)", DriverBus::Platform, 0, 0, 0, nullptr, attach,
+                   nullptr, 0, nullptr};
+
+} // namespace
+
+void ata_register() { driver_register(&g_driver); }

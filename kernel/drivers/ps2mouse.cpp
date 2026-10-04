@@ -5,6 +5,7 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/interrupts.h>
 #include <arch/x86_64/io.h>
+#include <drivers/input.h>
 #include <drivers/ioapic.h>
 #include <drivers/lapic.h>
 #include <drivers/ps2.h>
@@ -96,6 +97,15 @@ void handle_byte(u8 b) {
     }
     e.buttons = flags & 0x07;
     push(e);
+    // The same packet as events for /dev/input/mouse0.
+    if (e.dx) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_X, e.dx);
+    if (e.dy) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_Y, e.dy);
+    if (e.dz) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_WHEEL, e.dz);
+    static u8 last_buttons = 0;
+    for (u16 b = 0; b < 3; b++)
+        if ((e.buttons ^ last_buttons) & (1 << b))
+            input_report(input::DEV_MOUSE, input::EV_BUTTON, b, (e.buttons >> b) & 1);
+    last_buttons = e.buttons;
 }
 
 bool init_locked();

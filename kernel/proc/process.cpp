@@ -234,7 +234,8 @@ Result<void> exec_args_add(ExecArgs* a, const char* s, bool env) {
 
 void process_init() { syscall_init(); }
 
-Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out) {
+Result<Process*> process_spawn(const char* path, const char* const argv[], bool auto_reap, File* out,
+                               const Credentials* cred) {
     SpawnCtx* ctx = (SpawnCtx*)kzalloc(sizeof(SpawnCtx));
     if (!ctx) return Error::NoMemory;
     Error err = strlen(path) < PATH_MAX ? exec_args_init(&ctx->args).error() : Error::TooBig;
@@ -264,6 +265,9 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
         }
         Process* k = process_kernel();
         if (err == Error::None && k->cwd) p->cwd = vnode_ref(k->cwd);
+        // The standard descriptors were opened as root above; the program
+        // itself runs as whoever was asked for.
+        if (cred) p->cred = *cred;
     }
     if (err == Error::None) {
         p->auto_reap = auto_reap;

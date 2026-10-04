@@ -29,7 +29,13 @@
 #include <lib/version.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <arch/x86_64/power.h>
 #include <drivers/ahci.h>
+#include <drivers/fbdev.h>
+#include <drivers/input.h>
+#include <drivers/driver.h>
+#include <drivers/nvme.h>
+#include <drivers/virtio_blk.h>
 #include <drivers/ata.h>
 #include <drivers/pci.h>
 #include <fs/fs.h>
@@ -85,9 +91,15 @@ void print_banner() {
 // The first thread: brings up the desktop, then becomes the kernel shell.
 void init_thread(void*) {
     strlcpy(thread_current()->name, "shell", sizeof thread_current()->name);
+    power_init();
+    input_init();
+    fbdev_init();
     pci_init();
-    ahci_init();
-    ata_init();
+    ahci_register();
+    nvme_register();
+    virtio_blk_register();
+    ata_register();
+    drivers_probe_all();
     fs_init();
     if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
     // The first user process. It is not waited for: it runs for as long as
@@ -165,7 +177,6 @@ extern "C" [[noreturn]] void kernel_main() {
     ps2kbd_init();
     interrupts_enable();
     kprintf("timer: periodic at %u Hz, interrupts enabled\n", TIMER_HZ);
-    kprintf("ps2kbd: irq 1 unmasked (early driver, US layout)\n");
 
     // Measure the delivered tick rate and correct the reload count if the
     // estimate was off. A wrong rate here would make every timeout wrong.

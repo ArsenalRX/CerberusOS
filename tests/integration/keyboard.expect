@@ -1,6 +1,6 @@
 # Phase 2 (early PS/2 driver): keys typed on the emulated keyboard reach the
 # kernel shell. "!key" types through QEMU's PS/2 device, not the serial port.
-ps2kbd: irq 1 unmasked
+ps2kbd: scancode set 2
 cerberus kernel shell
 !key help
 !wait 1

@@ -46,6 +46,9 @@ int mount(const char* source, const char* target, const char* type, unsigned fla
 int umount(const char* target) { return (int)CALL(SYS_umount, target, 0, 0, 0); }
 long getdents(int fd, struct dirent* out, size_t n) { return CALL(SYS_readdir, fd, out, n, 0); }
 
+int reboot(int how) { return (int)CALL(SYS_reboot, how, 0, 0, 0); }
+uint64_t time_ms(void) { return (uint64_t)syscall6(SYS_time_ms, 0, 0, 0, 0, 0, 0); }
+
 char* getcwd(char* buf, size_t n) {
     return check(syscall6(SYS_getcwd, (long)buf, (long)n, 0, 0, 0, 0)) < 0 ? nullptr : buf;
 }
