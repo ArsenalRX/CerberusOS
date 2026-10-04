@@ -15,4 +15,7 @@ void refclock_init();
 const char* refclock_name();
 u64 refclock_now_us();
 void refclock_sleep_us(u64 microseconds);
+// Called from the timer tick: keeps the PIT fallback from losing time when
+// nothing else reads the clock for a while. Does nothing for other sources.
+void refclock_poll();
 static inline void refclock_sleep_ms(u64 ms) { refclock_sleep_us(ms * 1000); }

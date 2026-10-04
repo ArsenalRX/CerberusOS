@@ -95,13 +95,18 @@ void parse_madt(const AcpiSdtHeader* madt) {
     }
 }
 
+char g_oem_id[7];
+
 } // namespace
+
+const char* acpi_oem_id() { return g_oem_id; }
 
 void acpi_init() {
     if (!g_boot_info.rsdp) PANIC("acpi: bootloader provided no RSDP");
     const Rsdp* rsdp = (const Rsdp*)early_map(g_boot_info.rsdp, sizeof(Rsdp), MapCache::WriteBack);
     if (memcmp(rsdp->signature, "RSD PTR ", 8) != 0) PANIC("acpi: bad RSDP signature");
     if (!checksum_ok(rsdp, 20)) kprintf("acpi: warning: RSDP v1 checksum bad\n");
+    memcpy(g_oem_id, rsdp->oem_id, 6);
 
     if (rsdp->revision >= 2 && rsdp->xsdt_address) {
         if (!checksum_ok(rsdp, 36)) kprintf("acpi: warning: RSDP v2 checksum bad\n");

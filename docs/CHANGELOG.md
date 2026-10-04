@@ -22,7 +22,73 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5c — 2026-10-04 (security release)
+
+Spec phase 9, files and file systems, is complete: Cerberus can keep files
+on a disk. The system has a new name: Cerberus.
+
+### Security
+- File permissions (owner, group, others) are checked on every file
+  operation; a user cannot read another user's private file, write a file
+  they may only read, or look inside a directory closed to them.
+- Mount options: read-only, no programs (`noexec`), no device files
+  (`nodev`), no set-user (`nosuid`). The root file system is read-only;
+  `/tmp` refuses device files; `/dev` refuses programs.
+- The disk file system treats every disk as hostile: every field is checked
+  before use, metadata carries CRC32C checksums, and a damaged disk gives an
+  input/output error, never a crash. It is fuzzed: thousands of damaged disk
+  images a minute are mounted and used by the real driver.
+- A disk in use by a mounted file system cannot be opened for writing, so it
+  cannot be formatted or overwritten by accident.
+- A new disk block is never shown with what a deleted file left in it.
+- Keyboard, mouse and screen device files are readable by root only (this
+  matters from phase 15: until user accounts exist, every program runs as
+  root).
+
+### Performance
+- One page cache for file contents and disks, with read-ahead for
+  sequential reads and background write-back every 5 seconds: reading a
+  64 MiB file a second time takes 6 ms instead of 0.7 s.
+- A name cache remembers recently used paths.
+- Closed files stay cached, so opening them again finds their data in memory.
+- SATA disks are read and written by DMA (about 87 MB/s in QEMU).
+
+### Added
+- Files and folders: `/` (read-only, from the boot archive), `/tmp` (in
+  memory), `/dev` (devices), and disks mounted anywhere, for example `/mnt`.
+- **cerfs**, the disk file system, with a journal: pulling the power while
+  files are being written leaves the disk consistent (tested by killing the
+  machine mid-write and checking the disk with an independent reader).
+- `mkfs.cerfs` formats a disk, both inside Cerberus (`mkfs.cerfs -y
+  /dev/disk/sda`) and on the build machine (`mkfs.cerfs --check` verifies an
+  image).
+- Disk drivers: SATA (AHCI) and the older IDE controller. `pci` lists the
+  PCI devices.
+- Programs: `ls`, `cat`, `echo`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`, `touch`,
+  `stat`, `ln -s`, `sync`, `mount`, `umount`, `pwd`, `write`, `fstest`,
+  `mkfs.cerfs`.
+- The shell runs programs by name (`ls` instead of `run /bin/ls`), sends
+  their output to a file with `>` or `>>`, has `cd` and `pwd`, and `mount`
+  lists file systems and cache statistics.
+- System calls for files: `open` with all the usual flags, `openat`,
+  `seek`, `stat`, `lstat`, `fstat`, `mkdir`, `rmdir`, `unlink`, `rename`,
+  `readdir`, `chdir`, `getcwd`, `dup`, `dup2`, `ioctl`, `truncate`, `sync`,
+  `fsync`, `symlink`, `readlink`, `chmod`, `chown`, `mount`, `umount`,
+  `time_ms` (docs/SYSCALLS.md). Programs inherit the shell's working
+  directory; close-on-exec works.
+- `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/console`.
+- Self-tests `test vfs` and `test cerfsfuzz`.
+
+### Fixed
+- On VirtualBox the clock could run unevenly (it trusted a processor
+  counter that VirtualBox does not keep steady), which made timing
+  self-tests fail there. Cerberus now uses that counter only on real
+  hardware that declares it steady and under KVM, and checks it three times
+  before trusting it.
+
 ### Changed
+- Opening a file in `/bin` for writing now fails with "read-only file
+  system" instead of "operation not permitted".
 - The operating system is now called **Cerberus** (it was Lumen). Its disk
   file system is **cerfs** (`mkfs.cerfs`, `mount -t cerfs`), the release
   image is `dist/cerberus.iso`, the shell prompt is `cerberus>`, and the

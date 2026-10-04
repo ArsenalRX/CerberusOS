@@ -13,11 +13,11 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-04**, at release **0.0.5b** (phase 8 complete, desktop polish).
+Last updated: **2026-10-04**, at release **0.0.5c** (phase 9 complete; the OS renamed Cerberus).
 
 ---
 
-## What Cerberus can do today (0.0.5a)
+## What Cerberus can do today (0.0.5c)
 
 Cerberus is a 64-bit operating system written from scratch. It boots in
 QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
@@ -60,8 +60,24 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   Super+M (maximise).
 - PS/2 keyboard and mouse (with wheel).
 
+**Files and disks**
+- Real files and folders: `/` (read-only, from the boot archive), `/tmp`
+  (in memory), `/dev` (devices), and disks mounted wherever you like.
+- **cerfs**, Cerberus's own disk format, with a journal: pulling the plug
+  while it writes never leaves the disk broken. Format a disk with
+  `mkfs.cerfs -y /dev/disk/sda`, then `mount -t cerfs /dev/disk/sda /mnt`.
+- SATA disks (fast, DMA) and older IDE disks.
+- File permissions, read-only and no-programs mounts, and a disk in use
+  can't be overwritten.
+- A page cache and a name cache make repeated reads come from memory.
+- Programs: `ls`, `cat`, `echo`, `mkdir`, `rm`, `rmdir`, `mv`, `cp`,
+  `touch`, `stat`, `ln -s`, `sync`, `mount`, `umount`, `pwd`, `write`,
+  `mkfs.cerfs`, `fstest`.
+
 **Built-in shell (in the Terminal window)**
-- `help`, `ticks`, `mem`, `ps`, `heapstat`, `irqs`, `gui`, `bench`,
+- Type a program's name to run it (`ls -l /bin`); `> file` and `>> file`
+  send its output to a file; `cd` and `pwd`; `mount` lists file systems.
+- `help`, `ticks`, `mem`, `ps`, `heapstat`, `irqs`, `gui`, `pci`, `bench`,
   `run <program>`, `test <name>`, `sym`, `idle`, `timermode`, `panic`,
   `halt`, `reboot`.
 - `test all` runs the kernel's own self-tests (memory, scheduler,
@@ -75,12 +91,10 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   detection, hardened memory allocator, hardware protections (SMEP, SMAP,
   UMIP) where the CPU offers them.
 - A cryptographic random number generator (ChaCha20).
-- Automatic fuzz testing of the program loader, archive reader and system
-  calls.
+- Automatic fuzz testing of the program loader, archive reader, system
+  calls and the disk file system (thousands of damaged disks a minute).
 
-**What it cannot do yet:** save files (there is no disk support or file
-system: everything lives in memory and is lost at shutdown), connect to a
-network or the internet, play sound, use USB devices, have user accounts or
+**What it cannot do yet:** connect to a network or the internet, play sound, use USB devices, have user accounts or
 passwords, install to a hard drive, or run ordinary Linux/Windows software.
 The desktop still runs inside the kernel and has only a few built-in
 windows. The Spec programming language has not been started.
@@ -114,56 +128,39 @@ windows. The Spec programming language has not been started.
 
 ---
 
-## Phase 9 — Files and file systems
+## Done in 0.0.5c: Phase 9 — Files and file systems
 
-Cerberus gets real files and folders, and can keep them on a disk.
-
-**Add**
-- [ ] A virtual file system layer that every file system plugs into:
-  open, close, read, write, seek, file info, list folder, make folder,
-  delete, rename, truncate, device controls, map file into memory.
-- [ ] Paths with `.` and `..`, mount points, symbolic links (loop limit 40).
-- [ ] Per-process file table: `dup`, `dup2`, close-on-exec.
-- [ ] **tmpfs**: files in memory, used for `/tmp`.
-- [ ] **initramfs**: the boot archive mounted read-only at `/`.
-- [ ] **devfs** at `/dev`: `null`, `zero`, `random`, `console`, `fb0`,
-  `tty0`, `input/kbd0`, `input/mouse0`, `disk/sda`.
-- [ ] **cerfs**, Cerberus's own disk file system: superblock, 128-byte inodes,
-  4 KiB blocks, directories, and a journal so a crash or power cut never
-  leaves it broken.
-- [ ] `mkfs.cerfs` tool to create disk images from the build machine.
-- [ ] A path cache (recently used names) with least-recently-used eviction.
-- [ ] One shared page cache for file reads, mapped files and disk blocks;
-  read-ahead; write-back by a kernel thread; `fsync` and `sync`.
-- [ ] File-backed memory mappings and a working directory per process
-  (left over from phase 4 and 7).
-
-**Security**
-- [ ] File permissions (owner/group/other) checked on every operation, and
-  tested with a non-root identity.
-- [ ] Mount options `nosuid`, `nodev`, `noexec`, `ro`.
-- [ ] Race-free path handling: `openat`, `O_NOFOLLOW`, `O_CLOEXEC`.
-- [ ] cerfs treats the disk as untrusted: every field range-checked,
-  checksums (CRC32C) on metadata, a damaged disk gives an error, never a
-  crash. Fuzzed for 60 s in `make fuzz`.
-- [ ] `/dev/random` (left over from phase 7).
-
-**Done when:** a disk is formatted, a 5-level folder tree and a 4 MB file
-are written, unmounted, remounted and compared byte for byte; killing the
-machine mid-write and rebooting leaves the disk consistent; a non-root user
-can't read a private root file; `noexec` stops programs; reading a 64 MB
-file twice is served from cache the second time.
+- [x] Virtual file system: mounts, `.`/`..`, symbolic links (loop limit 40),
+  permissions on every operation, mount flags (`ro`, `noexec`, `nodev`,
+  `nosuid`), `openat`/`O_NOFOLLOW`/`O_CLOEXEC`, per-process working
+  directory, `dup`/`dup2`/close-on-exec.
+- [x] tmpfs (`/tmp`), the boot archive as a read-only `/`, devfs (`/dev`:
+  `null`, `zero`, `random`, `urandom`, `console`, `tty0`, `fb0`, `input/*`,
+  `disk/*`).
+- [x] **cerfs** with a write-ahead journal and CRC32C metadata checksums;
+  `mkfs.cerfs` on the build machine (with an independent checker) and inside
+  Cerberus.
+- [x] One page cache with read-ahead and write-back; a name cache; closed
+  files stay cached.
+- [x] Disk drivers brought forward from phase 10: AHCI (SATA, DMA) and IDE.
+- [x] Proven: 5-level tree and 4 MiB file survive a remount byte for byte;
+  power cut mid-write leaves a consistent disk; a non-root user can't read a
+  private file; `noexec` stops programs; a 64 MiB file's second read comes
+  from the cache (6 ms); thousands of damaged disk images a minute never
+  crash the kernel.
+- [ ] Moved to phase 11: memory-mapping files (`mmap` of a file).
 
 ---
 
 ## Phase 10 — Drivers
 
 **Add**
-- [ ] PCI: find every device, read its configuration, decode its memory
-  ranges, set up message-signalled interrupts (MSI/MSI-X), match drivers.
+- [ ] PCI: device enumeration exists (phase 9, `pci` command); still to add:
+  message-signalled interrupts (MSI/MSI-X) and a driver match table.
 - [ ] Driver model: name, probe, attach, detach, and a registry.
-- [ ] **AHCI/SATA** disk driver with DMA and interrupts (VirtualBox's and
-  real PCs' SATA disks).
+- [x] **AHCI/SATA** disk driver with DMA (done early, in phase 9; still to
+  add: interrupts instead of polling).
+- [x] Simple IDE disk driver (done early, in phase 9).
 - [ ] **virtio-blk** disk driver and the shared virtio transport (QEMU's fast
   path; reused for networking).
 - [ ] *(proposed)* **NVMe** disk driver: most current PCs use NVMe; needed
@@ -181,7 +178,7 @@ file twice is served from cache the second time.
 
 **Done when:** typing gives the right characters (shift, caps, symbols);
 the mouse moves the cursor; a file written to the SATA disk survives a
-reboot; a normal program is refused the keyboard and screen devices;
+reboot (already true since phase 9); a normal program is refused the keyboard and screen devices;
 `poweroff` turns the VM off.
 
 ---
@@ -529,8 +526,9 @@ Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 
 ## Decisions waiting on the owner
 
-1. Go-ahead for phase 9 (the desktop polish is 0.0.5b).
-   Answered 2026-10-04: our own web browser is wanted (phase 15B).
+1. Go-ahead for phase 10 (drivers), listed above.
+   Answered 2026-10-04: our own web browser is wanted (phase 15B); the OS
+   is called Cerberus.
 2. TCP/IP: write our own or port lwIP (before phase 14).
 3. TLS/crypto: Mbed TLS (recommended), BearSSL, or our own (before
    phase 15).

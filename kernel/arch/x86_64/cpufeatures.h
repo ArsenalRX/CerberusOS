@@ -16,6 +16,7 @@ struct CpuFeatures {
     bool pcid;
     bool invariant_tsc;
     bool hypervisor;    // running in a virtual machine (CPUID.1:ECX bit 31)
+    char hv_vendor[13]; // the hypervisor's signature ("KVMKVMKVM", "VBoxVBoxVBox", "Microsoft Hv"), or ""
     bool x2apic;
 };
 

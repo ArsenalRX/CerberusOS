@@ -13,7 +13,7 @@ re-ordered or re-scoped, so that "What it can do today" and "Where it's
 going" stay true. Keep the language names from docs/DECISIONS.md (Spec,
 `specc`, `.spec`), never the older name used in SPEC.md.
 
-Last updated: **2026-10-04**, at release **0.0.5a**.
+Last updated: **2026-10-04**, at release **0.0.5c**. (The system was called Lumen until that day.)
 
 ---
 
@@ -41,10 +41,10 @@ everyday computer.
 - **Who makes it.** A personal project by one developer, the project owner,
   built with an AI coding assistant (Claude Code) working from a written
   design document.
-- **Where it stands.** The current release is **0.0.5a** (2026-10-04). It
+- **Where it stands.** The current release is **0.0.5c** (2026-10-04). It
   runs in the VirtualBox and QEMU virtual machines from a single ISO file,
-  on old BIOS or modern UEFI. It cannot yet save files, connect to the
-  internet or be installed on a real PC.
+  on old BIOS or modern UEFI, and can keep files on a virtual hard disk. It
+  cannot yet connect to the internet or be installed on a real PC.
 
 ## How Cerberus works
 
@@ -148,15 +148,34 @@ toolkit of buttons, text boxes, menus and dialogs with dark and light
 themes, and the applications built with it: terminal, file manager, text
 editor, settings, calculator, image viewer, paint program and more.
 
-### Files and disks (planned)
+### Files and disks
 
-Today everything lives in memory and is gone at shutdown; programs are
-read from an archive loaded at boot. **Phase 9** adds real files and
-folders and **cerfs**, Cerberus's own disk file system. cerfs keeps a
-**journal**, a log of changes written before the changes themselves, so a
-crash or power cut never leaves the disk in a broken state. It also treats
-the disk as untrusted: a damaged disk gives an error, not a crash. Disk
-drivers follow in phase 10.
+Think of a library: the **virtual file system** is the front desk that
+every request goes through, whichever shelf the book is on. Behind it are
+several "shelves":
+
+- `/` holds the system's own programs, unpacked from an archive at boot and
+  kept **read-only**;
+- `/tmp` lives in memory and is gone at shutdown;
+- `/dev` holds devices that look like files (`/dev/null`, `/dev/random`,
+  each disk as `/dev/disk/sda`);
+- a disk can be attached ("mounted") on any folder, usually `/mnt`.
+
+Disks use **cerfs**, Cerberus's own format. cerfs keeps a **journal**: a
+log of each change written before the change itself, so a crash or power
+cut never leaves the disk in a broken state (after a restart, a finished
+log entry is replayed and an unfinished one is ignored). Every piece of
+bookkeeping on the disk carries a checksum, and the disk is treated as
+untrusted: a damaged disk gives an error, not a crash. This is tested by
+cutting the power mid-write and by feeding the system thousands of
+deliberately damaged disks.
+
+The front desk also enforces **permissions** (who may read, change or run
+each file) and keeps recently used file contents and names in memory (the
+**page cache** and **name cache**), so reading a file a second time does
+not touch the disk. Cerberus has drivers for SATA disks (fast) and older
+IDE disks. Opening files from a program's own memory map and a graphical
+file manager come later (phases 11 and 13).
 
 ### Networking (planned)
 
@@ -298,7 +317,7 @@ instructions, and finally writes an ELF program file Cerberus can run.
 Phase 16 is done when `specc hello.spec -o hello` makes a program that runs
 on Cerberus and a Spec application with windows runs on the desktop.
 
-## What it can do today (0.0.5a)
+## What it can do today (0.0.5c)
 
 - Boots in VirtualBox and QEMU from one ISO, with BIOS or UEFI, in about a
   second, and uses every processor core.
@@ -308,19 +327,24 @@ on Cerberus and a Spec application with windows runs on the desktop.
   protected mode and survives their crashes.
 - Shows a desktop preview: wallpaper, taskbar, launcher menu, movable and
   resizable windows, keyboard shortcuts (Alt+Tab, Alt+F4, Super).
-- Has a built-in terminal shell with system information and self-tests.
-- Has the security protections listed above, checked by 24 automated tests
+- Keeps files and folders, in memory and on disks formatted with cerfs
+  (which survives a power cut), with permissions and the usual tools
+  (`ls`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `mount`, `mkfs.cerfs` ...).
+- Has a built-in terminal shell that runs programs by name, with output
+  redirection, system information and self-tests; the terminal scrolls back
+  1,000 lines.
+- Has the security protections listed above, checked by 30 automated tests
   and fuzzing.
 
-It cannot yet save files, use the network, play sound, use USB, have user
-accounts, install to a disk, or run Windows or Linux software.
+It cannot yet use the network, play sound, use USB, have user accounts,
+install to a disk, or run Windows or Linux software.
 
 ## Where it's going
 
-- **Next:** desktop polish (Windows-style window buttons, smoother corners
-  and dragging), waiting for the owner's go-ahead.
-- **Phase 9:** files, folders and the cerfs disk file system.
-- **Phase 10:** drivers for disks, keyboard, mouse; power off.
+- **Done so far:** phases 0–9 (boot, memory, scheduling, user programs,
+  multi-core, files and disks) and a round of desktop polish.
+- **Next, phase 10:** the rest of the drivers: keyboard and mouse as proper
+  devices, faster disk paths, power off.
 - **Phase 11:** programs talking to each other (messages, shared memory).
 - **Phase 12:** Pane, the window server as a separate program.
 - **Phase 13:** the Facet toolkit, desktop shell and applications.

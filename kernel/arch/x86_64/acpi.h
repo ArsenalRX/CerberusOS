@@ -46,3 +46,5 @@ void acpi_init();
 // Returns the table with the given 4-character signature, or nullptr.
 const AcpiSdtHeader* acpi_find_table(const char* signature);
 const MadtInfo& acpi_madt();
+// The firmware vendor id from the RSDP ("BOCHS ", "VBOX  ", ...), NUL-terminated.
+const char* acpi_oem_id();

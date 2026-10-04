@@ -1,5 +1,8 @@
 # Cerberus — working notes for Claude Code
 
+(The OS was called Lumen until 2026-10-04; history files and git log use
+the old name. Its file system lumfs is now cerfs.)
+
 Cerberus is a from-scratch x86-64 hybrid-kernel OS with its own desktop, plus
 **Spec**, its systems language (the spec calls it "Glint"; renamed, see
 docs/DECISIONS.md top: `glintc`→`specc`, `.gl`→`.spec`). Owner-facing
@@ -29,8 +32,14 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
   every powered-off VirtualBox VM that boots from `dist/`. `make RELEASE=1
   dist` for a release (tagged commit, plain version number).
 - Probe directives in `.expect` files: `!send`, `!key`, `!wait`, `!mouse`,
-  `!mouseto`, `!button`, `!wheel`, `!screenshot`; other lines must appear in
-  the serial log in order. A scratch `.expect` in `build/` plus
+  `!mouseto`, `!button`, `!wheel`, `!screenshot`, `!kill` (power cut); other
+  lines must appear in the serial log in order. Setup lines at the top:
+  `#!machine pc` (legacy IDE; default q35 = AHCI), `#!disk new|blank <size>
+  <name>` / `#!disk keep <name>` (images in `build/disk-<name>.img`),
+  `#!hostcheck[-replay] <name>` (independent check with `mkfs.cerfs
+  --check` afterwards).
+- `tools/run-tests.sh name...` runs chosen integration tests and prints the
+  key lines; `make tools` builds the host `build/tools/mkfs.cerfs`. A scratch `.expect` in `build/` plus
   `python3 tools/qemu-probe.py build/cerberus.iso --wait 6 --expect F` (no
   `--quiet`, to see serial output) is the quickest way to look at a change.
 
@@ -86,19 +95,32 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
   primitives. `kernel/proc/` processes, ELF loader. `kernel/syscall/`
   dispatch generated from `table.def` (→ docs/SYSCALLS.md).
 - `kernel/drivers/` LAPIC/IOAPIC/HPET/PIT, `refclock` (TSC, else HPET, else
-  PIT), PS/2, serial, RTC, framebuffer console.
+  PIT), PS/2, serial, RTC, framebuffer console, `pci`, disks (`ahci` DMA,
+  `ata` PIO, `ramdisk`).
+- `kernel/fs/` `vfs` (tree, mounts, permissions, name cache, one sleeping
+  VFS lock), `file` (open files, flags), `tmpfs` (also the read-only root
+  from the boot archive and `/dev`), `dev` (device switch), `block` (disks),
+  `pagecache` (one cache, read-ahead, write-back thread, journal holds),
+  `cerfs` + `cerfs_format.h` + `cerfs_mkfs.h` (on-disk format shared with
+  `tools/mkfs-cerfs.cpp` and `userland/bin/mkfs.cerfs.cpp`), `fs.cpp` (boot
+  mounts).
 - `kernel/gfx/` libgfx software renderer (anti-aliased rounded shapes).
   `kernel/gui/` the in-kernel desktop (`desktop.cpp`: compositor, windows,
   panel, menu, input; `terminal.cpp`: shell terminal with scrollback). It
   moves to userland as Pane in phase 12.
 - `kernel/lib/` kprintf, console lock, kernel shell (`shell.cpp`), panic,
   CSPRNG, lock ranks (`lock_order.h` — add new locks there).
-- `userland/` libc, programs in `bin/` (packed into `boot/initrd.tar`).
+- `userland/` libc (`cerberus.h`), programs in `bin/` (packed into
+  `boot/initrd.tar`; `fileutils.cpp` is one program under many names, listed
+  in the Makefile's `FILEUTILS_NAMES`), `etc/` files.
 - `tests/kernel/` in-kernel self-tests (register in `registry.cpp`; `test
   all` runs them — update `tests/integration/shell-tests.expect` when the
   count changes). `tests/integration/` QEMU scenarios. `tests/fuzz/` host
   fuzzers.
 - `spec/` the Spec language: empty until phase 16.
+- System calls: add to `kernel/syscall/table.def` (generates the dispatcher,
+  docs/SYSCALLS.md and libc's numbers), write `sys_<name>`, extend
+  `userland/bin/badptr.cpp` with bad-pointer checks for it.
 
 ## Rules that never bend (SPEC §19)
 

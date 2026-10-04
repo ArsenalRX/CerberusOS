@@ -60,6 +60,13 @@ void cpu_features_init() {
     g_cpu.umip = l7.ecx & (1u << 2);
     g_cpu.invariant_tsc = e7.edx & (1u << 8);
     g_cpu.hypervisor = l1.ecx & (1u << 31);
+    if (g_cpu.hypervisor) {
+        CpuidRegs hv = cpuid(0x40000000);
+        __builtin_memcpy(g_cpu.hv_vendor, &hv.ebx, 4);
+        __builtin_memcpy(g_cpu.hv_vendor + 4, &hv.ecx, 4);
+        __builtin_memcpy(g_cpu.hv_vendor + 8, &hv.edx, 4);
+        g_cpu.hv_vendor[12] = 0;
+    }
 
     cpu_features_init_cpu();
     if (g_cpu.smap) g_smap_enabled = 1;

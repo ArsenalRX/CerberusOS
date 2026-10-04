@@ -61,7 +61,10 @@ void enable_this_cpu();
 // Runs on every CPU, each for its own timer. Only the bootstrap CPU's ticks
 // are counted as time.
 void timer_handler(InterruptFrame*, void*) {
-    if (percpu_cpu_id() == 0) g_ticks = g_ticks + 1;
+    if (percpu_cpu_id() == 0) {
+        g_ticks = g_ticks + 1;
+        refclock_poll();
+    }
     if (g_rearm_mode) write(REG_TIMER_INIT, g_periodic_count);
     lapic_eoi();
     if (g_hook) g_hook();

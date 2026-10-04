@@ -9,6 +9,7 @@
 // VirtualBox, which has no HPET, the clock then raced ahead several times
 // over), every read is a slow VM exit, and the 16-bit count wraps every
 // ~55 ms, so time is lost if nobody reads it for longer than that.
+#include <arch/x86_64/acpi.h>
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/cpufeatures.h>
 #include <arch/x86_64/io.h>
@@ -75,21 +76,45 @@ void refclock_init() {
     }
 
     // The TSC is usable when the CPU says its rate is constant (invariant
-    // TSC), and under a hypervisor, which presents a constant-rate TSC even
-    // when it hides the flag. Measure its rate over 50 ms.
-    if (!g_cpu.invariant_tsc && !g_cpu.hypervisor) {
-        kprintf("refclock: %s (no invariant TSC)\n", refclock_name());
+    // TSC), and under KVM, which presents one constant-rate counter to every
+    // virtual CPU even when it hides the flag. Other hypervisors are not
+    // trusted: VirtualBox on a Hyper-V host gives each virtual CPU a counter
+    // of its own, and a clock built on them stalls whenever a thread changes
+    // CPU (seen 2026-10-04: 58 timer ticks in "500 ms"). Measure the rate
+    // over 50 ms.
+    bool kvm = g_cpu.hypervisor && __builtin_memcmp(g_cpu.hv_vendor, "KVMKVMKVM", 9) == 0;
+    // VirtualBox does not always set the CPUID hypervisor bit, passes the
+    // host's invariant flag through, and its counter still cannot be trusted
+    // (rates of 7, 1,345 and 1,530 MHz measured on one 4,200 MHz CPU): it is
+    // recognised by its firmware tables instead. Inside any other virtual
+    // machine than KVM the invariant flag is not believed either.
+    bool vbox = __builtin_memcmp(acpi_oem_id(), "VBOX", 4) == 0;
+    bool trusted = !vbox && (g_cpu.hypervisor ? kvm : g_cpu.invariant_tsc);
+    if (!trusted) {
+        kprintf("refclock: %s (no trustworthy TSC%s)\n", refclock_name(),
+                vbox ? " under VirtualBox" : g_cpu.hypervisor ? " under this hypervisor" : "");
         return;
     }
-    u64 s0 = calibration_now_us();
-    u64 t0 = rdtsc();
-    u64 s1;
-    do s1 = calibration_now_us();
-    while (s1 - s0 < 50000);
-    u64 t1 = rdtsc();
-    u64 hz = (t1 - t0) * 1000000 / (s1 - s0);
-    if (hz < 100000000) {           // under 100 MHz: not believable, keep the device clock
-        kprintf("refclock: %s (TSC measured at %lu Hz, not used)\n", refclock_name(), (unsigned long)hz);
+    // Three 20 ms measurements must agree within 1%: a counter that does
+    // not tick steadily against the device clock is not used.
+    u64 rates[3], t1 = 0, s1 = 0;
+    for (u64& rate : rates) {
+        u64 s0 = calibration_now_us();
+        u64 t0 = rdtsc();
+        do s1 = calibration_now_us();
+        while (s1 - s0 < 20000);
+        t1 = rdtsc();
+        rate = (t1 - t0) * 1000000 / (s1 - s0);
+    }
+    u64 lo = rates[0], hi = rates[0];
+    for (u64 rate : rates) {
+        if (rate < lo) lo = rate;
+        if (rate > hi) hi = rate;
+    }
+    u64 hz = (rates[0] + rates[1] + rates[2]) / 3;
+    if (lo < 100000000 || hi - lo > lo / 100) {
+        kprintf("refclock: %s (TSC measured at %lu to %lu kHz, not steady enough to use)\n", refclock_name(),
+                (unsigned long)(lo / 1000), (unsigned long)(hi / 1000));
         return;
     }
     g_tsc_hz = hz;
@@ -98,7 +123,7 @@ void refclock_init() {
     Source calibrated_by = g_source;
     g_source = Source::Tsc;
     kprintf("refclock: tsc at %lu MHz (%s), calibrated against the %s\n", (unsigned long)(hz / 1000000),
-            g_cpu.invariant_tsc ? "invariant" : "hypervisor", calibrated_by == Source::Hpet ? "hpet" : "pit");
+            kvm ? "KVM" : "invariant", calibrated_by == Source::Hpet ? "hpet" : "pit");
 }
 
 const char* refclock_name() {
@@ -119,6 +144,10 @@ u64 refclock_now_us() {
     while (us > last && !__atomic_compare_exchange_n(&g_last_us, &last, us, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
     }
     return us > last ? us : last;
+}
+
+void refclock_poll() {
+    if (g_source == Source::Pit) (void)pit_now_us();
 }
 
 void refclock_sleep_us(u64 microseconds) {

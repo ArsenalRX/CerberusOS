@@ -205,3 +205,40 @@ Writing only changed pixels cuts screen writes during a drag about
 fivefold. VirtualBox writes roughly 25–35 million pixels per second to the
 screen on this host (its Hyper-V backend), so a full-screen change still
 costs 13–35 ms there.
+
+## 0.0.5c — 2026-10-04 (phase 9: files and file systems)
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs, 512 MiB — `make bench`, one run
+
+Context switch 24 ns, wake-up 9 µs average / 66 µs worst, `kmalloc`+`kfree`
+80 ns, minor page fault 2,129 ns (**over**, unchanged), system call 32 ns,
+idle desktop 0 %, last composite 137 µs. No change from 0.0.5b outside
+run-to-run variation.
+
+### Storage (new; QEMU/KVM, disk images on the Windows drive through WSL)
+
+| Case | Result |
+|---|---|
+| Sequential read of a 64 MiB file, cold cache, SATA (AHCI, DMA, read-ahead 16 pages) | 737 ms (87 MiB/s) |
+| The same file again (page cache) | 6 ms (about 10 GiB/s) |
+| Sequential read of a 64 MiB file, cold cache, IDE (PIO) | 28.9 s (2.2 MiB/s) |
+| Name cache after `ls -l /bin`, `test vfs` and a few commands | 255 hits, 47 misses |
+| cerfs fuzzing: damaged 4 MiB images mounted and exercised | 5,013 in 60 s |
+
+SPEC §20.1 gives no storage budgets yet; these are the baseline. The IDE
+figure is the cost of programmed I/O under virtualisation (one exit per
+sector), which is why AHCI was brought forward.
+
+### VirtualBox 7.2.6 (Hyper-V backend), temporary VM, 4 CPUs, 2 GiB, SATA disk — `bench` typed in the shell
+
+Clock: PIT (the TSC is not trusted there, docs/DECISIONS.md).
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 27 ns | 2,000 ns | within |
+| Wake-up latency, average | 107 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 755 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 73 ns | 100 ns | within |
+| Minor page fault | 8,513 ns | 2,000 ns | **over** (the budgets are defined for QEMU/KVM) |
+| System-call round trip | 30 ns | 300 ns | within |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |

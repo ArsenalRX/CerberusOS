@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5a).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5c).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,28 +27,20 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: phase 9 (filesystem)
+## Right now: waiting for the owner's go-ahead on phase 10
 
-Versions **0.0.5a** (phase 8, SMP) and **0.0.5b** (desktop polish: Windows-
-style buttons, anti-aliased corners, terminal scrollback, writing only
-changed pixels) were released on 2026-10-04. The tree is on `0.0.5c`
-development builds. On 2026-10-04 the owner said to keep going for the
-session ("just continue and do everything"), so phase 9 starts next.
+Version **0.0.5c** (phase 9, files and file systems; the OS renamed
+**Cerberus**, the file system **cerfs**) was released on 2026-10-04. The
+tree is on `0.0.5d` development builds. The owner approves each phase's
+contents before it starts (docs/ROADMAP.md lists phase 10).
 
-- Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md.
-- **Installer and dual boot:** researched in docs/INSTALLER.md (feeds
-  phase 18; NVMe would need adding to phase 10 for real PCs).
-- **Own web browser:** phase 15B (owner, 2026-10-04).
+- Moved from phase 9 to phase 11: file-backed `mmap` (docs/DECISIONS.md,
+  phase 9).
+- Already done for phase 10: AHCI (SATA, DMA, polled), IDE, PCI enumeration.
+- **Minor page fault is over budget** (docs/BENCH.md). Profile it first.
 - Desktop left-overs: open/close animations, one-shot-timer frame pacing.
-
-Open items carried over:
-
-- `/dev/random` (needs devfs, phase 9); retpoline decision; per-CPU stack
-  guard.
-- **Minor page fault is over budget** (2.0–2.9 µs against 2 µs,
-  docs/BENCH.md). Profile it before changing anything.
-- Frame pacing is tied to the 10 ms tick; a one-shot timer would help the
-  desktop.
+- Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md;
+  installer research: docs/INSTALLER.md; own web browser: phase 15B.
 
 ---
 
@@ -113,6 +105,13 @@ Open items carried over:
   buttons, anti-aliased rounded shapes, terminal scrollback (wheel,
   Shift+PgUp/PgDn, scrollbar), only changed pixels written, input-paced
   frames, Super-key and menu fixes, `test terminal`.
+- **Phase 9 — Files and file systems. Release 0.0.5c (2026-10-04).** VFS
+  (mounts, symlinks, permissions, mount flags, name cache), tmpfs, read-only
+  initramfs root, devfs, page cache (read-ahead, write-back, journal holds),
+  cerfs with a journal and CRC32C, mkfs.cerfs (host and in-OS), AHCI and
+  IDE drivers (from phase 10), 25 new system calls, file tools, shell
+  redirection; tests: acceptance (IDE and AHCI), power cut and recovery,
+  cache, permissions, in-kernel fuzzing. The OS renamed Cerberus.
 
 ---
 
@@ -126,15 +125,8 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **cerfs**
-  (on-disk, journal) + `mkfs.cerfs`. Dentry cache. Acceptance: format,
-  mount, write 4 MB, remount, byte-compare; journal replay after a hard
-  kill.
-  **+v2:** permissions enforced; mount flags (`nosuid,nodev,noexec,ro`);
-  `openat`/`O_NOFOLLOW`/`O_CLOEXEC`; cerfs range-checks every on-disk field,
-  metadata checksums, fuzzed; one unified page cache (replaces the buffer
-  cache) with read-ahead and `fsync`.
-- [ ] **Phase 10 — Drivers.** PCI, AHCI/SATA (DMA), full PS/2 keyboard+mouse
+- [ ] **Phase 10 — Drivers.** (AHCI with DMA, IDE and PCI enumeration were
+  done early, in phase 9.) PCI MSI, AHCI interrupts, full PS/2 keyboard+mouse
   behind `/dev/input` (replace the early drivers), RTC, driver model.
   **+v2:** virtio transport + virtio-blk; device-supplied values
   bounds-checked; `/dev/input/*` and `/dev/fb0` restricted to the window

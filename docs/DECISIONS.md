@@ -987,3 +987,104 @@ phase 9 was in progress:
   of those files. Git history and tags (v0.7.0, v0.0.5a, v0.0.5b) are
   unchanged.
 - The Spec language keeps its name.
+
+## 2026-10-04 — Phase 9: files and file systems
+
+Design:
+
+- **One VFS lock**, a sleeping and re-entrant mutex, serialises the tree and
+  every file system's metadata and data (`fs/vfs.cpp`). Character devices
+  are called without it, because a console read may wait. Finer locking
+  when a benchmark asks for it.
+- **The initramfs is the boot archive unpacked into a tmpfs**, which is
+  then marked read-only, rather than a file system reading the tar in
+  place. One file system type fewer; the archive is small.
+- **devfs is a tmpfs holding device nodes.** Device vnodes dispatch through
+  a device switch by major number (`fs/dev.cpp`). Block devices are byte
+  addressable through their node, cached in the page cache.
+- **Page cache** (`fs/pagecache.cpp`): pages keyed by (vnode, index), one
+  quarter of RAM at most, LRU eviction, read-ahead of up to 16 pages when
+  misses are sequential, write-back every 5 s by a kernel thread. File
+  systems keep metadata in the pages of the device vnode and file contents
+  in the pages of the file's vnode, so nothing is cached twice. A page can
+  be **held** (part of an uncommitted journal transaction): eviction and
+  write-back skip it.
+- **Name cache** in the VFS: 512 positive entries for names up to 31 bytes,
+  each holding references to both vnodes, invalidated on unlink, rename and
+  unmount.
+- **cerfs** (the spec's "lumfs", renamed with the OS): 4 KiB blocks, 128-byte
+  inodes with 12 direct, one indirect and one double-indirect pointer,
+  directories as chains of records in 4 KiB blocks, a block bitmap. CRC32C
+  on the superblock and every inode (their own field) and on bitmap,
+  directory, indirect and journal blocks (a 16-byte header that also names
+  the block's owner, so a misplaced block is caught). Directory blocks are
+  metadata: journaled, read through the device's pages.
+- **Journal:** physical block journaling of metadata, one transaction in
+  the journal at a time. A commit writes the files' dirty data first
+  (ordered mode), then a descriptor, the block images and a commit record
+  with a CRC over the images, flushing between steps; then the blocks to
+  their homes; then advances the journal header's sequence number. Mount
+  replays a complete transaction and ignores an incomplete one. Commits
+  happen on sync, fsync, unmount, every 5 s, and when a transaction nears
+  the journal's size; long operations (writing or truncating big files)
+  write the inode before an intermediate commit, so a commit never records
+  blocks the inode does not show.
+- **Closed files stay cached** (up to 256 inactive vnodes per file system)
+  with their pages; a deleted file is freed on disk when its last reference
+  goes.
+- **Access times are not written** (reads would otherwise dirty metadata).
+- **Disk drivers brought forward from phase 10:** the phase 9 acceptance
+  test needs a disk. ATA PIO (legacy IDE: QEMU `pc`, VirtualBox's default
+  IDE controller) and AHCI with DMA (QEMU q35, VirtualBox SATA, real PCs),
+  both polled, plus minimal PCI enumeration. Phase 10 adds interrupts, MSI,
+  virtio-blk and the driver model.
+- **System calls:** the spec's file block (3–19) is used as numbered, with
+  `readdir` returning an array of entries and `truncate` taking a
+  descriptor. Calls the spec's table has no number for start a new block at
+  120: `openat` 120, `rmdir` 121, `symlink` 122, `readlink` 123, `chmod` 124,
+  `fsync` 125, `mount` 126, `umount` 127, `lstat` 128, `chown` 129. `time_ms`
+  (60) is implemented as specified.
+- **Fuzzing cerfs inside the kernel** (`test cerfsfuzz`, run by `make fuzz`)
+  instead of a host harness: the real driver, VFS and page cache run under
+  the debug kernel's checks; images are damaged at random, half of the time
+  with their checksums recomputed so the damage reaches field validation.
+
+Deviations from SPEC phase 9, for the owner to see:
+
+- **File-backed `mmap` is not done.** The spec's §5A asks for one page cache
+  shared by file reads, file-backed mmap and block I/O; the cache is ready
+  for it, but the fault path (which would have to wait for disk reads while
+  the address space lock is a spinlock) is not. Moved to phase 11 (with
+  shared memory).
+- **tmpfs keeps its own pages** instead of living in the page cache.
+- **No hard links** (`link`): not in the spec's call table; link counts exist
+  on disk.
+- **A deleted file that is still open when the power goes** leaves an inode
+  allocated but nameless; the checker reports it as a leak (a warning).
+  Repairing that is `fsck.cerfs` in phase 18.
+- The console still returns end-of-file to programs that read it (phase 17,
+  terminals).
+
+Rejected: a buffer cache separate from the page cache (two caches for one
+disk); logical journaling of operations (harder replay); journaling file
+data (halves write speed); a host-side cerfs fuzzer through kernel shims
+(tests less of the real code); a lock per vnode (deferred until measured).
+
+## 2026-10-04 — Reference clock: which TSC to trust (correction)
+
+The rule of earlier today ("use the TSC when it is invariant, or under any
+hypervisor") was wrong for VirtualBox on this host (Hyper-V backend). Found
+by the phase 9 check there: `test timer` saw 58 ticks in "500 ms".
+VirtualBox passes the host's invariant-TSC flag through, does not always set
+the CPUID hypervisor bit, and its counter measured 7, 1,345 and 1,530 MHz on
+different boots of one 4,200 MHz CPU; a clock built on it stalls or jumps
+when a thread changes CPU.
+
+- The TSC is now used only on bare metal with the invariant flag, or under
+  **KVM** (recognised by its CPUID signature). VirtualBox is recognised by
+  its ACPI OEM id ("VBOX") and never trusted.
+- Calibration takes three 20 ms measurements that must agree within 1%.
+- The PIT fallback is polled from the timer tick so its 16-bit counter
+  cannot wrap unseen.
+- Verified: QEMU/KVM uses the TSC (4,192 MHz); VirtualBox uses the PIT and
+  passes `test all` (10 of 10) twice in a row with 4 CPUs.

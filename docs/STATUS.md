@@ -22,54 +22,55 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Latest release: **0.0.5b** (2026-10-04, tag `v0.0.5b`): desktop polish and terminal scrolling.
-Before it: **0.0.5a** (2026-10-04, tag `v0.0.5a`), the phase 8 release and
-the first under the new version scheme: every release moves one letter
-(`0.0.5a` … `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1). It follows 0.7.0;
-releases 0.3.0 to 0.7.0 keep their old numbers. The release is always
-`dist/cerberus.iso` (`dist/VERSION.txt` names the version); each release
-overwrites it. Also released: **0.0.5b** (2026-10-04, desktop polish). The tree now builds as `0.0.5c-dev+<commit>`. History:
-docs/CHANGELOG.md.
+Latest release: **0.0.5c** (2026-10-04, tag `v0.0.5c`): phase 9, files and
+file systems; the OS renamed **Cerberus** (it was Lumen) and its file
+system **cerfs**. Before it on the same day: 0.0.5b (desktop polish) and
+0.0.5a (phase 8). Every release moves one letter (`0.0.5a` … `0.0.5j`, then
+`0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep their old
+numbers. The release is always `dist/cerberus.iso` (`dist/VERSION.txt`
+names the version); each release overwrites it. The tree now builds as
+`0.0.5d-dev+<commit>`. History: docs/CHANGELOG.md.
 
 ---
 
 ## Current phase
 
-**Phase 8 — SMP: COMPLETE (2026-10-04).** Phases 0–3 complete 2026-09-14;
-phases 4–7 complete 2026-10-03. Desktop preview (owner-requested, brought
-forward from phases 12-13) runs in its own thread.
+**Phase 9 — Files and file systems: COMPLETE (2026-10-04).** Phases 0–3
+complete 2026-09-14; phases 4–7 complete 2026-10-03; phase 8 and the desktop
+polish complete 2026-10-04. Desktop preview (owner-requested, brought forward
+from phases 12-13) runs in its own thread.
 
-Next up: **Phase 9 — Filesystem** (SPEC §5 and §5A). The owner approves each
-phase's contents before it starts; phase 9 has not been approved yet. The
-desktop polish the owner asked for is done (0.0.5b); installer research
-is in docs/INSTALLER.md; the owner wants our own web browser (phase 15B).
-On 2026-10-04 the owner said to keep going for the session.
+Next up: **Phase 10 — Drivers** (SPEC §5 and §5A). The owner approves each
+phase's contents before it starts; phase 10 has not been approved yet. AHCI
+(DMA, polled), IDE and PCI enumeration were already done in phase 9.
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
-performance are requirements. See docs/DECISIONS.md.
+performance are requirements; our own web browser is phase 15B (owner,
+2026-10-04). See docs/DECISIONS.md.
 
 ## Last verified
 
-All on 2026-10-04, on the 0.0.5a code.
+All on 2026-10-04, on the 0.0.5c code.
 
-- `make test` in QEMU/KVM, 4 CPUs: all **24** integration tests passed
-  (the 22 of 0.7.0 plus `smp` and `exception-lockorder`).
-- `make fuzz` (60 s per harness): ELF loader 5.6 million mutated inputs, tar
-  reader 151 thousand, no crash; random system calls: 600 processes, up to
-  1.2 million calls, kernel still running. (Run before the reference-clock
-  change, which touches neither parser nor the system calls.)
-- `make bench`: six runs, recorded in docs/BENCH.md.
-- **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with 4 CPUs
-  and 2 GiB, BIOS**: booted, all four CPUs online; every shell command;
-  every user program (`hello`, `args`, `forktest`, `badptr`, `crash null`,
-  `crash smash`, `aslr`, `sysbench`, `sysfuzz 40 500`, a missing program);
-  `test timer`, `test idle` (twice), `test smp`, `test sched 3`, and on the
-  build before the clock fix `test kprintf|pmm|vmm|heap`; `bench`; no heap
-  leak after 580,000 allocations. Desktop: launcher menu by keyboard,
-  System Monitor, Memory Map, Alt+Tab, Super+M, Super+T. Mouse dragging was
-  not driven (VBoxManage cannot move the mouse); the owner reports it laggy.
+- `make test` in QEMU/KVM, 4 CPUs: all **30** integration tests passed (the
+  24 of 0.0.5a plus `cerfs`, `cerfs-ahci`, `cerfs-cache`, `cerfs-crash-1`,
+  `cerfs-crash-2`, `cerfs-mkfs`). The disk tests end with an independent
+  check of the image on the build machine (`mkfs.cerfs --check`).
+- `make fuzz` (60 s per harness): ELF loader 4.7 million mutated inputs, tar
+  reader 37 thousand, no crash; random system calls (now including the file
+  calls): 600 processes, up to 1.2 million calls; cerfs: 5,013 damaged disk
+  images mounted and exercised; the kernel still running after each. (Run
+  before the last reference-clock change, which touches none of them.)
+- `make bench`: recorded in docs/BENCH.md.
+- **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with 4 CPUs,
+  2 GiB, BIOS, a blank 128 MiB SATA disk**: booted; the disk found by the
+  AHCI driver; `mkfs.cerfs -y`, mount, a 3-level tree, a 4 MiB file written
+  and verified byte for byte after a remount and again after powering the
+  VM off and on; `test all` (10 tests) passed twice in a row; `bench`.
 - Not run this session: UEFI boot, software emulation (TCG), a `DEBUG=0`
-  build (last checked on 0.5.0), the fatal-error tests on VirtualBox.
+  build (last checked on 0.5.0), the fatal-error tests on VirtualBox, a
+  power cut on VirtualBox (done in QEMU only), mouse dragging on VirtualBox
+  (VBoxManage cannot move the mouse).
 
 ## How to run it
 
@@ -78,7 +79,9 @@ All on 2026-10-04, on the 0.0.5a code.
   `logs/qemu-serial.log`. `run-cerberus.cmd uefi` boots through OVMF;
   `run-cerberus.cmd build` rebuilds first. This is the fast, accurate path.
 - VirtualBox: the owner creates VMs in the VirtualBox window. As of
-  2026-10-04 no VM of the owner's is registered. Point a new VM's DVD drive at
+  2026-10-04 (evening) no VM is registered (the owner's "lumen4" is gone).
+  To try the file system, add a SATA (or IDE) hard disk to the VM, then in
+  Cerberus: `mkfs.cerfs -y /dev/disk/sda`, `mount -t cerfs /dev/disk/sda /mnt`. Point a new VM's DVD drive at
   `dist/cerberus.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
   hides 64-bit mode, and the bootloader then reports that the CPU is not
   64-bit. `make dist` (via `tools/vbox-attach.sh`) fixes that and re-points
@@ -98,11 +101,13 @@ All on 2026-10-04, on the 0.0.5a code.
   (hybrid BIOS/UEFI, Limine 11.4.1), `make dist`, `make bench`.
 - Test: `make test` runs every `tests/integration/*.expect` through
   `tools/qemu-probe.py` (headless QEMU + QMP; directives `!send`, `!key`,
-  `!mouse`, `!mouseto`, `!button`, `!screenshot`, `!wait`). The probe waits
-  for expected output rather than fixed times.
+  `!mouse`, `!mouseto`, `!button`, `!wheel`, `!screenshot`, `!wait`, `!kill`;
+  `#!` lines set the machine type, attach fresh or kept disk images and ask
+  for a host-side check afterwards). The probe waits for expected output
+  rather than fixed times. `tools/run-tests.sh name...` runs a few.
 - Fuzz: `make fuzz` (`FUZZ_SECONDS=60` per harness by default): host builds
   of `kernel/proc/elf.cpp` and `kernel/fs/ustar.cpp` under AddressSanitizer
-  (`tests/fuzz/`), then `/bin/sysfuzz` inside QEMU. A crashing input is
+  (`tests/fuzz/`), then `/bin/sysfuzz` and `test cerfsfuzz 60` inside QEMU. A crashing input is
   saved as `build/fuzz/crash-<name>.bin`; files in
   `tests/fuzz/corpus/<name>/` are replayed first on every run.
 - Phase 1: Limine base revision 3 → `g_boot_info`; COM1; `kprintf`; PSF2
@@ -136,6 +141,16 @@ All on 2026-10-04, on the 0.0.5a code.
   TLB shootdown before any frame is freed; a lock per address space;
   per-CPU heap slabs; lock-rank checker (`kernel/lib/lock_order.h`);
   reference clock on the time-stamp counter; `test smp`, `ps` per CPU.
+- Phase 9: files. VFS (`kernel/fs/vfs.cpp`): one tree over several file
+  systems, mounts, `.`/`..`, symbolic links (limit 40), permission checks,
+  mount flags, a name cache. tmpfs; the boot archive unpacked as a
+  read-only `/`; `/dev` with device nodes; `/tmp`. Page cache with
+  read-ahead and a write-back thread. **cerfs** (journal, CRC32C) with
+  `mkfs.cerfs` on the host (also `--check`) and inside the OS. Disk drivers:
+  AHCI (DMA) and ATA PIO; PCI enumeration (`pci`). 39 system calls. libc
+  file API. Programs: `ls cat echo mkdir rm rmdir mv cp touch stat ln sync
+  mount umount pwd write fstest mkfs.cerfs`. Shell: programs by name, `>`
+  and `>>`, `cd`, `pwd`, `mount`. `test vfs`, `test cerfsfuzz`.
 - Fatal-error tests (each halts by design): `test exceptions
   de|ud|pf|pfw|gp|bp` (CPU exceptions), `so` (a runaway thread reported as
   a kernel stack overflow), `ub` (undefined behaviour), `fl|waf|df` (heap
@@ -198,40 +213,56 @@ In place (each demonstrated by a test):
 - A panic stops every CPU. (0.0.5a)
 - The user-copy bounds check masks the address without a branch, so a
   mispredicted check cannot read kernel memory speculatively. (0.0.5a)
+- File permissions and mount flags (`ro`, `noexec`, `nodev`, `nosuid`) are
+  enforced in the VFS; `test vfs` shows a non-root credential refused a
+  0600 root file and a `noexec` mount refusing to run a program. The root
+  file system is read-only. (0.0.5c)
+- cerfs validates every on-disk field and checksums its metadata; damaged
+  images give an I/O error (`make fuzz`: thousands of damaged images, no
+  panic). A power cut leaves the disk consistent (`cerfs-crash-1/2`). A new
+  block never exposes a deleted file's contents. (0.0.5c)
+- A disk claimed by a mounted file system cannot be opened for writing.
+  (0.0.5c)
+- `/dev/random` and `/dev/urandom` exist; screen and input device nodes are
+  mode 0600. (0.0.5c)
 
 Still missing:
 
-- The desktop and the kernel shell still run in ring 0. User programs
-  exist but there are no users, no permissions and no file system: every
-  program can read every file in the boot archive.
+- The desktop and the kernel shell still run in ring 0. Permissions are
+  enforced, but there are no user accounts yet: every program runs as uid 0
+  (phase 15), so in practice any program can read and change any file and
+  disk.
 - Where the hypervisor hides SMEP/SMAP (VirtualBox on this host), the
   kernel has only its software checks.
 - Retpolines have not been evaluated; the stack-protector guard is one
   global value, not per CPU.
-- No `/dev/random` (no device files until phase 9); programs use
-  `getrandom`.
+- `/dev/fb0` and `/dev/input/*` exist as names only (no driver behind them
+  until phase 10); nothing is encrypted on disk (phase 18).
 - No kernel ASLR (phase 19).
-- No networking, so nothing leaves the machine. No persistent storage, so
-  no user data is kept.
+- No networking, so nothing leaves the machine. Files written to a cerfs
+  disk persist, unencrypted.
 
 Do not put real data in the system before phase 15.
 
 ## Performance state
 
-Numbers are in docs/BENCH.md (latest block 2026-10-04, 0.0.5a). Under
-QEMU/KVM with 4 CPUs: context switch 22–24 ns, system-call round trip
-33–34 ns, wake-up latency 7–9 µs average, allocation 76–84 ns per pair
-(debug build), idle desktop 0% of ticks busy — all within budget. **Over
-budget: a minor page fault takes 2.0–2.9 µs against 2 µs** (not profiled).
+Numbers are in docs/BENCH.md (latest block 2026-10-04, 0.0.5c). Under
+QEMU/KVM with 4 CPUs: context switch 24 ns, system-call round trip 32 ns,
+wake-up latency 9 µs average, allocation 80 ns per pair (debug build), idle
+desktop 0% of ticks busy — all within budget. **Over budget: a minor page
+fault takes 2.0–2.9 µs against 2 µs** (not profiled). Storage: 87 MiB/s
+sequential read from SATA with a cold cache, a cached 64 MiB read in 6 ms;
+IDE by programmed I/O manages 2 MiB/s.
 
 On VirtualBox (Hyper-V backend) writing to the screen is slow (about 30
-million pixels per second, although the framebuffer is mapped
-write-combining there too). Since 0.0.5b only changed pixels are written,
-which cuts a drag to about a fifth of the writes; a full-screen change
-still takes 13–35 ms there.
+million pixels per second); since 0.0.5b only changed pixels are written.
+The clock there is the PIT: VirtualBox's time-stamp counter is not
+trustworthy (docs/DECISIONS.md, 2026-10-04).
 
 Known limits:
 
+- One VFS lock serialises all file-system work; disk drivers poll instead
+  of using interrupts (a thread reading a disk keeps its CPU busy).
 - Frame pacing follows the 10 ms tick (no one-shot timer). Input is handled
   immediately.
 - Waking a thread on another CPU costs an inter-processor interrupt; one
@@ -243,16 +274,17 @@ Known limits:
 
 - `early_map` still hands out kernel virtual addresses on its own (first GiB
   of the vmalloc region); drivers can move to `mmap_device` when convenient.
-- File-backed memory regions and a working directory in `Process` wait for
-  the VFS (phase 9). The file-descriptor table exists (32 entries) but
-  only knows the console and read-only boot-archive files; `read` from the
-  console returns 0.
+- File-backed `mmap` is not done (moved to phase 11; docs/DECISIONS.md,
+  phase 9). `read` from the console returns 0 for programs (terminals are
+  phase 17). No hard links. No `fsck.cerfs` (phase 18): after a power cut a
+  file deleted while still open can leave a leaked inode, which the host
+  checker reports as a warning.
 - `init` only collects orphaned children; it starts nothing.
 - Phase 7 deviations from the spec are listed in docs/DECISIONS.md
   (2026-10-03, phase 7).
 - One terminal window (one kernel shell). No text selection or escape
   sequences in the terminal (scrollback exists since 0.0.5b).
-- Unregistered "Cerberus-dev" and "Cerberus" folders are left under `VirtualBox VMs` from
+- Unregistered "Lumen-dev" and "Lumen" folders are left under `VirtualBox VMs` from
   VMs that were removed; they are not used.
 - Phase 8 deviations from the spec are listed in docs/DECISIONS.md
   (2026-10-03, phase 8): one scheduler lock, cross-CPU wake-up costs an
@@ -262,7 +294,7 @@ Known limits:
 
 Recorded in docs/DECISIONS.md (2026-10-03).
 
-1. **Approve phase 9** (filesystem) and/or the desktop polish first.
+1. **Approve phase 10** (drivers; contents in docs/ROADMAP.md).
 2. **libc: grow the in-tree libc or port mlibc.** Phase 7 wrote the minimal
    in-tree library the spec asks for; the choice matters from phase 17.
 3. TCP/IP: write in-tree (current plan) or port lwIP. Needed before
@@ -275,11 +307,12 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Next
 
-1. Phase 9: VFS, tmpfs, initramfs, devfs, cerfs + `mkfs.cerfs`, page cache
-   (the owner said on 2026-10-04 to keep going).
+1. Get the owner's go-ahead for phase 10: PCI MSI and a driver model, AHCI
+   interrupts, virtio-blk, full PS/2 keyboard and mouse behind
+   `/dev/input`, `/dev/fb0`, ACPI power off (and NVMe, proposed).
 2. Look at the minor-page-fault cost (over budget).
 3. Desktop: window open/close animations; frame pacing from a one-shot
-   timer.
+   timer; a file manager needs phase 13.
 
 ## Known bugs
 

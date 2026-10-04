@@ -20,7 +20,8 @@ while IFS= read -r line; do
     # loop's input and swallows the rest of the VM list.
     info=$("$VBOX" showvminfo "$name" --machinereadable 2>/dev/null </dev/null | tr -d '\r')
     # A DVD attachment looks like: "IDE-1-0"="D:\\Programs\\OS\\dist\\cerberus-0.6.0.iso"
-    slot=$(printf '%s\n' "$info" | grep -i 'dist\\\\cerberus[^"]*\.iso"$' | head -1)
+    # (VMs still pointing at the old name, dist\\lumen.iso, are re-pointed too.)
+    slot=$(printf '%s\n' "$info" | grep -i -E 'dist\\\\(cerberus|lumen)[^"]*\.iso"$' | head -1)
     [ -n "$slot" ] || continue
     found=1
     if ! printf '%s\n' "$info" | grep -q '^VMState="poweroff"'; then

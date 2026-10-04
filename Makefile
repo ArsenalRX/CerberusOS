@@ -441,7 +441,7 @@ vbox-log:
 # switched to 64-bit (tools/vbox-attach.sh).
 dist: $(ISO)
 	@mkdir -p $(ROOT)/dist
-	@rm -f $(ROOT)/dist/cerberus*.iso
+	@rm -f $(ROOT)/dist/cerberus*.iso $(ROOT)/dist/lumen*.iso
 	cp $(ISO) $(ROOT)/dist/cerberus.iso
 	@echo "Cerberus $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
 	@echo "snapshot: $(ROOT)/dist/cerberus.iso (Cerberus $(VERSION))"
