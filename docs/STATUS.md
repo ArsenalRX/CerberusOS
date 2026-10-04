@@ -79,9 +79,11 @@ All on 2026-10-04, on the 0.0.5c code.
   `logs/qemu-serial.log`. `run-cerberus.cmd uefi` boots through OVMF;
   `run-cerberus.cmd build` rebuilds first. This is the fast, accurate path.
 - VirtualBox: the owner creates VMs in the VirtualBox window. As of
-  2026-10-04 (evening) no VM is registered (the owner's "lumen4" is gone).
-  To try the file system, add a SATA (or IDE) hard disk to the VM, then in
-  Cerberus: `mkfs.cerfs -y /dev/disk/sda`, `mount -t cerfs /dev/disk/sda /mnt`. Point a new VM's DVD drive at
+  2026-10-04 (evening) one VM is registered: **"Cerberus"** (created for the
+  owner on request: 64-bit, 4 CPUs, 2 GiB, DVD = `dist/cerberus.iso`, a
+  1 GiB SATA disk, serial log in `logs/vbox-serial.log`). In Cerberus,
+  format the disk once with `mkfs.cerfs -y /dev/disk/sda`, then
+  `mount -t cerfs /dev/disk/sda /mnt`. For a VM made with the wizard, point its DVD drive at
   `dist/cerberus.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
   hides 64-bit mode, and the bootloader then reports that the CPU is not
   64-bit. `make dist` (via `tools/vbox-attach.sh`) fixes that and re-points
