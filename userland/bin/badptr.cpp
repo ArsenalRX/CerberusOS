@@ -2,7 +2,7 @@
 // addresses, ranges that wrap or run off the end of user space, unknown flag
 // bits, bad descriptors, unknown call numbers. Each call must fail with the
 // expected error and the kernel must still be standing afterwards.
-#include <lumen.h>
+#include <cerberus.h>
 
 static int g_checks = 0, g_wrong = 0;
 

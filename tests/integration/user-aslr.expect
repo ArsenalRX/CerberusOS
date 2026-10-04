@@ -1,6 +1,6 @@
 # Phase 7: two runs of the same program get different stack, mmap and code
 # addresses.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/aslr
 !wait 3
 aslr: pid

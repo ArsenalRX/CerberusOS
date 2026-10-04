@@ -43,7 +43,7 @@ every other register is preserved. Numbers never change. Only implemented calls 
 | 123 | `long readlink(const char* path, char* buf, size_t n)` | Copies a symbolic link's target (not NUL-terminated); returns its length. EINVAL if not a link, ENOENT, EFAULT. |
 | 124 | `int chmod(const char* path, int mode)` | Sets permission bits; owner or root only. EPERM, EROFS, ENOENT, EFAULT. |
 | 125 | `int fsync(int fd)` | Writes one file's changes to its disk and returns when they are there. EBADF, EIO. |
-| 126 | `int mount(const char* source, const char* target, const char* type, unsigned flags)` | Mounts a file system of `type` (tmpfs, lumfs) from source (a device path, or anything for tmpfs) on the directory target. flags: MS_RDONLY 1, MS_NOEXEC 2, MS_NOSUID 4, MS_NODEV 8. Root only. EPERM, ENODEV (unknown type), EBUSY, ENOTDIR, EINVAL, EIO, EFAULT. |
+| 126 | `int mount(const char* source, const char* target, const char* type, unsigned flags)` | Mounts a file system of `type` (tmpfs, cerfs) from source (a device path, or anything for tmpfs) on the directory target. flags: MS_RDONLY 1, MS_NOEXEC 2, MS_NOSUID 4, MS_NODEV 8. Root only. EPERM, ENODEV (unknown type), EBUSY, ENOTDIR, EINVAL, EIO, EFAULT. |
 | 127 | `int umount(const char* target)` | Unmounts the file system mounted on target after writing its changes. EBUSY if a file in it is open, EINVAL if target is not a mount point, EPERM. |
 | 128 | `int lstat(const char* path, struct stat* out)` | As stat, but describes a symbolic link itself. ENOENT, EACCES, EFAULT. |
 | 129 | `int chown(const char* path, int uid, int gid)` | Changes owner and group; root only. EPERM, EROFS, ENOENT, EFAULT. |

@@ -1,6 +1,6 @@
 // rm [-r] [-f] path...: removes files (-r: directories and everything in
 // them; -f: no error for missing files).
-#include <lumen.h>
+#include <cerberus.h>
 
 namespace {
 

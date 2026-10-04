@@ -1,7 +1,7 @@
 # Phase 7: a misbehaving program is killed and reported; the kernel and other
 # programs carry on. Null dereference, reading kernel memory, a privileged
 # instruction, executing data, a smashed stack, division by zero.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/crash null
 !wait 2
 killed: #PF Page Fault

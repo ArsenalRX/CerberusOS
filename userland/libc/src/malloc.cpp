@@ -4,7 +4,7 @@
 // merged when freed. Requests of 128 KiB or more get their own mapping and
 // go straight back to the kernel on free. Single-threaded (the library has
 // no threads yet).
-#include <lumen.h>
+#include <cerberus.h>
 
 namespace {
 

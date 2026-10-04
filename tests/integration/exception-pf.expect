@@ -1,5 +1,5 @@
 # Phase 2: a deliberate page fault prints a complete dump and halts.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions pf
 !wait 2
 test exceptions: triggering pf

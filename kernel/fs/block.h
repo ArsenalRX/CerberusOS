@@ -41,6 +41,12 @@ Result<u32> block_register(BlockDevice* d);
 u32 block_count();
 BlockDevice* block_get(u32 minor);
 bool block_present(u32 minor);
+// A mounted file system claims its disk; while claimed, the disk's node
+// cannot be opened for writing (so mkfs cannot format a mounted disk) and it
+// cannot be mounted twice. claim returns false if already claimed.
+bool block_claim(u32 minor);
+void block_unclaim(u32 minor);
+bool block_claimed(u32 minor);
 
 // Raw sector I/O, uncached. Invalid if out of range.
 Result<void> block_dev_read(u32 minor, u64 lba, u32 count, void* buf);

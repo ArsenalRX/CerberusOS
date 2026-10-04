@@ -1,6 +1,6 @@
-# Lumen — working notes for Claude Code
+# Cerberus — working notes for Claude Code
 
-Lumen is a from-scratch x86-64 hybrid-kernel OS with its own desktop, plus
+Cerberus is a from-scratch x86-64 hybrid-kernel OS with its own desktop, plus
 **Spec**, its systems language (the spec calls it "Glint"; renamed, see
 docs/DECISIONS.md top: `glintc`→`specc`, `.gl`→`.spec`). Owner-facing
 overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
@@ -21,17 +21,17 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
 wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 ```
 
-- `make` / `make iso` — kernel, userland, `build/lumen.iso`.
+- `make` / `make iso` — kernel, userland, `build/cerberus.iso`.
 - `make test` — every `tests/integration/*.expect` in headless QEMU/KVM (4
   CPUs) via `tools/qemu-probe.py`; ~8 min. Logs: `build/test-<name>.log`.
 - `make bench` (record in docs/BENCH.md), `make fuzz` (60 s per harness).
-- `make dist` — overwrites `dist/lumen.iso` (+`VERSION.txt`) and re-points
+- `make dist` — overwrites `dist/cerberus.iso` (+`VERSION.txt`) and re-points
   every powered-off VirtualBox VM that boots from `dist/`. `make RELEASE=1
   dist` for a release (tagged commit, plain version number).
 - Probe directives in `.expect` files: `!send`, `!key`, `!wait`, `!mouse`,
   `!mouseto`, `!button`, `!wheel`, `!screenshot`; other lines must appear in
   the serial log in order. A scratch `.expect` in `build/` plus
-  `python3 tools/qemu-probe.py build/lumen.iso --wait 6 --expect F` (no
+  `python3 tools/qemu-probe.py build/cerberus.iso --wait 6 --expect F` (no
   `--quiet`, to see serial output) is the quickest way to look at a change.
 
 ## Pitfalls (learned the hard way)
@@ -66,7 +66,7 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 
 ## Owner preferences
 
-- After every finished update, `make dist` so `dist/lumen.iso` (one file,
+- After every finished update, `make dist` so `dist/cerberus.iso` (one file,
   always overwritten) boots the new build in the owner's VirtualBox VM.
 - Versions: `0.0.5a`, `0.0.5b` … `0.0.5j`, then `0.0.6a` (SPEC §23.1); the
   next version is in `./VERSION`; history in docs/CHANGELOG.md.

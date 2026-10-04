@@ -1,8 +1,8 @@
-// mkfs.lumfs for the build machine: formats a disk image with lumfs, or
+// mkfs.cerfs for the build machine: formats a disk image with cerfs, or
 // checks one (an independent reader of the format, used by the tests).
 //
-//   mkfs.lumfs [-L label] [-s size] image     create/format (size: 64M, 1G, ...)
-//   mkfs.lumfs --check [--replay] image       verify; --replay first applies a
+//   mkfs.cerfs [-L label] [-s size] image     create/format (size: 64M, 1G, ...)
+//   mkfs.cerfs --check [--replay] image       verify; --replay first applies a
 //                                             committed journal transaction
 //
 // The check walks the whole tree from the root: every inode's checksum and
@@ -19,9 +19,9 @@
 #include <unistd.h>
 #include <vector>
 
-#include <fs/lumfs_mkfs.h>
+#include <fs/cerfs_mkfs.h>
 
-using namespace lumfs;
+using namespace cerfs;
 
 namespace {
 
@@ -317,7 +317,7 @@ int check(const char* path, bool replay_journal) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* label = "lumen";
+    const char* label = "cerberus";
     u64 size = 0;
     bool do_check = false, replay = false;
     const char* path = nullptr;
@@ -329,7 +329,7 @@ int main(int argc, char** argv) {
         else path = argv[i];
     }
     if (!path) {
-        fprintf(stderr, "usage: mkfs.lumfs [-L label] [-s size] image\n       mkfs.lumfs --check [--replay] image\n");
+        fprintf(stderr, "usage: mkfs.cerfs [-L label] [-s size] image\n       mkfs.cerfs --check [--replay] image\n");
         return 2;
     }
     if (do_check) return check(path, replay);
@@ -359,10 +359,10 @@ int main(int argc, char** argv) {
                           [](u64 b, const u8* data) { return write_block(b, data); });
     fclose(g_img);
     if (!res.ok) {
-        fprintf(stderr, "mkfs.lumfs: %s\n", res.error);
+        fprintf(stderr, "mkfs.cerfs: %s\n", res.error);
         return 2;
     }
-    printf("%s: lumfs, %llu MiB, %u inodes, journal %u KiB, label \"%s\"\n", path,
+    printf("%s: cerfs, %llu MiB, %u inodes, journal %u KiB, label \"%s\"\n", path,
            (unsigned long long)(bytes >> 20), res.sb.inode_count, res.sb.journal_blocks * 4, label);
     return 0;
 }

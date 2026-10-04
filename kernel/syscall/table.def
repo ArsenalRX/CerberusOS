@@ -87,7 +87,7 @@ SYSCALL(124, chmod,    "int chmod(const char* path, int mode)",
 SYSCALL(125, fsync,    "int fsync(int fd)",
         "Writes one file's changes to its disk and returns when they are there. EBADF, EIO.")
 SYSCALL(126, mount,    "int mount(const char* source, const char* target, const char* type, unsigned flags)",
-        "Mounts a file system of `type` (tmpfs, lumfs) from source (a device path, or anything for tmpfs) on the directory target. flags: MS_RDONLY 1, MS_NOEXEC 2, MS_NOSUID 4, MS_NODEV 8. Root only. EPERM, ENODEV (unknown type), EBUSY, ENOTDIR, EINVAL, EIO, EFAULT.")
+        "Mounts a file system of `type` (tmpfs, cerfs) from source (a device path, or anything for tmpfs) on the directory target. flags: MS_RDONLY 1, MS_NOEXEC 2, MS_NOSUID 4, MS_NODEV 8. Root only. EPERM, ENODEV (unknown type), EBUSY, ENOTDIR, EINVAL, EIO, EFAULT.")
 SYSCALL(127, umount,   "int umount(const char* target)",
         "Unmounts the file system mounted on target after writing its changes. EBUSY if a file in it is open, EINVAL if target is not a mount point, EPERM.")
 SYSCALL(128, lstat,    "int lstat(const char* path, struct stat* out)",

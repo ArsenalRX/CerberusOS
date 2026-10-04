@@ -12,7 +12,7 @@
 //
 // Left out on purpose: fork (the children would multiply; forktest covers
 // it) and long sleeps (the run would never end).
-#include <lumen.h>
+#include <cerberus.h>
 
 static unsigned long g_rng;
 static unsigned long rnd() {

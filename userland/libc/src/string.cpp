@@ -1,6 +1,6 @@
 // Memory and string primitives. The compiler may emit calls to memcpy,
 // memset, memmove and memcmp on its own, so they must exist.
-#include <lumen.h>
+#include <cerberus.h>
 
 extern "C" {
 

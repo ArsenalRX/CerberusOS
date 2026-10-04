@@ -1,7 +1,7 @@
 # Phase 7: a short run of the random system-call fuzzer (the long run is
 # `make fuzz`). Children make random calls with hostile arguments; the kernel
 # and the parent survive, and an ordinary program still runs afterwards.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/sysfuzz 40 500
 !wait 20
 sysfuzz: 40 children, 500 calls each, seed

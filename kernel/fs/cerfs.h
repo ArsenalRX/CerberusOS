@@ -1,5 +1,5 @@
-// lumfs: Lumen's on-disk file system (SPEC phase 9). Format in
-// fs/lumfs_format.h; this is the kernel driver behind `mount -t lumfs`.
+// cerfs: Cerberus's on-disk file system (SPEC phase 9). Format in
+// fs/cerfs_format.h; this is the kernel driver behind `mount -t cerfs`.
 //
 // Consistency: every metadata change (superblock, bitmap, inodes,
 // directories, indirect blocks) joins the running transaction and is held in
@@ -10,9 +10,9 @@
 // replays a complete transaction found in the journal and ignores an
 // incomplete one, so the file system is always as it was at some commit.
 //
-// The disk is untrusted: every field is checked before use (lumfs_format.h);
+// The disk is untrusted: every field is checked before use (cerfs_format.h);
 // damage is reported as Error::IO and logged, never a panic.
 #pragma once
 
-// Registers the "lumfs" type with the VFS.
-void lumfs_register();
+// Registers the "cerfs" type with the VFS.
+void cerfs_register();

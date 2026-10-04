@@ -1,4 +1,4 @@
-# Lumen
+# Cerberus
 
 A hybrid-kernel x86-64 operating system with a compositing desktop, and
 **Spec**, the systems language written alongside it.
@@ -14,6 +14,6 @@ sudo apt install build-essential nasm xorriso qemu-system-x86 gdb python3 \
 ./toolchain/build-cross.sh     # one-off, ~15-30 min
 make                           # kernel + userland + Spec compiler
 make run                       # boot in QEMU (serial on stdout)
-make vbox                      # boot in VirtualBox (from WSL, VM "Lumen")
+make vbox                      # boot in VirtualBox (from WSL, VM "Cerberus")
 make test                      # all test suites
 ```

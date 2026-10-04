@@ -1,6 +1,6 @@
 // System-call wrappers: each turns the kernel's "negative means -errno"
 // result into the C convention of returning -1 and setting errno.
-#include <lumen.h>
+#include <cerberus.h>
 
 extern "C" {
 

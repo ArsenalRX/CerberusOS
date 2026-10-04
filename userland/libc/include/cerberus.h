@@ -1,4 +1,4 @@
-// The Lumen C library: one header for the whole (small) interface. This is
+// The Cerberus C library: one header for the whole (small) interface. This is
 // the minimal in-tree library of SPEC phase 7: enough to write and test
 // programs against the first system calls. Functions follow their usual C
 // meanings; on failure the system-call wrappers return -1 and set errno.
@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <lumen/syscall_nr.h>
+#include <cerberus/syscall_nr.h>
 
 #ifdef __cplusplus
 extern "C" {

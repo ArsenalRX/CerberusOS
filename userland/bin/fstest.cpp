@@ -7,7 +7,7 @@
 //                                 goes: run it, then pull the plug
 //   fstest readtwice <file>       reads a file twice and prints the time of
 //                                 each pass (the second should hit the cache)
-#include <lumen.h>
+#include <cerberus.h>
 
 namespace {
 

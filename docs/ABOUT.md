@@ -1,6 +1,6 @@
-# About Lumen and Spec
+# About Cerberus and Spec
 
-**What this file is for.** A plain-language description of the Lumen
+**What this file is for.** A plain-language description of the Cerberus
 operating system and its programming language, Spec, that the owner can use
 to explain the project to friends, family and technical people. It
 summarises docs/STATUS.md (what is verified), docs/ROADMAP.md (what is
@@ -17,18 +17,18 @@ Last updated: **2026-10-04**, at release **0.0.5a**.
 
 ---
 
-Lumen is a new operating system for 64-bit PCs, written from scratch: its
+Cerberus is a new operating system for 64-bit PCs, written from scratch: its
 own kernel, its own desktop, and eventually its own programming language,
 Spec. The goal is a system that puts the privacy and security of the person
 using it first, feels smooth, and uses the hardware efficiently. It is
 early: today it boots and runs in virtual machines, not yet as your
 everyday computer.
 
-## Lumen in one minute
+## Cerberus in one minute
 
 - **What it is.** An operating system: the basic software that starts when
   a computer is switched on and lets every other program run. Windows,
-  macOS and Linux are operating systems. Lumen is a new one, for 64-bit
+  macOS and Linux are operating systems. Cerberus is a new one, for 64-bit
   x86 processors (the kind in most PCs and laptops).
 - **Written from scratch.** It is not based on Linux, Windows or any other
   system's code. Only the bootloader (Limine) comes from elsewhere.
@@ -46,7 +46,7 @@ everyday computer.
   on old BIOS or modern UEFI. It cannot yet save files, connect to the
   internet or be installed on a real PC.
 
-## How Lumen works
+## How Cerberus works
 
 Think of a computer as a building. The **hardware** is the building itself:
 rooms (memory), workers (processor cores), doors and windows (keyboard,
@@ -76,7 +76,7 @@ are what the coming phases build.
 ### Booting
 
 When the (virtual) machine starts, a small program called the **bootloader**
-(Limine) loads the Lumen kernel into memory and hands over control. The
+(Limine) loads the Cerberus kernel into memory and hands over control. The
 kernel then finds the processor, the memory, the timers, the interrupt
 controllers and the real-time clock on its own, starts every processor
 core, and brings up the desktop. This takes about a second.
@@ -91,7 +91,7 @@ Operating systems make a basic choice here. A *monolithic* kernel (like
 Linux) puts nearly everything inside the kernel: fast, but a bug anywhere
 can bring down the whole system. A *microkernel* keeps the kernel tiny and
 runs almost everything as separate programs: safer, but often slower.
-Lumen is **hybrid**: the rule (SPEC §6.2) is that anything needing
+Cerberus is **hybrid**: the rule (SPEC §6.2) is that anything needing
 sub-microsecond speed or special processor instructions stays in the kernel
 (memory management, scheduling, system calls, the core of the file system,
 disk and input drivers, messaging between programs), and everything else
@@ -118,16 +118,16 @@ it is reused, so no program can read what another left behind.
 
 A computer appears to do many things at once. In reality each processor
 core switches between jobs many times a second. The **scheduler** decides
-who runs next: Lumen has four priority levels, time slices, and lets idle
+who runs next: Cerberus has four priority levels, time slices, and lets idle
 cores take work from busy ones. A unit of work is a **thread**; a running
-program (a **process**) has one or more threads. Lumen uses every
+program (a **process**) has one or more threads. Cerberus uses every
 processor core it finds (tested with four).
 
 Programs run in **user mode**, a restricted processor mode. Only the
 kernel runs in **kernel mode** with full rights. When a program needs
 something only the kernel can do (open a file, get memory, start another
 program), it makes a **system call**: a controlled request through a single
-door, where every argument is checked. Lumen has 14 system calls today and
+door, where every argument is checked. Cerberus has 14 system calls today and
 a small C library for programs. A program that crashes is stopped and
 reported; the rest of the system carries on.
 
@@ -152,7 +152,7 @@ editor, settings, calculator, image viewer, paint program and more.
 
 Today everything lives in memory and is gone at shutdown; programs are
 read from an archive loaded at boot. **Phase 9** adds real files and
-folders and **lumfs**, Lumen's own disk file system. lumfs keeps a
+folders and **cerfs**, Cerberus's own disk file system. cerfs keeps a
 **journal**, a log of changes written before the changes themselves, so a
 crash or power cut never leaves the disk in a broken state. It also treats
 the disk as untrusted: a damaged disk gives an error, not a crash. Disk
@@ -160,14 +160,14 @@ drivers follow in phase 10.
 
 ### Networking (planned)
 
-Lumen has no networking yet, so nothing can leave the machine. **Phase 14**
+Cerberus has no networking yet, so nothing can leave the machine. **Phase 14**
 adds network card drivers and **netd**, a network server running as a
 separate, unprivileged program: addresses (DHCP), name lookup (DNS), TCP
 and UDP, and tools such as `ping` and `fetch`. A **firewall blocks all
 incoming connections by default**, and each application needs permission
 to use the network. Secure connections (HTTPS) come in phase 15.
 
-Lumen will have **its own web browser**, written from scratch (phase 15B,
+Cerberus will have **its own web browser**, written from scratch (phase 15B,
 decided 2026-10-04). It comes after networking and secure connections,
 which it needs. The first version renders HTML and CSS without
 JavaScript, runs in a sandbox, and treats every web page as hostile input.
@@ -220,8 +220,8 @@ boot to a usable desktop in under 3 seconds, small apps starting in under
 
 ## The Spec programming language
 
-**Spec** is a systems programming language designed alongside Lumen. It is
-meant for writing Lumen's applications, and eventually parts of Lumen
+**Spec** is a systems programming language designed alongside Cerberus. It is
+meant for writing Cerberus's applications, and eventually parts of Cerberus
 itself. The idea behind building both: a language made together with its
 operating system can express things a general-purpose language cannot,
 such as system calls as typed parts of the language, kernel handles the
@@ -234,7 +234,7 @@ folder holds only empty folders. It is **phase 16** on the roadmap.
 ### Design goals and main features (SPEC §13.1)
 
 - **Statically typed and compiled** to native x86-64 machine code for
-  Lumen; no garbage collector.
+  Cerberus; no garbage collector.
 - **Regions** (the distinctive feature): memory allocated inside a
   `region` block is all freed at its closing brace, and the compiler stops
   any reference from escaping it. This gives predictable memory management
@@ -276,13 +276,13 @@ built.
 
 ### How the compiler works (SPEC §13.2)
 
-The compiler, `specc`, turns a `.spec` source file into a Lumen program in
+The compiler, `specc`, turns a `.spec` source file into a Cerberus program in
 stages: it splits the text into words (lexer), builds a tree of the program
 (parser), resolves names and modules, checks types, regions, capabilities,
 pattern coverage and references, specialises generic code, translates it to
 an internal form called SIR, optimises it (constant folding, dead-code
 removal, inlining and more), assigns processor registers, picks x86-64
-instructions, and finally writes an ELF program file Lumen can run.
+instructions, and finally writes an ELF program file Cerberus can run.
 
 ### Tooling (SPEC §13.4)
 
@@ -296,7 +296,7 @@ instructions, and finally writes an ELF program file Lumen can run.
   suggested fix where one is obvious.
 
 Phase 16 is done when `specc hello.spec -o hello` makes a program that runs
-on Lumen and a Spec application with windows runs on the desktop.
+on Cerberus and a Spec application with windows runs on the desktop.
 
 ## What it can do today (0.0.5a)
 
@@ -319,7 +319,7 @@ accounts, install to a disk, or run Windows or Linux software.
 
 - **Next:** desktop polish (Windows-style window buttons, smoother corners
   and dragging), waiting for the owner's go-ahead.
-- **Phase 9:** files, folders and the lumfs disk file system.
+- **Phase 9:** files, folders and the cerfs disk file system.
 - **Phase 10:** drivers for disks, keyboard, mouse; power off.
 - **Phase 11:** programs talking to each other (messages, shared memory).
 - **Phase 12:** Pane, the window server as a separate program.
@@ -336,12 +336,12 @@ accounts, install to a disk, or run Windows or Linux software.
 
 ## FAQ for explaining it
 
-**Is it Linux?** No. Lumen is written from scratch. It does not use Linux
+**Is it Linux?** No. Cerberus is written from scratch. It does not use Linux
 or Windows code, and it cannot run their programs as they are.
 
 **Can it run Windows or Linux apps?** Not now. Phase 17 aims to let
 ordinary C programs (for example Lua and a small C compiler) be rebuilt
-from their source code for Lumen. Running Windows or Linux programs
+from their source code for Cerberus. Running Windows or Linux programs
 directly is not a goal.
 
 **Can I install it on my PC?** Not yet. It runs in virtual machines.
@@ -369,7 +369,7 @@ network at all.
 - **Hybrid kernel:** a kernel that keeps speed-critical services inside and
   runs others as separate protected programs.
 - **Bootloader:** the small program that loads the kernel at power-on
-  (Lumen uses Limine).
+  (Cerberus uses Limine).
 - **Process:** a running program with its own private memory.
 - **Thread:** one line of work inside a process; a process can have many.
 - **Scheduler:** the part of the kernel that decides which thread runs on
@@ -381,7 +381,7 @@ network at all.
 - **Compositor:** the part that combines all windows into the screen image.
 - **Window server:** the program that owns the screen and input and manages
   windows (Pane, planned).
-- **File system:** how files and folders are stored on a disk (lumfs,
+- **File system:** how files and folders are stored on a disk (cerfs,
   planned).
 - **Journal:** a log of changes that keeps a disk consistent after a crash.
 - **Driver:** code that operates a piece of hardware.
@@ -393,4 +393,4 @@ network at all.
 - **Compiler:** a program that turns source code into a runnable program
   (`specc`, planned).
 - **Virtual machine:** software (VirtualBox, QEMU) that imitates a PC, so
-  Lumen can run safely inside Windows.
+  Cerberus can run safely inside Windows.

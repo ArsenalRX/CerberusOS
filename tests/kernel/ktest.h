@@ -10,6 +10,7 @@ struct KernelTest {
     const char* help;
     int (*fn)(int argc, char** argv);
     bool halts;
+    bool slow = false;          // long-running (fuzzers): run by name only, like halts
 };
 
 const KernelTest* ktests();

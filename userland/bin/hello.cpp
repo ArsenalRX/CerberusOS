@@ -1,6 +1,6 @@
 // The phase 7 "hello": output through write(1, ...), then an exit status the
 // kernel reports back.
-#include <lumen.h>
+#include <cerberus.h>
 
 // A table of pointers: these need fixing up for wherever the program was
 // loaded, so printing through it checks the start-up relocation code.

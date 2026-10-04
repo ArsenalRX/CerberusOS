@@ -1,4 +1,4 @@
-/* Link layout for Lumen user programs: position-independent, linked at
+/* Link layout for Cerberus user programs: position-independent, linked at
    address 0, three segments (code r-x, constants r--, data rw-) so nothing is
    ever writable and executable. The relocation table is bracketed so the
    startup code can apply it itself (there is no dynamic linker yet). */

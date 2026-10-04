@@ -1,9 +1,9 @@
 # Phase 7: a program runs in ring 3, prints through write(1, ...), and its
 # exit status is reported by the kernel. init is running (it shows in ps).
 cpu: protections on:
-files: boot archive
+fs: / from the boot archive
 init: started as pid 1
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/hello first second
 !wait 2
 hello: written with write(1, ...)

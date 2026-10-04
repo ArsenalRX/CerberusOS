@@ -2,5 +2,5 @@
 // or date change rebuilds one object instead of the whole kernel.
 #include <lib/version.h>
 
-const char* lumen_version() { return LUMEN_VERSION; }
-const char* lumen_build_date() { return LUMEN_BUILD_DATE; }
+const char* cerberus_version() { return CERBERUS_VERSION; }
+const char* cerberus_build_date() { return CERBERUS_BUILD_DATE; }

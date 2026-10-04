@@ -1,0 +1,28 @@
+#!disk blank 32M mkfs
+#!hostcheck mkfs
+# Phase 9: a blank disk is formatted from inside Cerberus with mkfs.cerfs
+# (which refuses without -y and refuses a mounted disk), mounted and used;
+# the build machine then checks the result independently.
+cerberus kernel shell
+!send mkfs.cerfs /dev/disk/sda
+!wait 2
+this would erase everything
+!send mkfs.cerfs -y /dev/disk/sda
+!wait 3
+mount it with
+!send mount -t cerfs /dev/disk/sda /mnt
+!wait 2
+cerfs: mounted
+!send echo formatted inside Cerberus > /mnt/note.txt
+!wait 1
+!send cat /mnt/note.txt
+!wait 1
+formatted inside Cerberus
+!send mkfs.cerfs -y /dev/disk/sda
+!wait 2
+busy
+!send umount /mnt
+!wait 2
+!send mount
+!wait 1
+name cache

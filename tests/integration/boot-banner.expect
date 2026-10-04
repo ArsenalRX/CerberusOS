@@ -1,10 +1,10 @@
 # Phase 1: the kernel boots and prints the banner on serial.
 # Lines must appear in this order as substrings of the serial output.
-limine: Loading executable `boot():/boot/lumen.elf`
-lumen: serial console up
-lumen: boot info collected
-lumen: framebuffer console
-Lumen 0.
+limine: Loading executable `boot():/boot/cerberus.elf`
+cerberus: serial console up
+cerberus: boot info collected
+cerberus: framebuffer console
+Cerberus 0.
 (x86-64), built
 bootloader: Limine
 cpu:
@@ -14,4 +14,4 @@ memory map:
  KiB  usable
  KiB  framebuffer
 MiB usable, top of RAM at
-lumen>
+cerberus>

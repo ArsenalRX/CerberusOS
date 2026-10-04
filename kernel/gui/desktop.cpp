@@ -116,7 +116,7 @@ const MenuItem MENU_ITEMS[] = {
     {"Terminal", Kind::Terminal},
     {"System Monitor", Kind::SystemMonitor},
     {"Memory Map", Kind::MemoryMap},
-    {"About Lumen", Kind::About},
+    {"About Cerberus", Kind::About},
 };
 constexpr int MENU_COUNT = sizeof MENU_ITEMS / sizeof MENU_ITEMS[0];
 
@@ -431,7 +431,7 @@ void open_kind(Kind kind) {
     int x = 80 + (n % 5) * 40, y = 60 + (n % 5) * 36;
     switch (kind) {
     case Kind::Terminal: create_window(kind, "Terminal", {x, y, 720, 460}); break;
-    case Kind::About: create_window(kind, "About Lumen", {x + 120, y + 40, 460, 400}); break;
+    case Kind::About: create_window(kind, "About Cerberus", {x + 120, y + 40, 460, 400}); break;
     case Kind::SystemMonitor: create_window(kind, "System Monitor", {x + 60, y + 20, 520, 360}); break;
     case Kind::MemoryMap: create_window(kind, "Memory Map", {x + 30, y + 10, 700, 480}); break;
     }
@@ -475,7 +475,7 @@ void paint_about(Surface& s) {
     fill_rect(s, s.bounds(), theme::CONTENT_BG);
     fill_gradient_radial(s, s.bounds(), s.width - 60, 40, 260, rgba(96, 165, 250, 60), rgba(0, 0, 0, 0));
     // Wordmark: 16x32 font at 2x.
-    const char* mark = "Lumen";
+    const char* mark = "Cerberus";
     int x = 24;
     for (int i = 0; mark[i]; i++) {
         draw_char_scaled(s, g.font_big, x, 22, mark[i], 2, theme::TEXT);
@@ -485,9 +485,9 @@ void paint_about(Surface& s) {
     draw_text(s, g.font, 26, 96, "A hybrid-kernel operating system, built from scratch.", theme::TEXT_MUTED);
     char line[96];
     int y = 130;
-    ksnprintf(line, sizeof line, "%s (x86-64)", lumen_version());
+    ksnprintf(line, sizeof line, "%s (x86-64)", cerberus_version());
     y = paint_kv(s, y, "Version", line);
-    y = paint_kv(s, y, "Built", lumen_build_date());
+    y = paint_kv(s, y, "Built", cerberus_build_date());
     y = paint_kv(s, y, "Bootloader", g_boot_info.bootloader);
     char brand[49];
     cpuid_brand(brand);
@@ -693,7 +693,7 @@ void draw_panel(Surface& back) {
     bool lhover = lr.contains(g.mx, g.my) || g.menu_open;
     fill_rect_rounded(back, lr, 8, lhover ? theme::ACCENT : theme::ACCENT_DARK);
     fill_circle_aa(back, lr.x + 16, lr.y + lr.h / 2, 5, rgb(255, 255, 255));
-    draw_text(back, g.font, lr.x + 30, lr.y + (lr.h - g.font.height) / 2, "Lumen", rgb(255, 255, 255));
+    draw_text(back, g.font, lr.x + 30, lr.y + (lr.h - g.font.height) / 2, "Cerberus", rgb(255, 255, 255));
 
     // Task buttons.
     g.task_count = 0;
@@ -1165,16 +1165,16 @@ void build_wallpaper() {
     fill_gradient_radial(s, s.bounds(), g.W * 4 / 5, g.H / 5, g.W / 2, theme::GLOW_BLUE, rgba(0, 0, 0, 0));
     fill_gradient_radial(s, s.bounds(), g.W / 6, g.H * 5 / 6, g.W * 2 / 5, theme::GLOW_VIOLET, rgba(0, 0, 0, 0));
     // Faint wordmark.
-    const char* mark = "Lumen";
+    const char* mark = "Cerberus";
     int scale = g.W >= 1600 ? 4 : 3;
-    int mw = 5 * g.font_big.width * scale;
+    int mw = (int)strlen(mark) * g.font_big.width * scale;
     int x = (g.W - mw) / 2, y = (g.H - theme::PANEL_H - g.font_big.height * scale) / 2;
     for (int i = 0; mark[i]; i++) {
         draw_char_scaled(s, g.font_big, x, y, mark[i], scale, rgba(255, 255, 255, 26));
         x += g.font_big.width * scale;
     }
     char line[64];
-    ksnprintf(line, sizeof line, "Lumen %s  |  preview desktop", lumen_version());
+    ksnprintf(line, sizeof line, "Cerberus %s  |  preview desktop", cerberus_version());
     int tw = measure_text(g.font, line);
     draw_text(s, g.font, g.W - tw - 16, g.H - theme::PANEL_H - 26, line, rgba(255, 255, 255, 70));
 }
@@ -1241,7 +1241,7 @@ bool gui_init() {
 
     fbconsole_disable();
     g.active = true;
-    create_window(Kind::About, "About Lumen", {g.W - 520, 90, 460, 400});
+    create_window(Kind::About, "About Cerberus", {g.W - 520, 90, 460, 400});
     create_window(Kind::Terminal, "Terminal", {56, 56, 740, 470});
     damage_all();
     flush_frame();

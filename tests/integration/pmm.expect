@@ -1,6 +1,6 @@
 # Phase 3: physical frame allocator self-test.
 pmm:
-lumen kernel shell
+cerberus kernel shell
 !send test pmm
 !wait 6
 allocated 10000 chunks

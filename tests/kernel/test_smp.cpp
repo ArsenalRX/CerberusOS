@@ -313,7 +313,7 @@ int ktest_smp(int, char**) {
             "kmalloc+kfree %lu ns\n",
             n, (unsigned long)g_mutex_counter, (unsigned long)wake.avg_us, (unsigned long)switch_ns,
             (unsigned long)pair_ns);
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     kprintf("  lock order: every spinlock taken above was checked against kernel/lib/lock_order.h; no violation\n");
 #else
     kprintf("  lock order: the checker is only built into debug kernels\n");

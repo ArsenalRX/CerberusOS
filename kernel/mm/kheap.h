@@ -33,7 +33,7 @@ constexpr usize KMALLOC_MAX_SLAB = 2048;
 // Bytes between the start of a slab object and the pointer kmalloc returns
 // (the debug header and front red zone). Tests use it to reach the free-list
 // link of a freed object.
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 constexpr usize KHEAP_PAYLOAD_OFFSET = 32;
 #else
 constexpr usize KHEAP_PAYLOAD_OFFSET = 0;

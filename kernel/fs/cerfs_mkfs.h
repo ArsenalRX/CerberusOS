@@ -1,15 +1,15 @@
-// Formats a lumfs file system (version 1). Header-only and dependent only on
-// the format header, so the host tool (tools/mkfs-lumfs.cpp), the
-// mkfs.lumfs program inside Lumen and the kernel's own tests share it. The
+// Formats a cerfs file system (version 1). Header-only and dependent only on
+// the format header, so the host tool (tools/mkfs-cerfs.cpp), the
+// mkfs.cerfs program inside Cerberus and the kernel's own tests share it. The
 // caller supplies a function that writes one 4 KiB block.
 //
 // Layout choices: one inode per 16 KiB of disk (at least 64), a journal of
 // 1/64 of the disk between 64 and 4096 blocks, an empty root directory.
 #pragma once
 
-#include <fs/lumfs_format.h>
+#include <fs/cerfs_format.h>
 
-namespace lumfs {
+namespace cerfs {
 
 struct MkfsResult {
     bool ok;
@@ -121,20 +121,20 @@ MkfsResult mkfs(u64 total_blocks, const char* label, const u8* uuid, u64 now, Wr
     dot->inode = ROOT_INODE;
     dot->rec_len = (u16)dirrec_size(1);
     dot->name_len = 1;
-    dot->type = DT_DIR;
+    dot->type = REC_DIR;
     dot->name[0] = '.';
     DirRec* dotdot = (DirRec*)(block + HEADER + dot->rec_len);
     dotdot->inode = ROOT_INODE;
     dotdot->rec_len = (u16)(BLOCK - HEADER - dot->rec_len);
     dotdot->name_len = 2;
-    dotdot->type = DT_DIR;
+    dotdot->type = REC_DIR;
     dotdot->name[0] = dotdot->name[1] = '.';
     seal_block(block);
     if (!write_block(root_block, block)) {
         r.error = "write failed (root directory)";
         return r;
     }
-    // Superblock last: until it is written the disk is not a lumfs.
+    // Superblock last: until it is written the disk is not a cerfs.
     __builtin_memset(block, 0, BLOCK);
     s.crc = super_crc(s);
     __builtin_memcpy(block, &s, sizeof s);
@@ -146,4 +146,4 @@ MkfsResult mkfs(u64 total_blocks, const char* label, const u8* uuid, u64 now, Wr
     return r;
 }
 
-} // namespace lumfs
+} // namespace cerfs

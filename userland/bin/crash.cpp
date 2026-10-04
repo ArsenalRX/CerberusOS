@@ -1,6 +1,6 @@
 // Deliberate misbehaviour, one kind per argument. Each must end this process
 // only; the kernel reports it and carries on.
-#include <lumen.h>
+#include <cerberus.h>
 
 __attribute__((noinline)) static void smash(const char* src) {
     char small[8];

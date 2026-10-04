@@ -1,6 +1,6 @@
 # Phase 7: hostile arguments to every system call are refused with the right
 # error, unknown call numbers return ENOSYS, and the kernel keeps running.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/badptr
 !wait 4
 badptr:

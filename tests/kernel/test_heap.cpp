@@ -56,7 +56,7 @@ int ktest_heap(int, char**) {
     KTEST_CHECK(kmalloc(0) == nullptr);
     u8* a = (u8*)kmalloc(40);
     KTEST_CHECK(a && ((u64)a & 15) == 0 && ksize(a) == 64 && kheap_check(a));
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     KTEST_CHECK(filled_with(a, 40, 0xDE));
 #endif
     u8* z = (u8*)kzalloc(300);
@@ -64,7 +64,7 @@ int ktest_heap(int, char**) {
     kfree(z);
 
     // --- deliberate overrun: one byte past the end lands in the red zone ---
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     u8 saved = a[40];
     a[40] = 0x41;
     KTEST_CHECK(!kheap_check(a));
@@ -171,7 +171,7 @@ int ktest_heap(int, char**) {
     }
     u64 f1 = refclock_now_us();
     kprintf("  timing: %lu ns per kmalloc(64)+kfree pair (%s)\n", (unsigned long)((f1 - f0) * 1000 / FAST),
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
             "debug build, with red zones and poisoning"
 #else
             "release build"

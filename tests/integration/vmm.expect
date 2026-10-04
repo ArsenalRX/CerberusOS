@@ -2,7 +2,7 @@
 # self-test (twice, to show nothing leaks between runs).
 vmm: kernel space adopted; NX and WP on
 vmm: image
-lumen kernel shell
+cerberus kernel shell
 !send test vmm
 !wait 4
 map/write/read/unmap: access after unmap faulted at 0x40000000 (not-present)

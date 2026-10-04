@@ -1,5 +1,5 @@
 # Phase 5: a corrupted free-list link is detected and never followed.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions fl
 !wait 2
 overwriting the free-list link of a freed 64-byte object

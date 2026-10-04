@@ -46,7 +46,9 @@ void dev_register_char(u32 major, const CharDeviceOps* ops);
 const VnodeOps* dev_vnode_ops();
 // Called by the file layer when a device node is opened. NoDevice if no
 // driver claims it.
-Result<void> dev_open(Vnode* v);
+// `write`: opened for writing (refused with Busy for a disk in use by a
+// mounted file system).
+Result<void> dev_open(Vnode* v, bool write);
 
 // Registers the memory devices (null, zero, random, urandom) and the console.
 void dev_init();

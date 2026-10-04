@@ -3,10 +3,10 @@
 # application. Coordinates assume the 1280x800 test display.
 ps2mouse: streaming
 gui: desktop up
-lumen kernel shell
+cerberus kernel shell
 !key help
 !wait 1
-lumen> help
+cerberus> help
 !screenshot build/desktop-1.png
 # Drag the About window by its title bar (starts at x=760..1220, y=90..122).
 !mouseto 1000 105
@@ -34,5 +34,5 @@ lumen> help
 !button left up
 !key ticks
 !wait 0.5
-lumen> ticks
+cerberus> ticks
 ticks=

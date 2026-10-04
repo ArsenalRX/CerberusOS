@@ -1,5 +1,5 @@
 // echo [-n] [word...]: prints its arguments separated by spaces.
-#include <lumen.h>
+#include <cerberus.h>
 
 int main(int argc, char** argv) {
     int first = 1;

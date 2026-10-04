@@ -1,6 +1,6 @@
 # Phase 5 (debug builds): a write to freed memory is detected when the
 # object is next handed out.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions waf
 !wait 2
 writing to a 64-byte object after freeing it

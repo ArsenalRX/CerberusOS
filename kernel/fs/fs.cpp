@@ -4,7 +4,7 @@
 #include <fs/file.h>
 #include <fs/fs.h>
 #include <fs/pagecache.h>
-#include <fs/lumfs.h>
+#include <fs/cerfs.h>
 #include <fs/tmpfs.h>
 #include <fs/vfs.h>
 #include <lib/kprintf.h>
@@ -47,7 +47,7 @@ void fs_init() {
     dev_init();
     page_cache_init();
     tmpfs_register();
-    lumfs_register();
+    cerfs_register();
 
     // The root: the boot archive in a tmpfs, then read-only.
     Result<Mount*> rm = tmpfs_create("initramfs", 0);

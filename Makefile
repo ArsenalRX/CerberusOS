@@ -1,4 +1,4 @@
-# Top-level build for Lumen OS, the Spec compiler, and the userland.
+# Top-level build for Cerberus OS, the Spec compiler, and the userland.
 # Run from WSL2/Linux. Targets: all kernel iso run debug gdb test clean vbox check-tools.
 
 MAKEFLAGS += --no-builtin-rules --no-print-directory
@@ -25,9 +25,9 @@ HOSTCXX   ?= g++
 GDB       ?= gdb
 PYTHON    ?= python3
 
-KERNEL_ELF := $(BUILD)/kernel/lumen.elf
+KERNEL_ELF := $(BUILD)/kernel/cerberus.elf
 KERNEL_SYM := $(BUILD)/kernel/kernel.sym
-ISO        := $(BUILD)/lumen.iso
+ISO        := $(BUILD)/cerberus.iso
 LIMINE_BIN := $(BUILD)/limine-host/limine
 
 # Version (docs/SPEC.md §23): the number lives in ./VERSION. `make RELEASE=1`
@@ -61,7 +61,7 @@ KCXXFLAGS := -std=c++20 -ffreestanding -fstack-protector-strong -mstack-protecto
              -I$(ROOT)/kernel -I$(ROOT)/tests -I$(LIMINE)
 DEBUG ?= 1
 ifeq ($(DEBUG),1)
-KCXXFLAGS += -DLUMEN_DEBUG
+KCXXFLAGS += -DCERBERUS_DEBUG
 # Undefined-behaviour sanitizer (SPEC §5A phase 4); handlers in lib/ubsan.cpp
 # panic with the source location. Left out: vptr (needs RTTI), the float
 # checks (no FPU in the kernel), and the per-dereference checks alignment,
@@ -95,7 +95,7 @@ KERNEL_DEPS := $(KERNEL_OBJS:.o=.d)
 # does, so the banner always describes the image it is linked into.
 VERSION_OBJ   := $(BUILD)/kernel/lib/version.o
 VERSION_STAMP := $(BUILD)/version.stamp
-$(VERSION_OBJ): KCXXFLAGS += -DLUMEN_VERSION=\"$(VERSION)\" -DLUMEN_BUILD_DATE=\"$(BUILD_DATE)\"
+$(VERSION_OBJ): KCXXFLAGS += -DCERBERUS_VERSION=\"$(VERSION)\" -DCERBERUS_BUILD_DATE=\"$(BUILD_DATE)\"
 $(VERSION_OBJ): $(VERSION_STAMP) $(filter-out $(VERSION_OBJ),$(KERNEL_OBJS))
 
 .PHONY: FORCE
@@ -204,7 +204,7 @@ $(BUILD)/%.o: $(ROOT)/%.asm $(ROOT)/Makefile
 # check after pass 2 enforces that.
 SYMS_EMPTY   := $(BUILD)/syms-empty.bin
 SYMS_FULL    := $(BUILD)/syms.bin
-KERNEL_PASS1 := $(BUILD)/kernel/lumen-pass1.elf
+KERNEL_PASS1 := $(BUILD)/kernel/cerberus-pass1.elf
 
 $(SYMS_EMPTY): $(ROOT)/tools/gensyms.py
 	@mkdir -p $(dir $@)
@@ -244,7 +244,7 @@ $(KERNEL_SYM): $(KERNEL_ELF)
 # ---------------------------------------------------------------------------
 GEN         := $(BUILD)/gen
 SYSCALL_DEF := $(ROOT)/kernel/syscall/table.def
-SYSCALL_HDR := $(GEN)/lumen/syscall_nr.h
+SYSCALL_HDR := $(GEN)/cerberus/syscall_nr.h
 SYSCALL_MD  := $(ROOT)/docs/SYSCALLS.md
 
 $(SYSCALL_HDR) $(SYSCALL_MD) &: $(SYSCALL_DEF) $(ROOT)/tools/gen-syscalls.py
@@ -288,6 +288,9 @@ $(UBUILD)/%.o: $(USER_DIR)/%.cpp $(SYSCALL_HDR) $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(UCXXFLAGS) -c $< -o $@
 
+# mkfs.cerfs shares the on-disk format code with the kernel.
+$(UBUILD)/bin/mkfs.cerfs.o: UCXXFLAGS += -I$(ROOT)/kernel
+
 $(CRT0): $(USER_DIR)/libc/src/crt0.S $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) -c $< -o $@
@@ -319,17 +322,17 @@ $(INITRD): $(USER_BINS) $(wildcard $(USER_DIR)/etc/*)
 -include $(USER_DEPS)
 
 # ---------------------------------------------------------------------------
-# Host tools: mkfs.lumfs formats and checks disk images on the build machine.
+# Host tools: mkfs.cerfs formats and checks disk images on the build machine.
 # It shares the on-disk format code with the kernel.
 # ---------------------------------------------------------------------------
-MKFS_LUMFS := $(BUILD)/tools/mkfs.lumfs
-$(MKFS_LUMFS): $(ROOT)/tools/mkfs-lumfs.cpp $(ROOT)/kernel/lib/crc32c.cpp $(ROOT)/kernel/fs/lumfs_format.h \
-               $(ROOT)/kernel/fs/lumfs_mkfs.h
+MKFS_CERFS := $(BUILD)/tools/mkfs.cerfs
+$(MKFS_CERFS): $(ROOT)/tools/mkfs-cerfs.cpp $(ROOT)/kernel/lib/crc32c.cpp $(ROOT)/kernel/fs/cerfs_format.h \
+               $(ROOT)/kernel/fs/cerfs_mkfs.h
 	@mkdir -p $(dir $@)
-	$(HOSTCXX) -std=c++20 -O2 -g -Wall -Wextra -I$(ROOT)/kernel -o $@ $(ROOT)/tools/mkfs-lumfs.cpp \
+	$(HOSTCXX) -std=c++20 -O2 -g -Wall -Wextra -I$(ROOT)/kernel -o $@ $(ROOT)/tools/mkfs-cerfs.cpp \
 	    $(ROOT)/kernel/lib/crc32c.cpp
 
-tools: $(MKFS_LUMFS)
+tools: $(MKFS_CERFS)
 .PHONY: tools
 
 # ---------------------------------------------------------------------------
@@ -363,6 +366,11 @@ fuzz: $(FUZZ_DIR)/fuzz-elf $(FUZZ_DIR)/fuzz-ustar $(ISO)
 	else \
 	    echo "fuzz-syscall: FAILED (see build/fuzz-syscall.log)"; exit 1; \
 	fi
+	@if $(PYTHON) $(ROOT)/tools/qemu-probe.py $(ISO) --wait 6 --expect $(ROOT)/tests/fuzz/cerfs.expect > $(BUILD)/fuzz-cerfs.log 2>&1; then \
+	    grep -a 'cerfs fuzz:' $(BUILD)/fuzz-cerfs.log | head -1 | sed 's/^ *//'; \
+	else \
+	    echo "fuzz-cerfs: FAILED (see build/fuzz-cerfs.log)"; exit 1; \
+	fi
 
 # ---------------------------------------------------------------------------
 # ISO: Limine (UEFI + BIOS hybrid) + kernel + initramfs
@@ -374,7 +382,7 @@ $(LIMINE_BIN): $(LIMINE)/limine.c
 $(ISO): $(KERNEL_ELF) $(INITRD) $(LIMINE_BIN) $(ROOT)/limine.conf
 	rm -rf $(BUILD)/iso_root
 	mkdir -p $(BUILD)/iso_root/boot/limine $(BUILD)/iso_root/EFI/BOOT
-	cp $(KERNEL_ELF) $(BUILD)/iso_root/boot/lumen.elf
+	cp $(KERNEL_ELF) $(BUILD)/iso_root/boot/cerberus.elf
 	cp $(INITRD) $(BUILD)/iso_root/boot/initrd.tar
 	cp $(ROOT)/limine.conf $(LIMINE)/limine-bios.sys $(LIMINE)/limine-bios-cd.bin \
 	   $(LIMINE)/limine-uefi-cd.bin $(BUILD)/iso_root/boot/limine/
@@ -389,11 +397,11 @@ $(ISO): $(KERNEL_ELF) $(INITRD) $(LIMINE_BIN) $(ROOT)/limine.conf
 	@echo "ISO ready: $@"
 
 # ---------------------------------------------------------------------------
-# VirtualBox: create (once) and boot a "Lumen" VM from the ISO.
+# VirtualBox: create (once) and boot a "Cerberus" VM from the ISO.
 # Works from WSL by calling the Windows VBoxManage.exe.
 # ---------------------------------------------------------------------------
 VBOXMANAGE ?= /mnt/c/Program\ Files/Oracle/VirtualBox/VBoxManage.exe
-VBOX_VM    ?= Lumen
+VBOX_VM    ?= Cerberus
 LOGS       := $(ROOT)/logs
 VBOX_LOG   := $(LOGS)/vbox-serial.log
 
@@ -425,7 +433,7 @@ vbox-log:
 	@$(PYTHON) -c "import re,sys; t=open('$(VBOX_LOG)',errors='replace').read(); print(re.sub(r'\x1b\[[0-9;?]*[A-Za-z]','',t))"
 
 # The ISO to try in a VM (dist/ is not cleaned by `make clean`). dist/ holds
-# exactly one file with a fixed name, dist/lumen.iso, and each release
+# exactly one file with a fixed name, dist/cerberus.iso, and each release
 # overwrites it, so there is only ever one to choose (owner's rule,
 # 2026-10-03). The version is shown in the boot banner and the About window,
 # and written to dist/VERSION.txt. Every powered-off VirtualBox VM that boots
@@ -433,11 +441,11 @@ vbox-log:
 # switched to 64-bit (tools/vbox-attach.sh).
 dist: $(ISO)
 	@mkdir -p $(ROOT)/dist
-	@rm -f $(ROOT)/dist/lumen*.iso
-	cp $(ISO) $(ROOT)/dist/lumen.iso
-	@echo "Lumen $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
-	@echo "snapshot: $(ROOT)/dist/lumen.iso (Lumen $(VERSION))"
-	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/lumen.iso
+	@rm -f $(ROOT)/dist/cerberus*.iso
+	cp $(ISO) $(ROOT)/dist/cerberus.iso
+	@echo "Cerberus $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
+	@echo "snapshot: $(ROOT)/dist/cerberus.iso (Cerberus $(VERSION))"
+	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/cerberus.iso
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)

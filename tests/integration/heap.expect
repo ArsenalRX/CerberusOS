@@ -2,7 +2,7 @@
 # runs) and heapstat reports its state. (Since phase 8 a second run may keep
 # a few more slab pages: each CPU the test happens to run on has its own.)
 kheap: slab classes 16-2048 bytes
-lumen kernel shell
+cerberus kernel shell
 !send test heap
 !wait 8
 red zones:

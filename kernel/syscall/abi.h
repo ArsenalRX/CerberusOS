@@ -1,5 +1,5 @@
 // Structures and constants shared with user programs through system calls.
-// userland/libc/include/lumen.h repeats them; the two must match (the
+// userland/libc/include/cerberus.h repeats them; the two must match (the
 // values follow Linux where Linux has one, so ported code needs no changes).
 #pragma once
 

@@ -1,12 +1,12 @@
 # Phase 2 (early PS/2 driver): keys typed on the emulated keyboard reach the
 # kernel shell. "!key" types through QEMU's PS/2 device, not the serial port.
 ps2kbd: irq 1 unmasked
-lumen kernel shell
+cerberus kernel shell
 !key help
 !wait 1
-lumen> help
+cerberus> help
   help     list commands
 !key sym 0xffffffff80001000
 !wait 1
-lumen> sym 0xffffffff80001000
+cerberus> sym 0xffffffff80001000
 0xffffffff80001000 =

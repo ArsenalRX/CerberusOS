@@ -82,7 +82,7 @@ Result<File*> file_open(Vnode* start, const char* path, u32 flags, u32 mode, con
     }
     if (ok.ok() && (v->type == VType::CharDev || v->type == VType::BlockDev)) {
         if (v->mount && (v->mount->flags & vfs::MNT_NODEV)) ok = Error::Access;
-        else ok = dev_open(v);
+        else ok = dev_open(v, want_write);
     }
     if (ok.ok() && (flags & abi::O_TRUNC) && want_write && v->type == VType::File && v->size) ok = vfs_truncate(v, 0);
     if (!ok.ok()) {

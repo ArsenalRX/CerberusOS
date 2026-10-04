@@ -1,7 +1,7 @@
 # Phase 2: interrupt machinery is up, the shell answers, and the non-halting
 # self-tests pass. Directives: "!send <text>" types a line into the serial
 # console; "!wait <seconds>" pauses.
-lumen: serial console up
+cerberus: serial console up
 kernel symbols loaded
 gdt: loaded
 idt: 256 gates loaded
@@ -12,7 +12,7 @@ lapic: timer
 timer: periodic at 100 Hz, interrupts enabled
 timer: 100 Hz confirmed: measured
 boot: OK
-lumen kernel shell
+cerberus kernel shell
 !send test all
 !wait 45
 == test kprintf ==
@@ -29,11 +29,13 @@ lumen kernel shell
 == smp: PASS ==
 == test terminal ==
 == terminal: PASS ==
+== test vfs ==
+== vfs: PASS ==
 == test timer ==
 == timer: PASS ==
 == test idle ==
 == idle: PASS ==
-tests: 9 run, 0 failed
+tests: 10 run, 0 failed
 !send ticks
 !wait 1
 ticks=

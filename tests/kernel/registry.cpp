@@ -12,6 +12,8 @@ int ktest_heap(int argc, char** argv);
 int ktest_sched(int argc, char** argv);
 int ktest_smp(int argc, char** argv);
 int ktest_terminal(int argc, char** argv);
+int ktest_vfs(int argc, char** argv);
+int ktest_cerfsfuzz(int argc, char** argv);
 
 namespace {
 const KernelTest TESTS[] = {
@@ -22,6 +24,8 @@ const KernelTest TESTS[] = {
     {"sched", "sched [seconds]: threads, preemption, locks, producer/consumer, latency", ktest_sched, false},
     {"smp", "all CPUs: spinlock counter, TLB shootdown, work stealing, heap, lock order", ktest_smp, false},
     {"terminal", "desktop terminal: scrollback history, scrolling limits, resizing keeps text", ktest_terminal, false},
+    {"vfs", "file tree: permissions, mount flags, paths and symlinks, rename/unlink rules, unmount", ktest_vfs, false},
+    {"cerfsfuzz", "cerfsfuzz [seconds]: mount damaged cerfs images until the time is up (make fuzz)", ktest_cerfsfuzz, false, true},
     {"timer", "APIC timer advances at 100 Hz", ktest_timer, false},
     {"idle", "timer ticks keep arriving while the CPU is halted", ktest_idle, false},
     {"exceptions", "exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df|lo>: trigger a fatal error (halts)", ktest_exceptions,

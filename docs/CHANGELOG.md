@@ -1,6 +1,10 @@
 # Changelog
 
-What changed in each version of Lumen, newest first.
+What changed in each version of Cerberus, newest first.
+
+> **Name:** the operating system was called **Lumen** until 2026-10-04,
+> when the owner renamed it **Cerberus** (its file system lumfs became
+> **cerfs**). Entries written before that date keep the old names.
 
 **How this file is maintained** (docs/SPEC.md §23): every commit that changes
 behaviour adds one line under "Unreleased", in the same commit, under one of
@@ -17,6 +21,12 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 ---
 
 ## Unreleased
+
+### Changed
+- The operating system is now called **Cerberus** (it was Lumen). Its disk
+  file system is **cerfs** (`mkfs.cerfs`, `mount -t cerfs`), the release
+  image is `dist/cerberus.iso`, the shell prompt is `cerberus>`, and the
+  launcher for Windows is `run-cerberus.cmd`.
 
 ## 0.0.5b — 2026-10-04
 

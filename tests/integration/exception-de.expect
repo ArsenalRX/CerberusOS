@@ -1,5 +1,5 @@
 # Phase 2: a deliberate divide error prints a complete dump and halts.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions de
 !wait 2
 *** EXCEPTION 0: #DE Divide Error ***

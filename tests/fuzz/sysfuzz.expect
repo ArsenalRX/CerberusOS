@@ -1,6 +1,6 @@
 # Driven by `make fuzz`: the long run of the random system-call fuzzer
 # (userland/bin/sysfuzz.cpp), then proof that the kernel still works.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/sysfuzz 600 2000
 !wait 100
 sysfuzz: 600 children, 2000 calls each, seed

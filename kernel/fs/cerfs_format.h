@@ -1,5 +1,5 @@
-// lumfs on-disk format, version 1 (SPEC phase 9). Shared by the kernel
-// (fs/lumfs.cpp), the host tool tools/mkfs-lumfs.cpp and the fuzzer; it
+// cerfs on-disk format, version 1 (SPEC phase 9). Shared by the kernel
+// (fs/cerfs.cpp), the host tool tools/mkfs-cerfs.cpp and the fuzzer; it
 // depends only on lib/types.h and lib/crc32c.h.
 //
 // Little-endian, 4 KiB blocks, block numbers are u32 (16 TiB per disk).
@@ -23,11 +23,11 @@
 #include <lib/crc32c.h>
 #include <lib/types.h>
 
-namespace lumfs {
+namespace cerfs {
 
 constexpr u32 BLOCK = 4096;
 constexpr u32 VERSION = 1;
-constexpr char MAGIC[8] = {'L', 'U', 'M', 'F', 'S', 0, 0, 0};
+constexpr char MAGIC[8] = {'C', 'E', 'R', 'F', 'S', 0, 0, 0};
 constexpr u32 INODE_SIZE = 128;
 constexpr u32 INODES_PER_BLOCK = BLOCK / INODE_SIZE;
 constexpr u32 ROOT_INODE = 1;
@@ -54,7 +54,7 @@ constexpr u32 STATE_CLEAN = 1, STATE_MOUNTED = 2;
 constexpr u16 T_MASK = 0xF000, T_FILE = 0x8000, T_DIR = 0x4000, T_LINK = 0xA000;
 
 // Directory record types.
-constexpr u8 DT_FILE = 1, DT_DIR = 2, DT_LINK = 3;
+constexpr u8 REC_FILE = 1, REC_DIR = 2, REC_LINK = 3;
 
 struct SuperBlock {
     char magic[8];
@@ -213,7 +213,7 @@ template <typename Fn> bool each_dirrec(const u8* block, u32 inode_count, Fn fn)
         if (r->rec_len < DIRREC_MIN || r->rec_len % 4 || r->rec_len > BLOCK - off) return false;
         if (r->inode) {
             if (r->inode > inode_count || r->name_len == 0 || dirrec_size(r->name_len) > r->rec_len) return false;
-            if (r->type != DT_FILE && r->type != DT_DIR && r->type != DT_LINK) return false;
+            if (r->type != REC_FILE && r->type != REC_DIR && r->type != REC_LINK) return false;
             for (u32 k = 0; k < r->name_len; k++)
                 if (r->name[k] == '/' || r->name[k] == 0) return false;
         }
@@ -227,4 +227,4 @@ inline u32 inode_block(const SuperBlock& s, u32 ino) { return (u32)(s.inode_tabl
 inline u32 inode_offset(u32 ino) { return (ino - 1) % INODES_PER_BLOCK * INODE_SIZE; }
 inline u64 bitmap_block_of(const SuperBlock& s, u64 b) { return s.bitmap_start + b / BITS_PER_BITMAP_BLOCK; }
 
-} // namespace lumfs
+} // namespace cerfs

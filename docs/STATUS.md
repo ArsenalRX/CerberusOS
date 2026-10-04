@@ -27,7 +27,7 @@ Before it: **0.0.5a** (2026-10-04, tag `v0.0.5a`), the phase 8 release and
 the first under the new version scheme: every release moves one letter
 (`0.0.5a` … `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1). It follows 0.7.0;
 releases 0.3.0 to 0.7.0 keep their old numbers. The release is always
-`dist/lumen.iso` (`dist/VERSION.txt` names the version); each release
+`dist/cerberus.iso` (`dist/VERSION.txt` names the version); each release
 overwrites it. Also released: **0.0.5b** (2026-10-04, desktop polish). The tree now builds as `0.0.5c-dev+<commit>`. History:
 docs/CHANGELOG.md.
 
@@ -73,20 +73,20 @@ All on 2026-10-04, on the 0.0.5a code.
 
 ## How to run it
 
-- `run-lumen.cmd` (double-click on Windows): boots the ISO in QEMU with KVM
+- `run-cerberus.cmd` (double-click on Windows): boots the ISO in QEMU with KVM
   inside WSL2, window on the desktop via WSLg, serial log in
-  `logs/qemu-serial.log`. `run-lumen.cmd uefi` boots through OVMF;
-  `run-lumen.cmd build` rebuilds first. This is the fast, accurate path.
+  `logs/qemu-serial.log`. `run-cerberus.cmd uefi` boots through OVMF;
+  `run-cerberus.cmd build` rebuilds first. This is the fast, accurate path.
 - VirtualBox: the owner creates VMs in the VirtualBox window. As of
   2026-10-04 no VM of the owner's is registered. Point a new VM's DVD drive at
-  `dist/lumen.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
+  `dist/cerberus.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
   hides 64-bit mode, and the bootloader then reports that the CPU is not
   64-bit. `make dist` (via `tools/vbox-attach.sh`) fixes that and re-points
   the DVD drive for every powered-off VM that boots an ISO from `dist/`.
   If the boot menu stays on screen, press Enter. VirtualBox runs on the
   Hyper-V backend on this host (WSL2 keeps Hyper-V on), so it is slower
-  than `run-lumen.cmd`.
-- `dist/lumen.iso`: the release ISO for any VM (always this name).
+  than `run-cerberus.cmd`.
+- `dist/cerberus.iso`: the release ISO for any VM (always this name).
   `make RELEASE=1 dist` overwrites it and re-points
   the VirtualBox VM.
 
@@ -252,7 +252,7 @@ Known limits:
   (2026-10-03, phase 7).
 - One terminal window (one kernel shell). No text selection or escape
   sequences in the terminal (scrollback exists since 0.0.5b).
-- Unregistered "Lumen-dev" and "Lumen" folders are left under `VirtualBox VMs` from
+- Unregistered "Cerberus-dev" and "Cerberus" folders are left under `VirtualBox VMs` from
   VMs that were removed; they are not used.
 - Phase 8 deviations from the spec are listed in docs/DECISIONS.md
   (2026-10-03, phase 8): one scheduler lock, cross-CPU wake-up costs an
@@ -275,7 +275,7 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Next
 
-1. Phase 9: VFS, tmpfs, initramfs, devfs, lumfs + `mkfs.lumfs`, page cache
+1. Phase 9: VFS, tmpfs, initramfs, devfs, cerfs + `mkfs.cerfs`, page cache
    (the owner said on 2026-10-04 to keep going).
 2. Look at the minor-page-fault cost (over budget).
 3. Desktop: window open/close animations; frame pacing from a one-shot

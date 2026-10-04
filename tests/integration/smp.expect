@@ -5,7 +5,7 @@
 smp: cpu 1 online
 smp: 4 CPUs online
 sched: started on 4 CPU(s)
-lumen kernel shell
+cerberus kernel shell
 !send test smp
 !wait 6
 4 CPU(s) in use

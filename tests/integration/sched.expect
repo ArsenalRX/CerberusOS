@@ -2,7 +2,7 @@
 # producer/consumer run, latency, separate address spaces; then the thread
 # list. The desktop must keep presenting frames while this runs.
 sched: started
-lumen kernel shell
+cerberus kernel shell
 !send test sched
 !wait 18
 worker 1: count

@@ -48,7 +48,7 @@ constexpr u8 POISON_ALLOC = 0xDE;
 constexpr u8 POISON_FREE = 0xEF;
 constexpr u8 RED_ZONE = 0xBB;
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 constexpr usize RED_ZONE_SIZE = 16;
 constexpr u32 STATE_ALLOCATED = 0xA110C8ED;
 constexpr u32 STATE_FREE = 0xF4EEF4EE;
@@ -146,7 +146,7 @@ void list_push(Slab** head, Slab* s) {
     *head = s;
 }
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 bool all_bytes(const u8* p, usize n, u8 value) {
     for (usize i = 0; i < n; i++)
         if (p[i] != value) return false;
@@ -168,7 +168,7 @@ Slab* new_slab(int cls) {
     if (p == PMM_NO_MEMORY) return nullptr;
     Slab* s = (Slab*)hhdm_virt(p);
     usize stride = stride_of(cls);
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     memset(s, POISON_FREE, PAGE_SIZE);
 #endif
     s->next = s->prev = nullptr;
@@ -186,7 +186,7 @@ Slab* new_slab(int cls) {
         u8* obj = first + i * stride;
         u8* next = i + 1 < s->capacity ? obj + stride : nullptr;
         *(u64*)obj = encode_link(next, obj);
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
         ((Track*)obj)->state = STATE_FREE;
         ((Track*)obj)->requested = 0;
 #endif
@@ -264,7 +264,7 @@ void* slab_alloc(int cls, usize requested, u64 caller) {
     s->inuse++;
     g_counters[cpu].allocs++;
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     Track* t = (Track*)obj;
     usize stride = stride_of(cls);
     if (t->state != STATE_FREE || !all_bytes(obj + sizeof(Track), stride - sizeof(Track), POISON_FREE))
@@ -285,7 +285,7 @@ void* slab_alloc(int cls, usize requested, u64 caller) {
 #endif
 }
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 // Both red zones and the slack after the requested size must be untouched.
 bool red_zones_intact(Slab* s, const u8* obj) {
     const Track* t = (const Track*)obj;
@@ -317,7 +317,7 @@ void slab_free(void* ptr) {
     if (!s) PANIC("kfree: %p was not allocated by the kernel heap", ptr);
     Cache& c = g_caches[s->cls];
     u32 cpu = percpu_cpu_id();
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     // The object still belongs to the caller, so these checks need no lock.
     Track* t = (Track*)obj;
     if (t->state != STATE_ALLOCATED) PANIC("kfree: double free or invalid free of %p", ptr);
@@ -335,7 +335,7 @@ void slab_free(void* ptr) {
     // Reading `owner` without the lock is sound for this comparison: only
     // this CPU ever writes its own id there, or removes it.
     if (s->owner == cpu + 1) {
-#ifndef LUMEN_DEBUG
+#ifndef CERBERUS_DEBUG
         if (obj == s->free_head) PANIC("kfree: double free of %p", ptr);
 #endif
         *(u64*)obj = encode_link(s->free_head, obj);
@@ -346,14 +346,14 @@ void slab_free(void* ptr) {
         if (s->owner) {
             // Another CPU's current slab: leave the object where its owner
             // will find it. `inuse` is corrected when it does.
-#ifndef LUMEN_DEBUG
+#ifndef CERBERUS_DEBUG
             if (obj == s->remote_head) PANIC("kfree: double free of %p", ptr);
 #endif
             *(u64*)obj = encode_link(s->remote_head, obj);
             s->remote_head = obj;
             s->remote_count++;
         } else {
-#ifndef LUMEN_DEBUG
+#ifndef CERBERUS_DEBUG
             if (obj == s->free_head) PANIC("kfree: double free of %p", ptr);
 #endif
             *(u64*)obj = encode_link(s->free_head, obj);
@@ -407,7 +407,7 @@ void* large_alloc(usize size, u64 caller) {
         interrupts_restore(irq);
         return nullptr;
     }
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     memset(addr, POISON_ALLOC, size);
     memset((u8*)addr + size, RED_ZONE, pages * PAGE_SIZE - size);
 #endif
@@ -425,7 +425,7 @@ void* large_alloc(usize size, u64 caller) {
     return addr;
 }
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 bool large_slack_intact(const LargeNode* n) {
     return all_bytes((const u8*)n->addr + n->requested, n->pages * PAGE_SIZE - n->requested, RED_ZONE);
 }
@@ -441,7 +441,7 @@ void large_free(void* ptr) {
     g_counters[percpu_cpu_id()].frees++;
     g_lock.unlock();
     // Off the list, the allocation is this caller's alone again.
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     if (!large_slack_intact(n)) {
         kprintf("heap: buffer overrun past the %lu-byte allocation at %p, allocated by ",
                 (unsigned long)n->requested, ptr);
@@ -536,7 +536,7 @@ __attribute__((noinline)) void* krealloc(void* ptr, usize size) {
     bool same = is_large_pointer(ptr) ? (size > KMALLOC_MAX_SLAB && align_up(size, PAGE_SIZE) == old)
                                       : (class_for(size) >= 0 && CLASS_SIZE[class_for(size)] == old);
     if (same) {
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
         if (is_large_pointer(ptr)) {
             g_lock.lock();
             LargeNode* n = *find_large(ptr);
@@ -556,7 +556,7 @@ __attribute__((noinline)) void* krealloc(void* ptr, usize size) {
     void* fresh = alloc(size, caller);
     if (!fresh) return nullptr;
     usize keep = min(size, old);
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     // Only the bytes the caller asked for are meaningful; the rest is red zone.
     usize requested;
     if (is_large_pointer(ptr)) {
@@ -587,7 +587,7 @@ bool kheap_check(const void* ptr) {
         g_lock.lock();
         LargeNode** link = find_large(ptr);
         ok = link != nullptr;
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
         if (ok) ok = large_slack_intact(*link);
 #endif
         g_lock.unlock();
@@ -595,7 +595,7 @@ bool kheap_check(const void* ptr) {
         u8* obj = nullptr;
         Slab* s = slab_of(ptr, &obj);
         ok = s != nullptr;
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
         if (ok) ok = ((Track*)obj)->state == STATE_ALLOCATED && red_zones_intact(s, obj);
 #endif
     }
@@ -642,7 +642,7 @@ void kheap_report() {
         kprintf("  %4u bytes: %lu in use, %lu slab(s)\n", CLASS_SIZE[c], (unsigned long)inuse,
                 (unsigned long)g_caches[c].slabs);
     }
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     // Outstanding allocations grouped by call site. The table is static so
     // the report itself allocates nothing.
     struct Site {

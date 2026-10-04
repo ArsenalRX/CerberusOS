@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the Lumen ISO in QEMU headless, drive it over serial, inspect it via QMP.
+"""Boot the Cerberus ISO in QEMU headless, drive it over serial, inspect it via QMP.
 
 Used by phase checks and the integration harness to prove the kernel actually
 ran (RIP inside the kernel image, expected serial lines present) rather than
@@ -46,9 +46,10 @@ def load_setup(path):
     """'#!' lines at the top of an expect file: machine, disks, host checks.
 
       #!machine pc                  QEMU machine type
-      #!disk new <size> <name>      a fresh lumfs image build/disk-<name>.img (mkfs.lumfs)
+      #!disk new <size> <name>      a fresh cerfs image build/disk-<name>.img (mkfs.cerfs)
+      #!disk blank <size> <name>    an all-zero image (nothing on it)
       #!disk keep <name>            reuse that image as left by an earlier test
-      #!hostcheck <name>            after the run: mkfs.lumfs --check must pass
+      #!hostcheck <name>            after the run: mkfs.cerfs --check must pass
       #!hostcheck-replay <name>     after the run: replay the journal on a copy, then check
     """
     setup = {"machine": None, "disks": [], "checks": []}
@@ -61,6 +62,8 @@ def load_setup(path):
             setup["machine"] = words[1]
         elif words[:2] == ["disk", "new"] and len(words) == 4:
             setup["disks"].append(("new", words[3], words[2]))
+        elif words[:2] == ["disk", "blank"] and len(words) == 4:
+            setup["disks"].append(("blank", words[3], words[2]))
         elif words[:2] == ["disk", "keep"] and len(words) == 3:
             setup["disks"].append(("keep", words[2], None))
         elif words[:1] in (["hostcheck"], ["hostcheck-replay"]) and len(words) == 2:
@@ -71,7 +74,7 @@ def disk_path(name):
     return os.path.join(BUILD_DIR, f"disk-{name}.img")
 
 def mkfs_tool():
-    return os.path.join(BUILD_DIR, "tools", "mkfs.lumfs")
+    return os.path.join(BUILD_DIR, "tools", "mkfs.cerfs")
 
 def load_expect(path):
     """Returns a list of ("send"|"key", text) / ("wait", secs) / ("expect", text)."""
@@ -157,7 +160,7 @@ def main():
 
     steps = load_expect(a.expect) if a.expect else []
 
-    tmp = tempfile.mkdtemp(prefix="lumen-qmp-")
+    tmp = tempfile.mkdtemp(prefix="cerberus-qmp-")
     sock = os.path.join(tmp, "qmp.sock")
     setup = load_setup(a.expect) if a.expect else {"machine": None, "disks": [], "checks": []}
     if setup["machine"]:
@@ -169,16 +172,20 @@ def main():
                 os.remove(path)
             r = subprocess.run([mkfs_tool(), "-s", size, path], capture_output=True, text=True)
             if r.returncode != 0:
-                print(f"setup FAILED: mkfs.lumfs: {r.stdout}{r.stderr}")
+                print(f"setup FAILED: mkfs.cerfs: {r.stdout}{r.stderr}")
                 sys.exit(1)
+        elif mode == "blank":
+            if os.path.exists(path):
+                os.remove(path)
+            subprocess.run(["truncate", "-s", size, path], check=True)
         elif not os.path.exists(path):
             print(f"setup FAILED: {path} does not exist (run the test that creates it first)")
             sys.exit(1)
         a.disk.append(path)
     machine = a.machine + (",hpet=off" if a.no_hpet else "")
     # KVM when available (nested virtualisation inside WSL2 works): faster tests
-    # and hardware-accurate timers. LUMEN_QEMU_ACCEL=tcg forces emulation.
-    if os.environ.get("LUMEN_QEMU_ACCEL", "kvm") == "kvm" and os.access("/dev/kvm", os.R_OK | os.W_OK):
+    # and hardware-accurate timers. CERBERUS_QEMU_ACCEL=tcg forces emulation.
+    if os.environ.get("CERBERUS_QEMU_ACCEL", "kvm") == "kvm" and os.access("/dev/kvm", os.R_OK | os.W_OK):
         accel = ["-accel", "kvm", "-cpu", "host"]
     else:
         accel = ["-cpu", "qemu64,+pdpe1gb"]

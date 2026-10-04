@@ -1,15 +1,15 @@
 #!machine pc
 #!disk new 128M acceptance
 #!hostcheck acceptance
-# Phase 9 acceptance: a disk formatted with mkfs.lumfs is mounted, a
+# Phase 9 acceptance: a disk formatted with mkfs.cerfs is mounted, a
 # directory tree 5 levels deep and a 4 MiB file are written, the file system
 # is unmounted and mounted again, and every byte reads back the same. The
 # image is then checked on the build machine by an independent reader.
 ata: sda
-lumen kernel shell
-!send mount -t lumfs /dev/disk/sda /mnt
+cerberus kernel shell
+!send mount -t cerfs /dev/disk/sda /mnt
 !wait 2
-lumfs: mounted /dev/disk/sda
+cerfs: mounted /dev/disk/sda
 !send mkdir -p /mnt/one/two/three/four/five
 !wait 1
 !send fstest write /mnt/one/two/three/four/five/data.bin 4
@@ -17,9 +17,9 @@ lumfs: mounted /dev/disk/sda
 fstest: wrote 4 MiB
 !send umount /mnt
 !wait 3
-!send mount -t lumfs /dev/disk/sda /mnt
+!send mount -t cerfs /dev/disk/sda /mnt
 !wait 2
-lumfs: mounted /dev/disk/sda
+cerfs: mounted /dev/disk/sda
 !send fstest verify /mnt/one/two/three/four/five/data.bin 4
 !wait 8
 fstest: verified 4 MiB of /mnt/one/two/three/four/five/data.bin, every byte matches

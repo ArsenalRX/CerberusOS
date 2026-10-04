@@ -1,0 +1,7 @@
+# cerfs fuzzing (SPEC §5A phase 9): damaged images are mounted and used for
+# 60 s by the real driver inside the kernel; it must stay up.
+cerberus kernel shell
+!send test cerfsfuzz 60
+!wait 64
+cerfs fuzz:
+test cerfsfuzz: PASS

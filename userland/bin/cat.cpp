@@ -1,5 +1,5 @@
 // cat [file...]: copies files (or nothing, without arguments) to the output.
-#include <lumen.h>
+#include <cerberus.h>
 
 int main(int argc, char** argv) {
     int rc = 0;

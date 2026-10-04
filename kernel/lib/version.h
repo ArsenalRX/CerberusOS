@@ -3,5 +3,5 @@
 // "-dev+<commit>" suffix. Both strings are static; safe in any context.
 #pragma once
 
-const char* lumen_version();
-const char* lumen_build_date();
+const char* cerberus_version();
+const char* cerberus_build_date();

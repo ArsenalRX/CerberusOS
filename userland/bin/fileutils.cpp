@@ -1,7 +1,7 @@
 // Small file tools in one program, chosen by the name it is started as
 // (like busybox): rmdir, mv, cp, touch, stat, ln, sync, mount, umount, pwd,
 // write. The boot archive carries one copy per name.
-#include <lumen.h>
+#include <cerberus.h>
 
 namespace {
 

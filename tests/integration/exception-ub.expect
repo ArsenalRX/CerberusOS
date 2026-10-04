@@ -1,6 +1,6 @@
 # Phase 4: debug kernels stop on undefined behaviour (here a signed
 # overflow) with the source location, instead of carrying on.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions ub
 !wait 2
 test exceptions: triggering ub

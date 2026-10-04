@@ -1,5 +1,5 @@
 # Phase 2: a deliberate invalid opcode prints a complete dump and halts.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions ud
 !wait 2
 *** EXCEPTION 6: #UD Invalid Opcode ***

@@ -7,7 +7,7 @@
 
 namespace {
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 // The rank check (lib/lock_order.h). Ranks are tracked per CPU, not per
 // thread: a spinlock is held with interrupts off, so its holder cannot leave
 // the CPU, and the scheduler lock, which is deliberately held across a

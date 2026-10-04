@@ -4,7 +4,7 @@
 #
 # Usage: ./toolchain/build-cross.sh [--force]
 # Env:   PREFIX     install dir      (default: <repo>/toolchain/out)
-#        WORKDIR    scratch dir      (default: $HOME/.cache/lumen-toolchain — a
+#        WORKDIR    scratch dir      (default: $HOME/.cache/cerberus-toolchain — a
 #                                     Linux-native path, because building on
 #                                     /mnt/<drive> under WSL is many times slower)
 #        JOBS       parallelism      (default: nproc)
@@ -17,7 +17,7 @@ TARGET=x86_64-elf
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${PREFIX:-$HERE/out}"
-WORKDIR="${WORKDIR:-$HOME/.cache/lumen-toolchain}"
+WORKDIR="${WORKDIR:-$HOME/.cache/cerberus-toolchain}"
 JOBS="${JOBS:-$(nproc)}"
 
 if [[ -x "$PREFIX/bin/$TARGET-g++" && "${1:-}" != "--force" ]]; then

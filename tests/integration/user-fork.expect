@@ -1,6 +1,6 @@
 # Phase 7: fork + execve + waitpid, copy-on-write between parent and child,
 # and SSE state kept separate between processes.
-lumen kernel shell
+cerberus kernel shell
 !send run /bin/forktest
 !wait 4
 changed its copy and exited with 7; the parent's copy is unchanged

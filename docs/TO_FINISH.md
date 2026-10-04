@@ -1,4 +1,4 @@
-# Lumen — To Finish
+# Cerberus — To Finish
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
@@ -35,7 +35,7 @@ changed pixels) were released on 2026-10-04. The tree is on `0.0.5c`
 development builds. On 2026-10-04 the owner said to keep going for the
 session ("just continue and do everything"), so phase 9 starts next.
 
-- Overview for the owner: docs/ROADMAP.md; explaining Lumen: docs/ABOUT.md.
+- Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md.
 - **Installer and dual boot:** researched in docs/INSTALLER.md (feeds
   phase 18; NVMe would need adding to phase 10 for real PCs).
 - **Own web browser:** phase 15B (owner, 2026-10-04).
@@ -67,7 +67,7 @@ Open items carried over:
   renderer, damage-tracked compositor, panel + launcher, Terminal/About/
   System Monitor/Memory Map windows, PS/2 mouse, drag/resize/stack, hotkeys.
 - Infrastructure the owner asked for: KVM-accelerated QEMU path
-  (`run-lumen.cmd`), per-run VirtualBox serial logs (`logs/`), `make dist`.
+  (`run-cerberus.cmd`), per-run VirtualBox serial logs (`logs/`), `make dist`.
 - **Release 0.3.0 (2026-10-03).** Shared PS/2 drain routine, spin-idle under
   the desktop, `gui`/`irqs` shell commands, version scheme (`VERSION` file,
   `docs/CHANGELOG.md`, spec §23), spec v2.
@@ -126,12 +126,12 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **lumfs**
-  (on-disk, journal) + `mkfs.lumfs`. Dentry cache. Acceptance: format,
+- [ ] **Phase 9 — Filesystem.** VFS, tmpfs, initramfs (tar), devfs, **cerfs**
+  (on-disk, journal) + `mkfs.cerfs`. Dentry cache. Acceptance: format,
   mount, write 4 MB, remount, byte-compare; journal replay after a hard
   kill.
   **+v2:** permissions enforced; mount flags (`nosuid,nodev,noexec,ro`);
-  `openat`/`O_NOFOLLOW`/`O_CLOEXEC`; lumfs range-checks every on-disk field,
+  `openat`/`O_NOFOLLOW`/`O_CLOEXEC`; cerfs range-checks every on-disk field,
   metadata checksums, fuzzed; one unified page cache (replaces the buffer
   cache) with read-ahead and `fsync`.
 - [ ] **Phase 10 — Drivers.** PCI, AHCI/SATA (DMA), full PS/2 keyboard+mouse
@@ -172,15 +172,15 @@ output.
   images, tabbed UI; no JavaScript yet. Sandboxed, every parser fuzzed.
   See docs/SPEC.md phase 15B.
 - [ ] **Phase 16 — Spec native backend** (was phase 14). x86-64 codegen, ELF
-  emitter, stdlib, Lumen syscall bindings; rewrite ≥3 apps in Spec.
+  emitter, stdlib, Cerberus syscall bindings; rewrite ≥3 apps in Spec.
   (Spec = the spec's "Glint".)
 - [ ] **Phase 17 — Software platform.** Dynamic linking with full RELRO,
   POSIX-subset libc (`docs/LIBC.md`), ptys and job control, full signals,
   signed package manager `pkg`; proof ports: zlib, Lua, tinycc, make.
 - [ ] **Phase 18 — Installer, updates, storage encryption, recovery.**
-  Live-ISO installer (GPT, lumfs + FAT32 EFI), optional full-disk
+  Live-ISO installer (GPT, cerfs + FAT32 EFI), optional full-disk
   encryption, signed updates with a fallback kernel, recovery boot entry
-  and repairing `fsck.lumfs`, service manager with per-service sandbox.
+  and repairing `fsck.cerfs`, service manager with per-service sandbox.
   Owner asked (2026-10-04) for a Windows-Setup-like flow (pick a drive,
   erase or keep the existing system) and a boot menu with Windows: design
   notes in docs/INSTALLER.md.
@@ -218,7 +218,7 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
   §20 budgets, measured by `make bench` from phase 6.
 - [x] **Smoothness on VirtualBox.** Handled as far as the kernel can (console shadow buffer,
   plain-store framebuffer copies, spin-idle). Fundamentally limited by the
-  Hyper-V backend; `run-lumen.cmd` (QEMU+KVM) is the smooth path. Revisit
+  Hyper-V backend; `run-cerberus.cmd` (QEMU+KVM) is the smooth path. Revisit
   once the compositor has its own thread (phase 6).
 - [ ] **All-in-one toolbox — DECLINED as framed.** "Get into wifis and find
   passwords" is unauthorized network access and credential theft; not built,
@@ -250,8 +250,8 @@ Details in `docs/DECISIONS.md`, entry 2026-10-03.
   `wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make ...'`.
 - `make` builds, `make iso` builds the ISO, `make test` runs the integration
   tests headless in QEMU (KVM), `make fuzz` runs the fuzz harnesses, `make dist` snapshots to `dist/`.
-- Run for real: double-click `run-lumen.cmd` (QEMU window via WSLg), or boot
-  `dist/lumen.iso` in a VirtualBox VM.
+- Run for real: double-click `run-cerberus.cmd` (QEMU window via WSLg), or boot
+  `dist/cerberus.iso` in a VirtualBox VM.
 - Long builds: run detached (`setsid nohup … &`) and poll a log; the Bash tool
   caps at 10 minutes.
 - Write source files with the editor, not shell heredocs (quotes break the

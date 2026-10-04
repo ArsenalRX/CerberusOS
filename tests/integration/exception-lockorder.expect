@@ -1,6 +1,6 @@
 # Phase 8: taking two ranked spinlocks in the wrong order is caught by the
 # lock-rank checker before it can become a deadlock.
-lumen kernel shell
+cerberus kernel shell
 !send test exceptions lo
 !wait 3
 taking a lock of rank 40 while holding one of rank 50

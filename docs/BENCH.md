@@ -1,5 +1,9 @@
 # Benchmarks
 
+> **Name:** the operating system was called **Lumen** until 2026-10-04,
+> when the owner renamed it **Cerberus** (its file system lumfs became
+> **cerfs**). Entries written before that date keep the old names.
+
 Measured performance over time, against the budgets in docs/SPEC.md §20.1.
 
 **What this file is for.** A regression is only visible against recorded

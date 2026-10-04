@@ -29,7 +29,9 @@
 #include <lib/version.h>
 #include <mm/kheap.h>
 #include <mm/pmm.h>
+#include <drivers/ahci.h>
 #include <drivers/ata.h>
+#include <drivers/pci.h>
 #include <fs/fs.h>
 #include <lib/string.h>
 #include <mm/vmm.h>
@@ -45,13 +47,13 @@ void print_banner() {
     cpuid_brand(brand);
 
     kprintf("\n");
-    kprintf("  _                              \n");
-    kprintf(" | |   _   _ _ __ ___   ___ _ __ \n");
-    kprintf(" | |  | | | | '_ ` _ \\ / _ \\ '_ \\\n");
-    kprintf(" | |__| |_| | | | | | |  __/ | | |\n");
-    kprintf(" |_____\\__,_|_| |_| |_|\\___|_| |_|\n");
+    kprintf("   ____          _                          \n");
+    kprintf("  / ___|___ _ __| |__   ___ _ __ _   _ ___ \n");
+    kprintf(" | |   / _ \\ '__| '_ \\ / _ \\ '__| | | / __|\n");
+    kprintf(" | |__|  __/ |  | |_) |  __/ |  | |_| \\__ \\\n");
+    kprintf("  \\____\\___|_|  |_.__/ \\___|_|   \\__,_|___/\n");
     kprintf("\n");
-    kprintf("Lumen %s (x86-64), built %s\n", lumen_version(), lumen_build_date());
+    kprintf("Cerberus %s (x86-64), built %s\n", cerberus_version(), cerberus_build_date());
     kprintf("bootloader: %s\n", bi.bootloader);
     kprintf("cpu: %s, %s, %lu cpu(s), bsp lapic %u\n", vendor, brand,
             (unsigned long)bi.cpu_count, bi.bsp_lapic_id);
@@ -83,6 +85,8 @@ void print_banner() {
 // The first thread: brings up the desktop, then becomes the kernel shell.
 void init_thread(void*) {
     strlcpy(thread_current()->name, "shell", sizeof thread_current()->name);
+    pci_init();
+    ahci_init();
     ata_init();
     fs_init();
     if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
@@ -115,15 +119,15 @@ extern "C" [[noreturn]] void kernel_main() {
     __stack_chk_guard = csprng_u64() & ~0xFFull;
 
     serial_init();
-    kprintf("lumen: serial console up\n");
+    kprintf("cerberus: serial console up\n");
 
     if (!limine_base_revision_supported()) PANIC("bootloader does not support Limine base revision 3");
     boot_info_collect();
-    kprintf("lumen: boot info collected (%lu memory regions)\n",
+    kprintf("cerberus: boot info collected (%lu memory regions)\n",
             (unsigned long)g_boot_info.region_count);
 
     if (!fbconsole_init(g_boot_info.framebuffer)) PANIC("framebuffer console unusable");
-    kprintf("lumen: framebuffer console %ux%u cells\n", fbconsole_columns(), fbconsole_rows());
+    kprintf("cerberus: framebuffer console %ux%u cells\n", fbconsole_columns(), fbconsole_rows());
 
     print_banner();
 

@@ -1,4 +1,4 @@
-# Lumen OS + Glint — Full Build Specification
+# Cerberus OS + Glint — Full Build Specification
 
 **This document is the prompt.** Paste it into Claude Code (or keep it at
 `docs/SPEC.md` in the repo and reference it every session). It defines a
@@ -72,11 +72,11 @@ lines that don't boot. Avoid it as follows:
 
 # 1. What we are building
 
-**Lumen** — a hybrid-kernel x86-64 operating system with a compositing
+**Cerberus** — a hybrid-kernel x86-64 operating system with a compositing
 graphical desktop.
 
 **Glint** — a statically typed systems language that compiles to native x86-64
-and targets Lumen's syscall ABI. Userland applications are written in it.
+and targets Cerberus's syscall ABI. Userland applications are written in it.
 
 The thesis that justifies doing both: *a language designed alongside its OS can
 express things a portable language cannot* — syscalls as typed language
@@ -106,7 +106,7 @@ violate the hardware's access rules.
 # 2. Repository layout
 
 ```
-lumen/
+cerberus/
 ├── Makefile                  # top-level: build, run, debug, test, iso
 ├── docs/
 │   ├── SPEC.md               # this document
@@ -125,7 +125,7 @@ lumen/
 │   ├── mm/                   # pmm, vmm, kheap, slab, vma
 │   ├── sched/                # threads, processes, scheduler, sync primitives
 │   ├── syscall/              # dispatch, table.def, argument validation
-│   ├── fs/                   # vfs, tmpfs, initramfs (tar), lumfs, devfs
+│   ├── fs/                   # vfs, tmpfs, initramfs (tar), cerfs, devfs
 │   ├── ipc/                  # ports, shared memory, signals
 │   ├── drivers/              # pit, apic-timer, ps2, ahci, pci, framebuffer
 │   ├── lib/                  # printf, string, list, hashmap, bitmap, spinlock
@@ -170,7 +170,7 @@ The Makefile checks for each and prints a clear install hint if missing.
 | Target | Behaviour |
 |---|---|
 | `make` | Build kernel + userland + Glint compiler |
-| `make iso` | Produce `build/lumen.iso` with Limine + initramfs |
+| `make iso` | Produce `build/cerberus.iso` with Limine + initramfs |
 | `make run` | Build iso, boot QEMU, serial to stdout |
 | `make debug` | Same, with `-s -S`, waits for GDB |
 | `make gdb` | Attach GDB with `kernel.sym`, source dirs preloaded |
@@ -184,7 +184,7 @@ The Makefile checks for each and prints a clear install hint if missing.
 ```
 qemu-system-x86_64 \
   -machine q35 -cpu qemu64,+pdpe1gb -smp 4 -m 512M \
-  -cdrom build/lumen.iso -boot d \
+  -cdrom build/cerberus.iso -boot d \
   -serial stdio -display gtk \
   -d guest_errors -no-reboot -no-shutdown
 ```
@@ -421,8 +421,8 @@ reader faults correctly.
   read-only at boot.
 - **devfs** at `/dev`: `null`, `zero`, `random`, `console`, `fb0`, `tty0`,
   `input/kbd0`, `input/mouse0`, `disk/sda`.
-- **lumfs**: our own on-disk filesystem.
-  - Superblock at LBA 0: magic `LUMFS\0\0\0`, version, block size (4096),
+- **cerfs**: our own on-disk filesystem.
+  - Superblock at LBA 0: magic `CERFS\0\0\0`, version, block size (4096),
     total blocks, free blocks, inode count, root inode, block bitmap offset,
     inode table offset, journal offset, UUID, label.
   - Inodes: 128 bytes — mode, uid, gid, size, atime/mtime/ctime, link count,
@@ -430,12 +430,12 @@ reader faults correctly.
   - Directories: linked list of `(inode, name_len, type, name)` records.
   - Journal: write-ahead metadata journal, circular, with transaction commit
     records. Replay on mount.
-  - `mkfs.lumfs` host tool (build it in `tools/`) so images can be created
+  - `mkfs.cerfs` host tool (build it in `tools/`) so images can be created
     outside the OS.
 - Path cache (dentry cache) with LRU eviction.
 - Buffer cache for block devices with write-back and an explicit `sync`.
 
-**Accept:** Format a QEMU virtual disk with `mkfs.lumfs`, mount it, create a
+**Accept:** Format a QEMU virtual disk with `mkfs.cerfs`, mount it, create a
 directory tree 5 levels deep, write a 4 MB file, unmount, remount, verify
 contents byte-for-byte. Kill QEMU mid-write (`-no-shutdown`, hard kill) and
 confirm journal replay leaves the FS consistent on next mount.
@@ -628,14 +628,14 @@ retrofitting protection later is how holes are left behind.
   media mount `nodev,nosuid`.
 - **Race-free path handling:** `openat`-style resolution relative to a
   directory fd, `O_NOFOLLOW`, `O_CLOEXEC`; symlink loop limit 40.
-- **lumfs is hostile-input code:** every on-disk field is range-checked at
+- **cerfs is hostile-input code:** every on-disk field is range-checked at
   mount and on read; a corrupted image yields `Error::IO`, never a panic.
   Metadata blocks carry a checksum (CRC32C).
 - **One page cache** shared by file reads, file-backed `mmap`, and block
   I/O (replaces v1's separate buffer cache); read-ahead for sequential
   access; write-back by a kernel thread; `fsync` flushes one file.
 - **Accept:** a non-root credential cannot read a mode-0600 root file;
-  `mount -o noexec` refuses `execve`; `make fuzz` mutates a lumfs image for
+  `mount -o noexec` refuses `execve`; `make fuzz` mutates a cerfs image for
   60 s and the kernel never panics; reading a 64 MB file sequentially twice
   shows the second read served from cache (counter in `sysinfo`).
 
@@ -726,7 +726,7 @@ Design in §19.7 (security) and §20.7 (performance).
   recv sendto recvfrom shutdown getsockopt setsockopt getsockname
   getpeername`, usable with `event_wait` and `O_NONBLOCK`.
 - **Firewall:** inbound connections denied by default; rules by
-  port/protocol/direction in `/etc/lumen/firewall.conf`.
+  port/protocol/direction in `/etc/cerberus/firewall.conf`.
 - **Per-application network permission** (§19.5): a process without it gets
   `-EACCES` from `socket`.
 - Tools: `ping`, `ifconfig`, `nslookup`, `fetch` (HTTP/1.1 GET), `netstat`.
@@ -765,7 +765,7 @@ Design in §19.
   `.desktop` permission list with it.
 - **Permission prompts** for capture, clipboard history, and network, shown
   by the shell (trusted path), remembered per application in
-  `/etc/lumen/permissions.conf`.
+  `/etc/cerberus/permissions.conf`.
 - **Secrets store** (`keyring` service): per-user secrets encrypted with a
   key derived from the login password; unlocked at login, wiped at lock.
 - **TLS client** (1.3 preferred, 1.2 the minimum) for `fetch` and the
@@ -833,11 +833,11 @@ parser with no crash; a page cannot read files or other tabs' data.
 ## Phase 16 — Glint native backend and retarget
 
 See §13. Deliverables: x86-64 code generation, ELF output, the Glint standard
-library, Lumen syscall bindings, and at least three applications rewritten in
+library, Cerberus syscall bindings, and at least three applications rewritten in
 Glint.
 
-**Accept:** `glintc hello.gl -o hello` produces a Lumen ELF binary that runs on
-Lumen and prints correctly. A Glint-written GUI application runs on the
+**Accept:** `glintc hello.gl -o hello` produces a Cerberus ELF binary that runs on
+Cerberus and prints correctly. A Glint-written GUI application runs on the
 desktop.
 
 ---
@@ -845,7 +845,7 @@ desktop.
 ## Phase 17 — Software platform: running real programs
 
 **Deliverables:**
-- **Dynamic linking:** shared libraries, `/lib/ld-lumen.so`, lazy binding
+- **Dynamic linking:** shared libraries, `/lib/ld-cerberus.so`, lazy binding
   off (full RELRO: the GOT is read-only after relocation), `dlopen`.
 - **libc grown to a documented POSIX subset** (listed in
   `docs/LIBC.md`) sufficient to build unmodified third-party C software.
@@ -862,8 +862,8 @@ desktop.
   Install scripts run sandboxed. `pkg install|remove|list|search|upgrade`.
 - `make bench` extended with process-spawn and dynamic-link start-up time.
 
-**Accept:** `lua` and `tcc` built from upstream source run on Lumen; `tcc`
-compiles and runs a C hello world on Lumen; `pkg install` of a tampered
+**Accept:** `lua` and `tcc` built from upstream source run on Cerberus; `tcc`
+compiles and runs a C hello world on Cerberus; `pkg install` of a tampered
 package fails with a signature error; a 50-library GUI application starts
 in under 200 ms.
 
@@ -873,7 +873,7 @@ in under 200 ms.
 
 **Deliverables:**
 - **Installer:** boot the ISO to a live desktop; partition (GPT), format
-  (lumfs + FAT32 EFI), copy the system, install Limine, create a user,
+  (cerfs + FAT32 EFI), copy the system, install Limine, create a user,
   reboot into the installed system. FAT32 read/write and GPT parsing are
   deliverables of this phase.
 - **Full-disk encryption** as an install option: AES-256-XTS (or
@@ -884,7 +884,7 @@ in under 200 ms.
   previous kernel as a boot menu entry; updates are never applied without
   the user starting them.
 - **Recovery:** a boot entry that reaches a root shell with the disk
-  mounted read-only; `fsck.lumfs` that repairs.
+  mounted read-only; `fsck.cerfs` that repairs.
 - Service manager (`init` with unit files: dependencies, restart policy,
   per-service `restrict` profile and resource limits); `svc` CLI; log
   capture with a viewer.
@@ -892,7 +892,7 @@ in under 200 ms.
 **Accept:** install to a blank QEMU disk and boot from it without the ISO;
 the encrypted install shows only ciphertext when the disk image is searched
 on the host for a known file's contents; an interrupted update leaves a
-bootable system; recovery mode repairs a deliberately damaged lumfs.
+bootable system; recovery mode repairs a deliberately damaged cerfs.
 
 ---
 
@@ -923,7 +923,7 @@ ecosystem, HiDPI scaling, accessibility features beyond §10, ARM64 port.
 In-kernel: memory management, scheduling, syscalls, VFS core, block drivers,
 input drivers, IPC.
 
-Userland: window server, filesystem drivers beyond lumfs/tmpfs, network stack
+Userland: window server, filesystem drivers beyond cerfs/tmpfs, network stack
 (when it exists), all applications.
 
 The rule: anything that needs sub-microsecond latency or privileged
@@ -1225,7 +1225,7 @@ colours (background, surface, surface-variant, primary, on-primary, text,
 text-muted, border, focus ring, error, warning, success), corner radius,
 spacing unit, font families and sizes, shadow parameters, animation durations.
 
-Ship two themes: **Lumen Dark** (default) and **Lumen Light**. Changing the
+Ship two themes: **Cerberus Dark** (default) and **Cerberus Light**. Changing the
 theme at runtime repaints every window.
 
 ## Accessibility and polish requirements
@@ -1356,7 +1356,7 @@ Category sidebar plus a content pane. Categories:
 - **Startup**: manage autostart entries.
 - **About**: OS version, kernel build, CPU, total RAM, uptime, a logo.
 
-All settings persist to `/etc/lumen/*.conf` and take effect immediately via a
+All settings persist to `/etc/cerberus/*.conf` and take effect immediately via a
 broadcast on a `settings` port.
 
 ## 12.6 Tally — calculator
@@ -1412,7 +1412,7 @@ that the language works.
 
 `ls cat cp mv rm mkdir rmdir touch ln stat pwd echo head tail wc grep find
 sort uniq cut tr sed-lite du df mount umount ps kill top free uname date
-sleep clear hexdump diff tar sync reboot poweroff mkfs.lumfs fsck.lumfs`
+sleep clear hexdump diff tar sync reboot poweroff mkfs.cerfs fsck.cerfs`
 
 Each: proper argument parsing, `--help`, sensible exit codes, errors to stderr.
 
@@ -1523,12 +1523,12 @@ stdout/stderr, buffered readers and writers), `fs` (path manipulation,
 directory iteration, metadata), `proc` (spawn, wait, exit, args, env),
 `sync` (Mutex, Channel on top of futex), `time`, `math`, `sort` (introsort +
 stable merge), `json` (parse and serialise), `gui` (Facet bindings),
-`sys` (raw Lumen syscalls).
+`sys` (raw Cerberus syscalls).
 
 ## 13.4 Tooling
 
 - `glintc` — the compiler. Flags: `-o`, `-O0..2`, `-g`, `--emit=ast|ir|asm|obj`,
-  `--target=lumen|linux`, `-W` warnings, `--explain <error-code>`.
+  `--target=cerberus|linux`, `-W` warnings, `--explain <error-code>`.
 - `glintfmt` — canonical formatter.
 - Error messages must be excellent: file:line:col, the source line with a caret
   span, the primary message, a secondary note explaining the rule, and a
@@ -1541,7 +1541,7 @@ stable merge), `json` (parse and serialise), `gui` (Facet bindings),
 ## Kernel unit tests
 `tests/kernel/` compiled into the kernel in test builds. A kernel shell command
 `test <name>` or `test all` runs them and prints pass/fail counts. Required
-suites: `pmm vmm heap sched sync vfs lumfs elf syscall ipc smp`.
+suites: `pmm vmm heap sched sync vfs cerfs elf syscall ipc smp`.
 
 ## Integration tests
 `tests/integration/` — each test is a `.expect` file plus a scenario. The
@@ -1603,12 +1603,12 @@ The project is complete when, in QEMU, from a cold boot:
 1. Limine loads the kernel; the kernel initialises and prints a clean boot log.
 2. The system reaches a graphical desktop with a wallpaper and a panel.
 3. The launcher opens; applications start from it.
-4. The file manager browses a real lumfs filesystem on a virtual disk.
+4. The file manager browses a real cerfs filesystem on a virtual disk.
 5. A file is created in the editor, saved, and survives a reboot.
 6. The terminal runs the shell, which runs the CLI utilities, including pipes
    and redirection.
 7. Windows can be moved, resized, stacked, minimised, and closed with the mouse.
-8. `glintc` compiles a Glint source file on Lumen into a Lumen binary that runs.
+8. `glintc` compiles a Glint source file on Cerberus into a Cerberus binary that runs.
 9. At least one GUI application on the desktop is written in Glint.
 10. `make test` passes.
 11. `docs/STATUS.md` reflects reality and `docs/DECISIONS.md` explains why the
@@ -1886,7 +1886,7 @@ the server itself, not by a client that could be killed.
 ## 19.11 Fuzzing and review
 
 - `make fuzz` runs a harness for every hostile-input surface: syscall
-  arguments, the ELF loader, lumfs images, tar, PNG/BMP/TGA, TTF, the Pane
+  arguments, the ELF loader, cerfs images, tar, PNG/BMP/TGA, TTF, the Pane
   protocol, port messages, and every network packet parser. Harnesses are
   built for the host with AddressSanitizer where the code is portable, and
   as an in-kernel random-syscall test where it is not.
@@ -2012,7 +2012,7 @@ Budgets are revised only by a dated entry in `docs/DECISIONS.md`.
 - Dentry cache with LRU and negative entries.
 - Interrupt-driven DMA with request queueing (NCQ / virtqueue); never
   polling I/O after boot.
-- Directory lookups in lumfs move from linked records to hashed or
+- Directory lookups in cerfs move from linked records to hashed or
   tree-indexed directories once directories of 10,000 entries are
   benchmarked.
 
@@ -2197,7 +2197,7 @@ Rules for all of them:
 - The file `VERSION` at the repository root holds the number and nothing
   else. It is the only place the number is written by hand. The build reads
   it for the boot banner, `uname`, the About window, and the ISO name
-  (`lumen-<version>.iso` in the name of a development ISO; the release file is always `dist/lumen.iso`).
+  (`cerberus-<version>.iso` in the name of a development ISO; the release file is always `dist/cerberus.iso`).
 - `make RELEASE=1`, run on the tagged release commit with a clean working
   tree, produces a **release build** that shows the plain number. Every
   other build is a **development build** and shows
@@ -2205,7 +2205,7 @@ Rules for all of them:
   for a release. Between releases `VERSION` holds the next version to be
   released.
 - Only `kernel/lib/version.cpp` is compiled with the version and build date;
-  everything else calls `lumen_version()` / `lumen_build_date()`.
+  everything else calls `cerberus_version()` / `cerberus_build_date()`.
 - Every release is a git tag `v<VERSION>` on the release commit.
 
 ## 23.3 The changelog
@@ -2232,7 +2232,7 @@ behaviour adds its line there in the same commit.
    `## <version> — <date>`, adding a fresh empty `## Unreleased` above it.
 3. Update `docs/STATUS.md`. Commit as `release: <version>`.
 4. Tag the commit `v<version>`. Build from the tag with
-   `make RELEASE=1 dist`, which overwrites `dist/lumen.iso` (the folder
+   `make RELEASE=1 dist`, which overwrites `dist/cerberus.iso` (the folder
    holds exactly one ISO, always under that name), and points any
    VirtualBox VM that boots it at the file.
 5. Bump `VERSION` to the next version (§23.1: the next letter) in a following commit

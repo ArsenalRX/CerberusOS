@@ -77,13 +77,13 @@ __attribute__((noinline)) void fault_stack_overflow() {
     thread_join(t.value());
 }
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 __attribute__((noinline)) int add_ints(int a, int b) { return a + b; }
 #endif
 
 // Signed overflow is undefined behaviour; debug builds must stop on it.
 __attribute__((noinline)) void fault_undefined_behaviour() {
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     volatile int big = 0x7FFFFFFF;
     kprintf("  adding 1 to the largest int\n");
     int r = add_ints(big, 1);
@@ -110,7 +110,7 @@ __attribute__((noinline)) void fault_heap_free_list() {
 }
 
 __attribute__((noinline)) void fault_heap_write_after_free() {
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     // Stay on one CPU: the freed object goes back to this CPU's slab, and the
     // next allocation must come from the same one.
     thread_set_affinity(1u << thread_cpu());
@@ -137,7 +137,7 @@ __attribute__((noinline)) void fault_heap_double_free() {
 // Takes two ranked spinlocks in the wrong order (lib/lock_order.h). Nothing
 // is actually deadlocked: the checker must object to the order itself.
 __attribute__((noinline)) void fault_lock_order() {
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
     static Spinlock inner = SPINLOCK_RANKED(lock_rank::PMM);
     static Spinlock outer = SPINLOCK_RANKED(lock_rank::HEAP);
     kprintf("  taking a lock of rank %u while holding one of rank %u\n", outer.rank, inner.rank);

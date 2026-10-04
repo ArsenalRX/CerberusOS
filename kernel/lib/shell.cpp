@@ -7,6 +7,7 @@
 #include <drivers/refclock.h>
 #include <gui/desktop.h>
 #include <mm/kheap.h>
+#include <drivers/pci.h>
 #include <fs/file.h>
 #include <fs/pagecache.h>
 #include <fs/vfs.h>
@@ -43,6 +44,7 @@ int cmd_run(int argc, char** argv);
 int cmd_cd(int argc, char** argv);
 int cmd_pwd(int, char**);
 int cmd_mount(int argc, char** argv);
+int cmd_pci(int, char**);
 int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
@@ -59,6 +61,7 @@ const ShellCommandEntry COMMANDS[] = {
     {"cd", "cd [dir]: change the shell's working directory (programs start there)", cmd_cd},
     {"pwd", "print the shell's working directory", cmd_pwd},
     {"mount", "mount: list mounted file systems (with arguments: run /bin/mount)", cmd_mount},
+    {"pci", "list PCI devices", cmd_pci},
     {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
     {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
     {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
@@ -163,6 +166,11 @@ int cmd_run(int argc, char** argv) {
     return run_program(argv[1], argc - 1, argv + 1, true);
 }
 
+int cmd_pci(int, char**) {
+    pci_print();
+    return 0;
+}
+
 int cmd_cd(int argc, char** argv) {
     Process* k = process_kernel();
     const char* path = argc > 1 ? argv[1] : "/";
@@ -207,6 +215,9 @@ int cmd_mount(int argc, char** argv) {
     kprintf("page cache: %lu of %lu pages, %lu dirty; %lu hits, %lu misses, %lu read ahead, %lu written back\n",
             (unsigned long)pc.pages, (unsigned long)pc.max_pages, (unsigned long)pc.dirty, (unsigned long)pc.hits,
             (unsigned long)pc.misses, (unsigned long)pc.readahead, (unsigned long)pc.writebacks);
+    VfsCacheStats dc = vfs_cache_stats();
+    kprintf("name cache: %u of %u entries; %lu hits, %lu misses\n", dc.entries, dc.capacity, (unsigned long)dc.hits,
+            (unsigned long)dc.misses);
     return 0;
 }
 
@@ -298,7 +309,7 @@ int cmd_test(int argc, char** argv) {
         int failed = 0, ran = 0;
         for (usize i = 0; i < ktest_count(); i++) {
             const KernelTest& t = ktests()[i];
-            if (t.halts) continue;      // destructive tests only run by name
+            if (t.halts || t.slow) continue;      // destructive and long tests only run by name
             kprintf("== test %s ==\n", t.name);
             int rc = t.fn(1, argv + 1);
             ran++;
@@ -386,9 +397,9 @@ int split_args(char* line, char** argv, int max) {
 [[noreturn]] void shell_run() {
     char line[LINE_MAX];
     char* argv[ARGV_MAX];
-    kprintf("lumen kernel shell. type 'help' for commands.\n");
+    kprintf("cerberus kernel shell. type 'help' for commands.\n");
     for (;;) {
-        kprintf("lumen> ");
+        kprintf("cerberus> ");
         read_line(line, sizeof line);
         int argc = split_args(line, argv, ARGV_MAX);
         if (!argc) continue;

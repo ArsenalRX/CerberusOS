@@ -10,6 +10,7 @@
 namespace {
 
 BlockDevice* g_devices[BLOCK_MAX_DEVICES];
+bool g_claimed[BLOCK_MAX_DEVICES];
 u32 g_count = 0;
 
 constexpr u32 SECTORS_PER_PAGE = PAGE_SIZE / 512;
@@ -84,6 +85,18 @@ Result<u32> block_register(BlockDevice* d) {
 u32 block_count() { return g_count; }
 BlockDevice* block_get(u32 minor) { return minor < g_count ? g_devices[minor] : nullptr; }
 bool block_present(u32 minor) { return block_get(minor) != nullptr; }
+
+bool block_claim(u32 minor) {
+    if (minor >= g_count || g_claimed[minor]) return false;
+    g_claimed[minor] = true;
+    return true;
+}
+
+void block_unclaim(u32 minor) {
+    if (minor < g_count) g_claimed[minor] = false;
+}
+
+bool block_claimed(u32 minor) { return minor < g_count && g_claimed[minor]; }
 
 Result<void> block_dev_read(u32 minor, u64 lba, u32 count, void* buf) {
     BlockDevice* d = block_get(minor);

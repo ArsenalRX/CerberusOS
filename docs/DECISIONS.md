@@ -1,5 +1,9 @@
 # Design decisions
 
+> **Name:** the operating system was called **Lumen** until 2026-10-04,
+> when the owner renamed it **Cerberus** (its file system lumfs became
+> **cerfs**). Entries written before that date keep the old names.
+
 Dated entries. Each records the choice, the reasoning, and the alternatives
 rejected. Newest at the bottom.
 
@@ -964,3 +968,22 @@ inline layout, images, a tabbed UI; no JavaScript (a script engine, written
 or a QuickJS port, is a later decision). Sandboxed, every parser fuzzed.
 The owner also said to get the current base running smoothly first, so the
 desktop polish (0.0.5b) and phases 9–15 come before it.
+
+## 2026-10-04 — The OS is renamed Cerberus (owner)
+
+The owner asked to "rename the OS Cerberus". Done as one sweep while
+phase 9 was in progress:
+
+- Every current name: code identifiers (`cerberus_version()`,
+  `CERBERUS_DEBUG`), the boot banner, the shell prompt (`cerberus>`), the
+  desktop's wordmark, the C library header (`cerberus.h`), the kernel image
+  (`cerberus.elf`), the release image (`dist/cerberus.iso`), the Windows
+  launcher (`run-cerberus.cmd`), the spec and the current documents.
+- The file system lumfs became **cerfs** (`mkfs.cerfs`, on-disk magic
+  `CERFS`): no disk had been formatted outside the tests yet, so changing
+  the format's magic cost nothing now and would cost compatibility later.
+- History is not rewritten: released changelog entries, earlier decision
+  entries and benchmark blocks keep "Lumen", with a note at the top of each
+  of those files. Git history and tags (v0.7.0, v0.0.5a, v0.0.5b) are
+  unchanged.
+- The Spec language keeps its name.

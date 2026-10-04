@@ -1,4 +1,4 @@
-// CRC32C (Castagnoli), the checksum on lumfs metadata (SPEC §5A phase 9).
+// CRC32C (Castagnoli), the checksum on cerfs metadata (SPEC §5A phase 9).
 // Table-driven, no CPU instructions required; depends only on lib/types.h so
 // the host tools and fuzzers build the same code.
 #pragma once

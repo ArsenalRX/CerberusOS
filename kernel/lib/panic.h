@@ -24,7 +24,7 @@ bool panic_in_progress();
         if (!(cond)) PANIC("assertion failed: %s", #cond);                                   \
     } while (0)
 
-#ifdef LUMEN_DEBUG
+#ifdef CERBERUS_DEBUG
 #define ASSERT(cond) ASSERT_ALWAYS(cond)
 #else
 #define ASSERT(cond)                                                                         \

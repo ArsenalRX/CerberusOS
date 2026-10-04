@@ -96,8 +96,13 @@ void dev_register_char(u32 major, const CharDeviceOps* ops) {
 
 const VnodeOps* dev_vnode_ops() { return &g_dev_vnode_ops; }
 
-Result<void> dev_open(Vnode* v) {
-    if (v->type == VType::BlockDev) return block_present(dev::minor_of(v->rdev)) ? Result<void>() : Error::NoDevice;
+Result<void> dev_open(Vnode* v, bool write) {
+    if (v->type == VType::BlockDev) {
+        u32 minor = dev::minor_of(v->rdev);
+        if (!block_present(minor)) return Error::NoDevice;
+        if (write && block_claimed(minor)) return Error::Busy;
+        return {};
+    }
     const CharDeviceOps* ops = char_ops(v);
     if (!ops) return Error::NoDevice;
     return ops->open ? ops->open(dev::minor_of(v->rdev)) : Result<void>();

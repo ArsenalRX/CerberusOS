@@ -1,8 +1,8 @@
-// See lumfs.h. All functions run with the VFS lock held.
+// See cerfs.h. All functions run with the VFS lock held.
 #include <fs/block.h>
 #include <fs/dev.h>
-#include <fs/lumfs.h>
-#include <fs/lumfs_format.h>
+#include <fs/cerfs.h>
+#include <fs/cerfs_format.h>
 #include <fs/pagecache.h>
 #include <fs/vfs.h>
 #include <lib/csprng.h>
@@ -11,7 +11,7 @@
 #include <mm/kheap.h>
 #include <sched/sched.h>
 
-using namespace lumfs;
+using namespace cerfs;
 
 namespace {
 
@@ -30,9 +30,9 @@ struct TxEntry {
     Kind kind;
 };
 
-struct LumNode;
+struct CerNode;
 
-struct LumFs {
+struct CerFs {
     Mount mount;
     Vnode* dev;                 // the block device node (a reference)
     u32 minor;
@@ -42,50 +42,50 @@ struct LumFs {
     u32 tx_count;
     u32 tx_cap;                 // blocks per transaction: what the journal holds, at most JOURNAL_MAX_TX
     u64 seq;                    // next journal sequence number
-    LumNode* nodes;             // vnodes currently in use
+    CerNode* nodes;             // vnodes currently in use
     u64 alloc_hint;
     u32 inode_hint;
     bool broken;                // an I/O error: refuse further writes
     u32 inactive;               // cached vnodes with no references
 };
 
-struct LumNode {
-    LumFs* fs;
+struct CerNode {
+    CerFs* fs;
     Vnode* v;
     u32 ino;
     Inode di;                   // the on-disk inode as last read or written
-    LumNode* next;
+    CerNode* next;
 };
 
 extern const VnodeOps g_ops;
 extern const PageIo g_file_io;
 
-LumNode* node_of(Vnode* v) { return (LumNode*)v->fs_data; }
-LumFs* fs_of(Vnode* v) { return node_of(v)->fs; }
+CerNode* node_of(Vnode* v) { return (CerNode*)v->fs_data; }
+CerFs* fs_of(Vnode* v) { return node_of(v)->fs; }
 
-Error corrupt(LumFs* fs, const char* what, u64 block) {
-    kprintf("lumfs: %s: damaged %s (block %lu)\n", fs->mount.source, what, (unsigned long)block);
+Error corrupt(CerFs* fs, const char* what, u64 block) {
+    kprintf("cerfs: %s: damaged %s (block %lu)\n", fs->mount.source, what, (unsigned long)block);
     return Error::IO;
 }
 
 // ------------------------------------------------------- metadata blocks --
-Result<Page*> meta(LumFs* fs, u64 block) {
+Result<Page*> meta(CerFs* fs, u64 block) {
     if (block >= fs->sb.total_blocks) return corrupt(fs, "block reference", block);
     return page_get(fs->dev, block, block_page_io(), true);
 }
 
 // A metadata block about to be written from scratch (no read).
-Result<Page*> meta_new(LumFs* fs, u64 block) {
+Result<Page*> meta_new(CerFs* fs, u64 block) {
     Result<Page*> p = page_get(fs->dev, block, block_page_io(), false);
     if (p.ok()) memset(p.value()->data, 0, BLOCK);
     return p;
 }
 
-Result<void> commit(LumFs* fs);
+Result<void> commit(CerFs* fs);
 
 // Adds a changed metadata page to the running transaction. The transaction
 // keeps its own page reference until the commit.
-void meta_dirty(LumFs* fs, Page* p, u64 block, Kind kind) {
+void meta_dirty(CerFs* fs, Page* p, u64 block, Kind kind) {
     page_mark_dirty(p);
     // Seal at once: the block is read (and checked) again before the commit.
     if (kind == Kind::Bitmap || kind == Kind::Dir || kind == Kind::Indirect) seal_block(p->data);
@@ -97,7 +97,7 @@ void meta_dirty(LumFs* fs, Page* p, u64 block, Kind kind) {
         // Operations reserve room first (tx_reserve), so this means one step
         // dirtied more than expected: commit what there is rather than
         // overflow. The step's own changes go into the next transaction.
-        kprintf("lumfs: %s: transaction full, committing early\n", fs->mount.source);
+        kprintf("cerfs: %s: transaction full, committing early\n", fs->mount.source);
         (void)commit(fs);
     }
     page_hold(p, true);
@@ -105,15 +105,15 @@ void meta_dirty(LumFs* fs, Page* p, u64 block, Kind kind) {
     fs->tx[fs->tx_count++] = {p, block, kind};
 }
 
-Result<void> raw_write(LumFs* fs, u64 block, const void* data) {
+Result<void> raw_write(CerFs* fs, u64 block, const void* data) {
     return block_dev_write(fs->minor, block * SECTORS, SECTORS, data);
 }
 
-Result<void> raw_read(LumFs* fs, u64 block, void* data) {
+Result<void> raw_read(CerFs* fs, u64 block, void* data) {
     return block_dev_read(fs->minor, block * SECTORS, SECTORS, data);
 }
 
-Result<void> write_journal_header(LumFs* fs) {
+Result<void> write_journal_header(CerFs* fs) {
     u8* b = (u8*)kzalloc(BLOCK);
     if (!b) return Error::NoMemory;
     JournalHeader* h = (JournalHeader*)b;
@@ -126,11 +126,11 @@ Result<void> write_journal_header(LumFs* fs) {
 }
 
 // ------------------------------------------------------------- commit ---
-Result<void> commit(LumFs* fs) {
+Result<void> commit(CerFs* fs) {
     if (fs->broken) return Error::IO;
     // Ordered data: file contents reach the disk before the metadata that
     // points at them.
-    for (LumNode* n = fs->nodes; n; n = n->next) {
+    for (CerNode* n = fs->nodes; n; n = n->next) {
         Result<void> r = page_sync_owner(n->v);
         if (!r.ok()) {
             fs->broken = true;
@@ -202,12 +202,12 @@ Result<void> commit(LumFs* fs) {
     }
     if (!r.ok()) {
         fs->broken = true;
-        kprintf("lumfs: %s: write failed during commit; the file system is now read-only\n", fs->mount.source);
+        kprintf("cerfs: %s: write failed during commit; the file system is now read-only\n", fs->mount.source);
     }
     return r;
 }
 
-Result<void> tx_reserve(LumFs* fs) {
+Result<void> tx_reserve(CerFs* fs) {
     if (fs->broken) return Error::IO;
     if (fs->tx_count + TX_RESERVE <= fs->tx_cap) return {};
     return commit(fs);
@@ -215,9 +215,9 @@ Result<void> tx_reserve(LumFs* fs) {
 
 // As tx_reserve, in the middle of an operation on `n`: the inode is written
 // first, so the commit never records blocks the inode does not show.
-Result<void> node_write(LumNode* n);
-Result<void> tx_reserve_node(LumNode* n) {
-    LumFs* fs = n->fs;
+Result<void> node_write(CerNode* n);
+Result<void> tx_reserve_node(CerNode* n) {
+    CerFs* fs = n->fs;
     if (fs->broken) return Error::IO;
     if (fs->tx_count + TX_RESERVE <= fs->tx_cap) return {};
     Result<void> r = node_write(n);
@@ -226,7 +226,7 @@ Result<void> tx_reserve_node(LumNode* n) {
 
 // Replays a complete transaction left in the journal (mount, before any
 // metadata is read through the cache).
-Result<void> replay(LumFs* fs) {
+Result<void> replay(CerFs* fs) {
     const SuperBlock& s = fs->sb;
     u8* b = (u8*)kmalloc(BLOCK);
     if (!b) return Error::NoMemory;
@@ -273,7 +273,7 @@ Result<void> replay(LumFs* fs) {
         for (u32 i = 0; i < count && r.ok(); i++) r = raw_write(fs, targets[i], images + (usize)i * BLOCK);
         if (r.ok()) r = block_dev_flush(fs->minor);
         if (r.ok()) {
-            kprintf("lumfs: %s: replayed journal transaction %lu (%u blocks)\n", fs->mount.source,
+            kprintf("cerfs: %s: replayed journal transaction %lu (%u blocks)\n", fs->mount.source,
                     (unsigned long)fs->seq, count);
             fs->seq++;
             r = write_journal_header(fs);
@@ -288,7 +288,7 @@ Result<void> replay(LumFs* fs) {
 }
 
 // --------------------------------------------------------------- inodes --
-Result<void> inode_read(LumFs* fs, u32 ino, Inode* out) {
+Result<void> inode_read(CerFs* fs, u32 ino, Inode* out) {
     if (ino == 0 || ino > fs->sb.inode_count) return corrupt(fs, "inode number", ino);
     u64 blk = inode_block(fs->sb, ino);
     Result<Page*> p = meta(fs, blk);
@@ -299,7 +299,7 @@ Result<void> inode_read(LumFs* fs, u32 ino, Inode* out) {
     return {};
 }
 
-Result<void> inode_write(LumFs* fs, u32 ino, Inode* in) {
+Result<void> inode_write(CerFs* fs, u32 ino, Inode* in) {
     u64 blk = inode_block(fs->sb, ino);
     Result<Page*> p = meta(fs, blk);
     if (!p.ok()) return p.error();
@@ -311,7 +311,7 @@ Result<void> inode_write(LumFs* fs, u32 ino, Inode* in) {
 }
 
 // The vnode's attributes into the inode, and the inode to its block.
-Result<void> node_write(LumNode* n) {
+Result<void> node_write(CerNode* n) {
     Vnode* v = n->v;
     n->di.mode = (u16)((n->di.mode & T_MASK) | (v->mode & 07777));
     n->di.links = (u16)v->nlink;
@@ -332,11 +332,11 @@ VType type_of(u16 mode) {
     }
 }
 
-u8 dirtype_of(VType t) { return t == VType::Dir ? DT_DIR : t == VType::Symlink ? DT_LINK : DT_FILE; }
+u8 dirtype_of(VType t) { return t == VType::Dir ? REC_DIR : t == VType::Symlink ? REC_LINK : REC_FILE; }
 
 // The vnode for inode `ino`, with a new reference.
-Result<Vnode*> node_get(LumFs* fs, u32 ino) {
-    for (LumNode* n = fs->nodes; n; n = n->next)
+Result<Vnode*> node_get(CerFs* fs, u32 ino) {
+    for (CerNode* n = fs->nodes; n; n = n->next)
         if (n->ino == ino) {
             if (n->v->refs == 0) fs->inactive--;
             return vnode_ref(n->v);
@@ -345,7 +345,7 @@ Result<Vnode*> node_get(LumFs* fs, u32 ino) {
     Result<void> r = inode_read(fs, ino, &di);
     if (!r.ok()) return r.error();
     if (di.mode == 0) return corrupt(fs, "reference to a free inode", ino);
-    LumNode* n = (LumNode*)kzalloc(sizeof(LumNode));
+    CerNode* n = (CerNode*)kzalloc(sizeof(CerNode));
     if (!n) return Error::NoMemory;
     Result<Vnode*> v = vnode_alloc(&g_ops, &fs->mount, type_of(di.mode));
     if (!v.ok()) {
@@ -373,7 +373,7 @@ Result<Vnode*> node_get(LumFs* fs, u32 ino) {
 }
 
 // -------------------------------------------------------------- bitmap ---
-Result<u64> block_alloc(LumFs* fs) {
+Result<u64> block_alloc(CerFs* fs) {
     SuperBlock& s = fs->sb;
     if (s.free_blocks == 0) return Error::NoSpace;
     u64 start = fs->alloc_hint >= s.data_start && fs->alloc_hint < s.total_blocks ? fs->alloc_hint : s.data_start;
@@ -411,7 +411,7 @@ Result<u64> block_alloc(LumFs* fs) {
     return corrupt(fs, "free block count", 0);
 }
 
-Result<void> block_free(LumFs* fs, u64 b) {
+Result<void> block_free(CerFs* fs, u64 b) {
     SuperBlock& s = fs->sb;
     if (b < s.data_start || b >= s.total_blocks) return corrupt(fs, "block number to free", b);
     u32 bi = (u32)(b / BITS_PER_BITMAP_BLOCK);
@@ -435,7 +435,7 @@ Result<void> block_free(LumFs* fs, u64 b) {
     return {};
 }
 
-Result<u32> inode_alloc(LumFs* fs) {
+Result<u32> inode_alloc(CerFs* fs) {
     SuperBlock& s = fs->sb;
     if (s.free_inodes == 0) return Error::NoSpace;
     u32 start = fs->inode_hint >= 2 && fs->inode_hint <= s.inode_count ? fs->inode_hint : 2;
@@ -451,7 +451,7 @@ Result<u32> inode_alloc(LumFs* fs) {
         // A free inode that a cached vnode still uses (unlinked, still open)
         // is not reusable yet.
         bool busy = false;
-        for (LumNode* n = fs->nodes; n; n = n->next) busy |= n->ino == ino;
+        for (CerNode* n = fs->nodes; n; n = n->next) busy |= n->ino == ino;
         if (busy) continue;
         s.free_inodes--;
         fs->sb_dirty = true;
@@ -463,7 +463,7 @@ Result<u32> inode_alloc(LumFs* fs) {
 
 // ------------------------------------------------------- block mapping ---
 // Reads entry `idx` of an indirect block, checking the block first.
-Result<u64> ind_get(LumFs* fs, u64 blk, u32 owner, u32 level, u32 idx) {
+Result<u64> ind_get(CerFs* fs, u64 blk, u32 owner, u32 level, u32 idx) {
     Result<Page*> p = meta(fs, blk);
     if (!p.ok()) return p.error();
     u8* d = p.value()->data;
@@ -478,7 +478,7 @@ Result<u64> ind_get(LumFs* fs, u64 blk, u32 owner, u32 level, u32 idx) {
     return (u64)v;
 }
 
-Result<void> ind_set(LumFs* fs, u64 blk, u32 idx, u64 value) {
+Result<void> ind_set(CerFs* fs, u64 blk, u32 idx, u64 value) {
     Result<Page*> p = meta(fs, blk);
     if (!p.ok()) return p.error();
     u32 v = (u32)value;
@@ -488,7 +488,7 @@ Result<void> ind_set(LumFs* fs, u64 blk, u32 idx, u64 value) {
     return {};
 }
 
-Result<u64> ind_new(LumFs* fs, u32 owner, u32 level) {
+Result<u64> ind_new(CerFs* fs, u32 owner, u32 level) {
     Result<u64> b = block_alloc(fs);
     if (!b.ok()) return b;
     Result<Page*> p = meta_new(fs, b.value());
@@ -504,8 +504,8 @@ Result<u64> ind_new(LumFs* fs, u32 owner, u32 level) {
 
 // Physical block of file block `idx`; 0 for a hole. With alloc, a hole is
 // filled with a new block and *fresh is set (its old contents are garbage).
-Result<u64> bmap(LumNode* n, u64 idx, bool alloc, bool* fresh = nullptr) {
-    LumFs* fs = n->fs;
+Result<u64> bmap(CerNode* n, u64 idx, bool alloc, bool* fresh = nullptr) {
+    CerFs* fs = n->fs;
     if (fresh) *fresh = false;
     if (idx >= MAX_FILE_BLOCKS) return Error::TooBig;
     u32* slot = nullptr;
@@ -565,8 +565,8 @@ Result<u64> bmap(LumNode* n, u64 idx, bool alloc, bool* fresh = nullptr) {
 }
 
 // Frees file blocks from index `from` on, and indirect blocks left empty.
-Result<void> free_from(LumNode* n, u64 from) {
-    LumFs* fs = n->fs;
+Result<void> free_from(CerNode* n, u64 from) {
+    CerFs* fs = n->fs;
     for (u64 k = from; k < DIRECT; k++)
         if (n->di.direct[k]) {
             Result<void> r = block_free(fs, n->di.direct[k]);
@@ -625,7 +625,7 @@ Result<void> free_from(LumNode* n, u64 from) {
 
 // ----------------------------------------------------------- file data ---
 Result<void> file_fill(Vnode* owner, u64 index, u32 count, u8* const* pages) {
-    LumNode* n = node_of(owner);
+    CerNode* n = node_of(owner);
     for (u32 i = 0; i < count; i++) {
         Result<u64> b = bmap(n, index + i, false);
         if (!b.ok()) return b.error();
@@ -658,7 +658,7 @@ Result<void> file_fill(Vnode* owner, u64 index, u32 count, u8* const* pages) {
 }
 
 Result<void> file_flush(Vnode* owner, u64 index, const u8* page) {
-    LumNode* n = node_of(owner);
+    CerNode* n = node_of(owner);
     if (index * BLOCK >= owner->size) return {};        // past the end (truncated)
     Result<u64> b = bmap(n, index, false);
     if (!b.ok()) return b.error();
@@ -668,7 +668,7 @@ Result<void> file_flush(Vnode* owner, u64 index, const u8* page) {
 
 const PageIo g_file_io = {file_fill, file_flush};
 
-Result<usize> data_read(LumNode* n, u64 off, void* buf, usize len) {
+Result<usize> data_read(CerNode* n, u64 off, void* buf, usize len) {
     Vnode* v = n->v;
     if (off >= v->size) return (usize)0;
     if (len > v->size - off) len = (usize)(v->size - off);
@@ -686,7 +686,7 @@ Result<usize> data_read(LumNode* n, u64 off, void* buf, usize len) {
     return done;
 }
 
-Result<usize> data_write(LumNode* n, u64 off, const void* buf, usize len) {
+Result<usize> data_write(CerNode* n, u64 off, const void* buf, usize len) {
     Vnode* v = n->v;
     if (off >= MAX_FILE_SIZE) return Error::TooBig;
     if (len > MAX_FILE_SIZE - off) len = (usize)(MAX_FILE_SIZE - off);
@@ -742,8 +742,8 @@ struct DirSlot {
 };
 
 // Iterates the directory's blocks; fn(page, phys, data) returns true to stop.
-template <typename Fn> Result<bool> dir_blocks(LumNode* d, Fn fn) {
-    LumFs* fs = d->fs;
+template <typename Fn> Result<bool> dir_blocks(CerNode* d, Fn fn) {
+    CerFs* fs = d->fs;
     u64 blocks = d->v->size / BLOCK;
     for (u64 i = 0; i < blocks; i++) {
         Result<u64> b = bmap(d, i, false);
@@ -763,7 +763,7 @@ template <typename Fn> Result<bool> dir_blocks(LumNode* d, Fn fn) {
     return false;
 }
 
-Result<bool> dir_find(LumNode* d, const char* name, usize len, DirSlot* out) {
+Result<bool> dir_find(CerNode* d, const char* name, usize len, DirSlot* out) {
     bool bad = false;
     Result<bool> r = dir_blocks(d, [&](Page*, u64 phys, u8* data) {
         u32 prev = 0;
@@ -794,8 +794,8 @@ void write_rec(u8* data, u32 off, u32 ino, u16 rec_len, const char* name, usize 
     memcpy(r->name, name, len);
 }
 
-Result<void> dir_add(LumNode* d, const char* name, usize len, u32 ino, u8 type) {
-    LumFs* fs = d->fs;
+Result<void> dir_add(CerNode* d, const char* name, usize len, u32 ino, u8 type) {
+    CerFs* fs = d->fs;
     u32 need = dirrec_size((u32)len);
     bool placed = false, bad = false;
     Result<bool> r = dir_blocks(d, [&](Page* p, u64 phys, u8* data) {
@@ -835,7 +835,7 @@ Result<void> dir_add(LumNode* d, const char* name, usize len, u32 ino, u8 type) 
     return node_write(d);
 }
 
-Result<void> dir_remove(LumNode* d, const DirSlot& s) {
+Result<void> dir_remove(CerNode* d, const DirSlot& s) {
     Result<Page*> p = meta(d->fs, s.block);
     if (!p.ok()) return p.error();
     u8* data = p.value()->data;
@@ -851,7 +851,7 @@ Result<void> dir_remove(LumNode* d, const DirSlot& s) {
     return {};
 }
 
-Result<void> dir_set_ino(LumNode* d, const DirSlot& s, u32 ino) {
+Result<void> dir_set_ino(CerNode* d, const DirSlot& s, u32 ino) {
     Result<Page*> p = meta(d->fs, s.block);
     if (!p.ok()) return p.error();
     ((DirRec*)(p.value()->data + s.offset))->inode = ino;
@@ -860,7 +860,7 @@ Result<void> dir_set_ino(LumNode* d, const DirSlot& s, u32 ino) {
     return {};
 }
 
-Result<bool> dir_empty(LumNode* d) {
+Result<bool> dir_empty(CerNode* d) {
     bool nonempty = false, bad = false;
     Result<bool> r = dir_blocks(d, [&](Page*, u64, u8* data) {
         bool ok = each_dirrec(data, d->fs->sb.inode_count, [&](const DirRec* rec, u32) {
@@ -879,7 +879,7 @@ Result<bool> dir_empty(LumNode* d) {
 }
 
 // Frees everything of an inode nobody refers to any more.
-Result<void> inode_destroy(LumNode* n) {
+Result<void> inode_destroy(CerNode* n) {
     Result<void> r = free_from(n, 0);
     if (!r.ok()) return r;
     page_drop_owner(n->v, 0);
@@ -892,8 +892,8 @@ Result<void> inode_destroy(LumNode* n) {
 }
 
 // ------------------------------------------------------ vnode operations --
-Result<Vnode*> lum_lookup(Vnode* dir, const char* name, usize len) {
-    LumNode* d = node_of(dir);
+Result<Vnode*> cer_lookup(Vnode* dir, const char* name, usize len) {
+    CerNode* d = node_of(dir);
     DirSlot s;
     Result<bool> f = dir_find(d, name, len, &s);
     if (!f.ok()) return f.error();
@@ -901,10 +901,10 @@ Result<Vnode*> lum_lookup(Vnode* dir, const char* name, usize len) {
     return node_get(d->fs, s.ino);
 }
 
-Result<Vnode*> lum_create(Vnode* dir, const char* name, usize len, VType type, u32 mode, u32 uid, u32 gid,
+Result<Vnode*> cer_create(Vnode* dir, const char* name, usize len, VType type, u32 mode, u32 uid, u32 gid,
                           const char* target, u32) {
-    LumNode* d = node_of(dir);
-    LumFs* fs = d->fs;
+    CerNode* d = node_of(dir);
+    CerFs* fs = d->fs;
     if (type == VType::CharDev || type == VType::BlockDev) return Error::NotSupported;
     if (len > NAME_MAX) return Error::NameTooLong;
     usize tlen = target ? strlen(target) : 0;
@@ -933,7 +933,7 @@ Result<Vnode*> lum_create(Vnode* dir, const char* name, usize len, VType type, u
     if (!r.ok()) return r.error();
     Result<Vnode*> v = node_get(fs, ino.value());
     if (!v.ok()) return v.error();
-    LumNode* n = node_of(v.value());
+    CerNode* n = node_of(v.value());
     if (type == VType::Dir) {
         // "." and ".." in the first block; the parent gains a link.
         bool fresh;
@@ -948,8 +948,8 @@ Result<Vnode*> lum_create(Vnode* dir, const char* name, usize len, VType type, u
         h->magic = MAGIC_DIR;
         h->owner = ino.value();
         u16 first = (u16)dirrec_size(1);
-        write_rec(data, HEADER, ino.value(), first, ".", 1, DT_DIR);
-        write_rec(data, HEADER + first, d->ino, (u16)(BLOCK - HEADER - first), "..", 2, DT_DIR);
+        write_rec(data, HEADER, ino.value(), first, ".", 1, REC_DIR);
+        write_rec(data, HEADER + first, d->ino, (u16)(BLOCK - HEADER - first), "..", 2, REC_DIR);
         meta_dirty(fs, p.value(), b.value(), Kind::Dir);
         page_put(p.value());
         n->v->size = BLOCK;
@@ -975,9 +975,9 @@ Result<Vnode*> lum_create(Vnode* dir, const char* name, usize len, VType type, u
     return v;
 }
 
-Result<void> lum_unlink(Vnode* dir, const char* name, usize len, bool dir_wanted) {
-    LumNode* d = node_of(dir);
-    LumFs* fs = d->fs;
+Result<void> cer_unlink(Vnode* dir, const char* name, usize len, bool dir_wanted) {
+    CerNode* d = node_of(dir);
+    CerFs* fs = d->fs;
     Result<void> rr = tx_reserve(fs);
     if (!rr.ok()) return rr;
     DirSlot s;
@@ -987,7 +987,7 @@ Result<void> lum_unlink(Vnode* dir, const char* name, usize len, bool dir_wanted
     Result<Vnode*> tv = node_get(fs, s.ino);
     if (!tv.ok()) return tv.error();
     Vnode* t = tv.value();
-    LumNode* tn = node_of(t);
+    CerNode* tn = node_of(t);
     Result<void> r;
     if (dir_wanted && t->type != VType::Dir) r = Error::NotDir;
     else if (!dir_wanted && t->type == VType::Dir) r = Error::IsDir;
@@ -1009,15 +1009,15 @@ Result<void> lum_unlink(Vnode* dir, const char* name, usize len, bool dir_wanted
         r = node_write(tn);
         if (r.ok()) r = node_write(d);
     }
-    vnode_unref(t);             // the last reference frees it (lum_release)
+    vnode_unref(t);             // the last reference frees it (cer_release)
     return r;
 }
 
-Result<void> lum_rename(Vnode* from_dir, const char* from, usize from_len, Vnode* to_dir, const char* to,
+Result<void> cer_rename(Vnode* from_dir, const char* from, usize from_len, Vnode* to_dir, const char* to,
                         usize to_len) {
-    LumNode* fd = node_of(from_dir);
-    LumNode* td = node_of(to_dir);
-    LumFs* fs = fd->fs;
+    CerNode* fd = node_of(from_dir);
+    CerNode* td = node_of(to_dir);
+    CerFs* fs = fd->fs;
     Result<void> rr = tx_reserve(fs);
     if (!rr.ok()) return rr;
     DirSlot src;
@@ -1095,18 +1095,18 @@ Result<void> lum_rename(Vnode* from_dir, const char* from, usize from_len, Vnode
     return r;
 }
 
-Result<usize> lum_read(Vnode* v, u64 off, void* buf, usize n) { return data_read(node_of(v), off, buf, n); }
+Result<usize> cer_read(Vnode* v, u64 off, void* buf, usize n) { return data_read(node_of(v), off, buf, n); }
 
-Result<usize> lum_write(Vnode* v, u64 off, const void* buf, usize n) {
-    LumFs* fs = fs_of(v);
+Result<usize> cer_write(Vnode* v, u64 off, const void* buf, usize n) {
+    CerFs* fs = fs_of(v);
     Result<void> rr = tx_reserve(fs);
     if (!rr.ok()) return rr.error();
     return data_write(node_of(v), off, buf, n);
 }
 
-Result<void> lum_truncate(Vnode* v, u64 size) {
-    LumNode* n = node_of(v);
-    LumFs* fs = n->fs;
+Result<void> cer_truncate(Vnode* v, u64 size) {
+    CerNode* n = node_of(v);
+    CerFs* fs = n->fs;
     if (size > MAX_FILE_SIZE) return Error::TooBig;
     Result<void> r = tx_reserve(fs);
     if (!r.ok()) return r;
@@ -1137,9 +1137,9 @@ Result<void> lum_truncate(Vnode* v, u64 size) {
     return node_write(n);
 }
 
-Result<bool> lum_readdir(Vnode* dir, u64* cookie, DirEntry* out) {
-    LumNode* d = node_of(dir);
-    LumFs* fs = d->fs;
+Result<bool> cer_readdir(Vnode* dir, u64* cookie, DirEntry* out) {
+    CerNode* d = node_of(dir);
+    CerFs* fs = d->fs;
     u64 blocks = dir->size / BLOCK;
     for (u64 i = *cookie / BLOCK; i < blocks; i++) {
         Result<u64> b = bmap(d, i, false);
@@ -1160,7 +1160,7 @@ Result<bool> lum_readdir(Vnode* dir, u64* cookie, DirEntry* out) {
             bool dotdot = rec->name_len == 2 && rec->name[0] == '.' && rec->name[1] == '.';
             if (dot || dotdot) return true;
             out->ino = rec->inode;
-            out->type = rec->type == DT_DIR ? VType::Dir : rec->type == DT_LINK ? VType::Symlink : VType::File;
+            out->type = rec->type == REC_DIR ? VType::Dir : rec->type == REC_LINK ? VType::Symlink : VType::File;
             memcpy(out->name, rec->name, rec->name_len);
             out->name[rec->name_len] = 0;
             *cookie = i * BLOCK + off + rec->rec_len;
@@ -1175,24 +1175,24 @@ Result<bool> lum_readdir(Vnode* dir, u64* cookie, DirEntry* out) {
     return false;
 }
 
-Result<usize> lum_readlink(Vnode* v, char* buf, usize n) { return data_read(node_of(v), 0, buf, n); }
+Result<usize> cer_readlink(Vnode* v, char* buf, usize n) { return data_read(node_of(v), 0, buf, n); }
 
-Result<void> lum_setattr(Vnode* v) {
+Result<void> cer_setattr(Vnode* v) {
     Result<void> r = tx_reserve(fs_of(v));
     return r.ok() ? node_write(node_of(v)) : r;
 }
 
-Result<void> lum_fsync(Vnode* v) { return commit(fs_of(v)); }
+Result<void> cer_fsync(Vnode* v) { return commit(fs_of(v)); }
 
 // Forgets a vnode nobody holds: its data is written first (the pages are
 // keyed by the vnode, which is about to go).
-void node_free(LumNode* n) {
-    LumFs* fs = n->fs;
+void node_free(CerNode* n) {
+    CerFs* fs = n->fs;
     Vnode* v = n->v;
     Result<void> r = page_sync_owner(v);
     if (!r.ok()) fs->broken = true;
     page_drop_owner(v, 0);
-    for (LumNode** link = &fs->nodes; *link; link = &(*link)->next)
+    for (CerNode** link = &fs->nodes; *link; link = &(*link)->next)
         if (*link == n) {
             *link = n->next;
             break;
@@ -1206,20 +1206,20 @@ void node_free(LumNode* n) {
 // (inactive) with its pages, so opening it again finds its data in memory;
 // past MAX_INACTIVE the oldest inactive vnode is let go. A file without a
 // name is freed on disk now.
-void lum_release(Vnode* v) {
-    LumNode* n = node_of(v);
-    LumFs* fs = n->fs;
+void cer_release(Vnode* v) {
+    CerNode* n = node_of(v);
+    CerFs* fs = n->fs;
     if (v->nlink == 0 && n->di.mode != 0 && !fs->broken && !(fs->mount.flags & vfs::MNT_RDONLY)) {
         Result<void> r = inode_destroy(n);
-        if (!r.ok()) kprintf("lumfs: could not free inode %u: %s\n", n->ino, error_name(r.error()));
+        if (!r.ok()) kprintf("cerfs: could not free inode %u: %s\n", n->ino, error_name(r.error()));
         node_free(n);
         return;
     }
     fs->inactive++;
     while (fs->inactive > MAX_INACTIVE) {
         // New vnodes go to the front of the list, so the oldest inactive one is the last.
-        LumNode* oldest = nullptr;
-        for (LumNode* o = fs->nodes; o; o = o->next)
+        CerNode* oldest = nullptr;
+        for (CerNode* o = fs->nodes; o; o = o->next)
             if (o->v->refs == 0 && o != n) oldest = o;
         if (!oldest) break;
         node_free(oldest);
@@ -1227,15 +1227,15 @@ void lum_release(Vnode* v) {
 }
 
 const VnodeOps g_ops = {
-    lum_lookup,   lum_create,   lum_unlink,  lum_rename, lum_read,  lum_write,   lum_truncate,
-    lum_readdir,  lum_readlink, lum_setattr, lum_fsync,  nullptr,   lum_release,
+    cer_lookup,   cer_create,   cer_unlink,  cer_rename, cer_read,  cer_write,   cer_truncate,
+    cer_readdir,  cer_readlink, cer_setattr, cer_fsync,  nullptr,   cer_release,
 };
 
 // ---------------------------------------------------------------- mount --
-Result<void> lum_sync(Mount* m) { return commit((LumFs*)m->fs_data); }
+Result<void> cer_sync(Mount* m) { return commit((CerFs*)m->fs_data); }
 
-Result<void> lum_unmount(Mount* m) {
-    LumFs* fs = (LumFs*)m->fs_data;
+Result<void> cer_unmount(Mount* m) {
+    CerFs* fs = (CerFs*)m->fs_data;
     Result<void> r = commit(fs);
     if (r.ok() && !(m->flags & vfs::MNT_RDONLY)) {
         fs->sb.state = STATE_CLEAN;
@@ -1244,14 +1244,22 @@ Result<void> lum_unmount(Mount* m) {
     }
     // Every vnode left is inactive (unmount checked that nothing is in use).
     while (fs->nodes) node_free(fs->nodes);
+    // After an I/O error a transaction may be left uncommitted: its pages are
+    // let go (the changes are lost, which is what a failed write means).
+    for (u32 i = 0; i < fs->tx_count; i++) {
+        page_hold(fs->tx[i].page, false);
+        page_put(fs->tx[i].page);
+    }
+    fs->tx_count = 0;
     Result<void> s = page_sync_owner(fs->dev);
     if (s.ok()) page_drop_owner(fs->dev, 0);
+    block_unclaim(fs->minor);
     vnode_unref(fs->dev);
     kfree(fs);
     return r;
 }
 
-Result<Mount*> lum_mount(const char* source, u32 flags) {
+Result<Mount*> cer_mount(const char* source, u32 flags) {
     Credentials rootcred{0, 0};
     Result<Vnode*> dv = vfs_resolve(nullptr, source, rootcred, LookupFlags{});
     if (!dv.ok()) return dv.error();
@@ -1260,12 +1268,11 @@ Result<Mount*> lum_mount(const char* source, u32 flags) {
         vnode_unref(dev_node);
         return Error::NoDevice;
     }
-    for (Mount* o = vfs_mounts(); o; o = o->next)
-        if (o->type && strcmp(o->type, "lumfs") == 0 && ((LumFs*)o->fs_data)->minor == dev::minor_of(dev_node->rdev)) {
-            vnode_unref(dev_node);
-            return Error::Busy;         // already mounted
-        }
-    LumFs* fs = (LumFs*)kzalloc(sizeof(LumFs));
+    if (!block_claim(dev::minor_of(dev_node->rdev))) {
+        vnode_unref(dev_node);
+        return Error::Busy;             // already mounted
+    }
+    CerFs* fs = (CerFs*)kzalloc(sizeof(CerFs));
     if (!fs) {
         vnode_unref(dev_node);
         return Error::NoMemory;
@@ -1273,14 +1280,15 @@ Result<Mount*> lum_mount(const char* source, u32 flags) {
     fs->dev = dev_node;
     fs->minor = dev::minor_of(dev_node->rdev);
     Mount* m = &fs->mount;
-    m->type = "lumfs";
+    m->type = "cerfs";
     strlcpy(m->source, source, sizeof m->source);
     m->flags = flags;
     m->fs_data = fs;
-    m->unmount = lum_unmount;
-    m->sync = lum_sync;
+    m->unmount = cer_unmount;
+    m->sync = cer_sync;
 
     auto fail = [&](Error e) -> Result<Mount*> {
+        block_unclaim(fs->minor);
         vnode_unref(dev_node);
         kfree(fs);
         return e;
@@ -1295,7 +1303,7 @@ Result<Mount*> lum_mount(const char* source, u32 flags) {
     if (!r.ok()) return fail(r.error());
     BlockDevice* bd = block_get(fs->minor);
     if (!check_super(fs->sb, bd->sectors / SECTORS)) {
-        kprintf("lumfs: %s: not a valid lumfs (or damaged superblock)\n", source);
+        kprintf("cerfs: %s: not a valid cerfs (or damaged superblock)\n", source);
         return fail(Error::Invalid);
     }
     (void)page_sync_owner(dev_node);
@@ -1336,7 +1344,7 @@ Result<Mount*> lum_mount(const char* source, u32 flags) {
             return fail(r.error());
         }
     }
-    kprintf("lumfs: mounted %s (%lu MiB, %lu MiB free, %u of %u inodes free%s)\n", source,
+    kprintf("cerfs: mounted %s (%lu MiB, %lu MiB free, %u of %u inodes free%s)\n", source,
             (unsigned long)(fs->sb.total_blocks / 256), (unsigned long)(fs->sb.free_blocks / 256), fs->sb.free_inodes,
             fs->sb.inode_count, flags & vfs::MNT_RDONLY ? ", read-only" : "");
     return m;
@@ -1344,4 +1352,4 @@ Result<Mount*> lum_mount(const char* source, u32 flags) {
 
 } // namespace
 
-void lumfs_register() { vfs_register_type("lumfs", lum_mount); }
+void cerfs_register() { vfs_register_type("cerfs", cer_mount); }

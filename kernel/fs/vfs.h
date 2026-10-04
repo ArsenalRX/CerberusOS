@@ -105,7 +105,7 @@ struct Vnode {
 
 // One mounted file system.
 struct Mount {
-    const char* type;           // "tmpfs", "lumfs", "devfs", "initramfs"
+    const char* type;           // "tmpfs", "cerfs", "devfs", "initramfs"
     char source[32];            // device or "none"
     char path[64];              // where it is mounted, for listing
     u32 flags;                  // vfs::MNT_*
@@ -171,6 +171,13 @@ void vfs_sync();
 // Reads a whole regular file into a new kmalloc'd buffer (for the program
 // loader). Errors: IsDir, TooBig (over `max`), NoMemory, IO.
 Result<u8*> vfs_read_all(Vnode* v, usize max, usize* size);
+
+// Name cache statistics (for `mount` and benchmarks).
+struct VfsCacheStats {
+    u32 entries, capacity;
+    u64 hits, misses;
+};
+VfsCacheStats vfs_cache_stats();
 
 // ---- mounts ----
 // Mounts `m` (filled by the file system) on the directory `path`.

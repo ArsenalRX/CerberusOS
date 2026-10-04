@@ -40,6 +40,126 @@ void unref_locked(Vnode* v) {
     if (v->refs == 0 && v->ops->release) v->ops->release(v);
 }
 
+// ------------------------------------------------------------ name cache --
+// Recently resolved (directory, name) -> vnode pairs, so walking a path does
+// not search the same directories again. Each entry holds a reference on
+// both vnodes; entries are dropped oldest first, and whenever the name could
+// have changed (unlink, rename, unmount). Only positive results and names
+// of up to DNAME_MAX bytes are kept.
+constexpr u32 DCACHE_ENTRIES = 512, DCACHE_BUCKETS = 256, DNAME_MAX = 31;
+
+struct DEntry {
+    Vnode* parent;
+    Vnode* child;
+    DEntry* hash_next;
+    DEntry* lru_prev;
+    DEntry* lru_next;
+    u8 len;
+    char name[DNAME_MAX];
+};
+
+DEntry g_dentries[DCACHE_ENTRIES];
+DEntry* g_dhash[DCACHE_BUCKETS];
+DEntry* g_dfree = nullptr;
+DEntry* g_dlru_head = nullptr;      // oldest
+DEntry* g_dlru_tail = nullptr;
+bool g_dinit = false;
+u64 g_dhits = 0, g_dmisses = 0;
+
+u32 dhash(const Vnode* parent, const char* name, usize len) {
+    u64 h = (u64)parent * 0x9E3779B97F4A7C15ull;
+    for (usize i = 0; i < len; i++) h = (h ^ (u8)name[i]) * 0x100000001B3ull;
+    return (u32)(h >> 32) % DCACHE_BUCKETS;
+}
+
+void dlru_unlink(DEntry* e) {
+    if (e->lru_prev) e->lru_prev->lru_next = e->lru_next;
+    else g_dlru_head = e->lru_next;
+    if (e->lru_next) e->lru_next->lru_prev = e->lru_prev;
+    else g_dlru_tail = e->lru_prev;
+    e->lru_prev = e->lru_next = nullptr;
+}
+
+void dlru_append(DEntry* e) {
+    e->lru_prev = g_dlru_tail;
+    e->lru_next = nullptr;
+    if (g_dlru_tail) g_dlru_tail->lru_next = e;
+    else g_dlru_head = e;
+    g_dlru_tail = e;
+}
+
+void unref_locked(Vnode* v);
+
+void dentry_drop(DEntry* e) {
+    DEntry** link = &g_dhash[dhash(e->parent, e->name, e->len)];
+    while (*link && *link != e) link = &(*link)->hash_next;
+    if (*link) *link = e->hash_next;
+    dlru_unlink(e);
+    Vnode* parent = e->parent;
+    Vnode* child = e->child;
+    e->parent = e->child = nullptr;
+    e->hash_next = g_dfree;
+    g_dfree = e;
+    unref_locked(child);
+    unref_locked(parent);
+}
+
+DEntry* dcache_find(Vnode* parent, const char* name, usize len) {
+    if (len > DNAME_MAX) return nullptr;
+    for (DEntry* e = g_dhash[dhash(parent, name, len)]; e; e = e->hash_next)
+        if (e->parent == parent && e->len == len && memcmp(e->name, name, len) == 0) return e;
+    return nullptr;
+}
+
+Vnode* dcache_lookup(Vnode* parent, const char* name, usize len) {
+    DEntry* e = dcache_find(parent, name, len);
+    if (!e) {
+        g_dmisses++;
+        return nullptr;
+    }
+    g_dhits++;
+    dlru_unlink(e);
+    dlru_append(e);
+    return vnode_ref(e->child);
+}
+
+void dcache_insert(Vnode* parent, const char* name, usize len, Vnode* child) {
+    if (len > DNAME_MAX || dcache_find(parent, name, len)) return;
+    if (!g_dinit) {
+        for (DEntry& e : g_dentries) {
+            e.hash_next = g_dfree;
+            g_dfree = &e;
+        }
+        g_dinit = true;
+    }
+    if (!g_dfree) dentry_drop(g_dlru_head);
+    DEntry* e = g_dfree;
+    g_dfree = e->hash_next;
+    e->parent = vnode_ref(parent);
+    e->child = vnode_ref(child);
+    e->len = (u8)len;
+    memcpy(e->name, name, len);
+    u32 b = dhash(parent, name, len);
+    e->hash_next = g_dhash[b];
+    g_dhash[b] = e;
+    dlru_append(e);
+}
+
+void dcache_forget(Vnode* parent, const char* name, usize len) {
+    DEntry* e = dcache_find(parent, name, len);
+    if (e) dentry_drop(e);
+}
+
+// Drops every entry that involves file system `m`.
+void dcache_forget_mount(Mount* m) {
+    DEntry* e = g_dlru_head;
+    while (e) {
+        DEntry* next = e->lru_next;
+        if (e->parent->mount == m || e->child->mount == m) dentry_drop(e);
+        e = next;
+    }
+}
+
 bool is_dot(const char* s, usize n) { return n == 1 && s[0] == '.'; }
 bool is_dotdot(const char* s, usize n) { return n == 2 && s[0] == '.' && s[1] == '.'; }
 
@@ -112,9 +232,15 @@ Result<Vnode*> resolve_locked(Vnode* start, const char* path, const Credentials&
             return cur;
         }
         if (is_dot(name, len)) continue;
-        Result<Vnode*> next = is_dotdot(name, len) ? parent_of(cur)
-                              : cur->ops->lookup     ? cur->ops->lookup(cur, name, len)
-                                                     : Result<Vnode*>(Error::NotSupported);
+        Result<Vnode*> next(Error::NotFound);
+        if (is_dotdot(name, len)) {
+            next = parent_of(cur);
+        } else if (Vnode* cached = dcache_lookup(cur, name, len)) {
+            next = cached;
+        } else {
+            next = cur->ops->lookup ? cur->ops->lookup(cur, name, len) : Result<Vnode*>(Error::NotSupported);
+            if (next.ok()) dcache_insert(cur, name, len, next.value());
+        }
         if (!next.ok()) {
             unref_locked(cur);
             return next.error();
@@ -294,7 +420,10 @@ Result<void> vfs_unlink(Vnode* start, const char* path, const Credentials& cred,
             unref_locked(t.value());
         }
     }
-    if (r.ok()) r = dir->ops->unlink ? dir->ops->unlink(dir, name, len, dir_wanted) : Result<void>(Error::NotSupported);
+    if (r.ok()) {
+        dcache_forget(dir, name, len);
+        r = dir->ops->unlink ? dir->ops->unlink(dir, name, len, dir_wanted) : Result<void>(Error::NotSupported);
+    }
     unref_locked(dir);
     return r;
 }
@@ -345,9 +474,12 @@ Result<void> vfs_rename(Vnode* start, const char* from, const char* to, const Cr
     }
     if (r.ok() && src->mounted_here) r = Error::Busy;
     if (src) unref_locked(src);
-    if (r.ok())
+    if (r.ok()) {
+        dcache_forget(fd, fname, strlen(fname));
+        dcache_forget(td, tname, strlen(tname));
         r = fd->ops->rename ? fd->ops->rename(fd, fname, strlen(fname), td, tname, strlen(tname))
                             : Result<void>(Error::NotSupported);
+    }
     unref_locked(fd);
     unref_locked(td);
     return r;
@@ -517,14 +649,17 @@ Result<void> vfs_unmount(const char* path, const Credentials& cred) {
     bool is_root_of_mount = m && v == m->root && m->covered;
     unref_locked(v);
     if (!is_root_of_mount) return Error::Invalid;
+    dcache_forget_mount(m);
     // In use: anything but the mount's own reference to its root, or a file
     // system mounted somewhere inside it.
     if (m->refs != 1) return Error::Busy;
     for (Mount* o = g_mounts; o; o = o->next)
         if (o->covered && o->covered->mount == m) return Error::Busy;
+    // A file system that cannot write (a failing or damaged disk) is still
+    // detached; what it could not write is lost, and it says so.
     if (m->sync) {
         Result<void> s = m->sync(m);
-        if (!s.ok()) return s.error();
+        if (!s.ok()) kprintf("vfs: %s: could not write everything before unmounting: %s\n", m->path, error_name(s.error()));
     }
     for (Mount** link = &g_mounts; *link; link = &(*link)->next)
         if (*link == m) {
@@ -586,4 +721,11 @@ Result<void> vfs_path_of(Vnode* dir, char* buf, usize n) {
     if (len + 1 > n) return Error::NameTooLong;
     memcpy(buf, tmp + at, len + 1);
     return {};
+}
+
+VfsCacheStats vfs_cache_stats() {
+    Locked l;
+    u32 used = 0;
+    for (DEntry* e = g_dlru_head; e; e = e->lru_next) used++;
+    return {used, DCACHE_ENTRIES, g_dhits, g_dmisses};
 }

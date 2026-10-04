@@ -1,6 +1,6 @@
-# Lumen Roadmap
+# Cerberus Roadmap
 
-**What this file is for.** One readable overview for the owner: what Lumen
+**What this file is for.** One readable overview for the owner: what Cerberus
 can do today, and everything still to add, implement, fix and speed up,
 in the order it will be built. It summarises docs/SPEC.md (the full plan,
 which wins if the two disagree), docs/TO_FINISH.md (the working checklist)
@@ -9,7 +9,7 @@ and docs/STATUS.md (what is verified).
 **When to update it.** At every release, and whenever a phase is finished,
 re-ordered or re-scoped, or the owner adds a request.
 
-**How to update it.** Rewrite "What Lumen can do today" so it stays true
+**How to update it.** Rewrite "What Cerberus can do today" so it stays true
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
@@ -17,10 +17,10 @@ Last updated: **2026-10-04**, at release **0.0.5b** (phase 8 complete, desktop p
 
 ---
 
-## What Lumen can do today (0.0.5a)
+## What Cerberus can do today (0.0.5a)
 
-Lumen is a 64-bit operating system written from scratch. It boots in
-QEMU and VirtualBox from an ISO (`dist/lumen.iso`), with old BIOS or UEFI.
+Cerberus is a 64-bit operating system written from scratch. It boots in
+QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
 
 **Starting up**
 - Boots through the Limine boot menu into its own kernel in about a
@@ -116,7 +116,7 @@ windows. The Spec programming language has not been started.
 
 ## Phase 9 — Files and file systems
 
-Lumen gets real files and folders, and can keep them on a disk.
+Cerberus gets real files and folders, and can keep them on a disk.
 
 **Add**
 - [ ] A virtual file system layer that every file system plugs into:
@@ -128,10 +128,10 @@ Lumen gets real files and folders, and can keep them on a disk.
 - [ ] **initramfs**: the boot archive mounted read-only at `/`.
 - [ ] **devfs** at `/dev`: `null`, `zero`, `random`, `console`, `fb0`,
   `tty0`, `input/kbd0`, `input/mouse0`, `disk/sda`.
-- [ ] **lumfs**, Lumen's own disk file system: superblock, 128-byte inodes,
+- [ ] **cerfs**, Cerberus's own disk file system: superblock, 128-byte inodes,
   4 KiB blocks, directories, and a journal so a crash or power cut never
   leaves it broken.
-- [ ] `mkfs.lumfs` tool to create disk images from the build machine.
+- [ ] `mkfs.cerfs` tool to create disk images from the build machine.
 - [ ] A path cache (recently used names) with least-recently-used eviction.
 - [ ] One shared page cache for file reads, mapped files and disk blocks;
   read-ahead; write-back by a kernel thread; `fsync` and `sync`.
@@ -143,7 +143,7 @@ Lumen gets real files and folders, and can keep them on a disk.
   tested with a non-root identity.
 - [ ] Mount options `nosuid`, `nodev`, `noexec`, `ro`.
 - [ ] Race-free path handling: `openat`, `O_NOFOLLOW`, `O_CLOEXEC`.
-- [ ] lumfs treats the disk as untrusted: every field range-checked,
+- [ ] cerfs treats the disk as untrusted: every field range-checked,
   checksums (CRC32C) on metadata, a damaged disk gives an error, never a
   crash. Fuzzed for 60 s in `make fuzz`.
 - [ ] `/dev/random` (left over from phase 7).
@@ -309,7 +309,7 @@ commands in the terminal, all with mouse and keyboard.
 
 **Security**
 - [ ] Firewall: incoming connections blocked by default; rules in
-  `/etc/lumen/firewall.conf`.
+  `/etc/cerberus/firewall.conf`.
 - [ ] Per-application network permission.
 - [ ] Random TCP sequence numbers, ports and DNS query IDs; bounded caches.
 - [ ] Every packet parser fuzzed. Nothing is sent at boot except DHCP.
@@ -387,25 +387,25 @@ no crash; a page can't read files or other tabs.
 
 ---
 
-## Phase 16 — The Spec language compiles for Lumen
+## Phase 16 — The Spec language compiles for Cerberus
 
 Nothing of the compiler exists yet (`spec/` holds only empty folders).
 
 - [ ] The language itself (SPEC §13.1) and the compiler pipeline: lexer,
   parser, type checker, intermediate code (§13.2).
 - [ ] x86-64 code generation and an ELF writer.
-- [ ] Standard library and Lumen system-call bindings (§13.3).
+- [ ] Standard library and Cerberus system-call bindings (§13.3).
 - [ ] Tooling: formatter, test runner, build tool (§13.4).
 - [ ] At least three applications rewritten in Spec, one with a GUI.
 
-**Done when:** `specc hello.spec -o hello` makes a program that runs on Lumen,
+**Done when:** `specc hello.spec -o hello` makes a program that runs on Cerberus,
 and a Spec GUI application runs on the desktop.
 
 ---
 
 ## Phase 17 — Running real software
 
-- [ ] Shared libraries and a dynamic linker (`/lib/ld-lumen.so`, full
+- [ ] Shared libraries and a dynamic linker (`/lib/ld-cerberus.so`, full
   RELRO), `dlopen`.
 - [ ] A POSIX-compatible C library big enough to build unmodified programs
   (listed in `docs/LIBC.md`). Proof: `zlib`, `lua`, `tinycc`, `make`.
@@ -415,7 +415,7 @@ and a Spec GUI application runs on the desktop.
 - [ ] *(speed)* Measure program start-up and dynamic-link time.
 
 **Done when:** Lua and the Tiny C Compiler built from upstream source run
-on Lumen; tcc compiles and runs a C program on Lumen; a tampered package is
+on Cerberus; tcc compiles and runs a C program on Cerberus; a tampered package is
 refused; a 50-library GUI app starts in under 200 ms.
 
 **Owner decision first:** grow our own C library or port mlibc.
@@ -428,14 +428,14 @@ Design notes for the installer and dual boot: docs/INSTALLER.md.
 
 - [ ] Live installer, like Windows Setup:
   - [ ] pick a disk (model, size, partitions and existing systems shown);
-  - [ ] "Erase this disk and install Lumen", or "Install alongside the
+  - [ ] "Erase this disk and install Cerberus", or "Install alongside the
     existing system" in free space;
   - [ ] review every change before anything is written; erasing needs the
     disk's name typed;
   - [ ] create a user, copy the system, install the boot loader, reboot.
-- [ ] Boot menu listing Lumen, the previous Lumen kernel, Lumen recovery
+- [ ] Boot menu listing Cerberus, the previous Cerberus kernel, Cerberus recovery
   and **Windows** (or other systems found).
-- [ ] UEFI boot entry so the PC starts Lumen's menu; BitLocker, Secure Boot
+- [ ] UEFI boot entry so the PC starts Cerberus's menu; BitLocker, Secure Boot
   and Fast Startup checks with clear instructions.
 - [ ] GPT and FAT32 support; making a bootable USB documented (Rufus "DD
   image" mode or balenaEtcher).
@@ -443,7 +443,7 @@ Design notes for the installer and dual boot: docs/INSTALLER.md.
   passphrase via Argon2id).
 - [ ] Signed updates; the previous kernel stays bootable; never updates on
   its own.
-- [ ] Recovery boot entry with a read-only root shell; `fsck.lumfs` that
+- [ ] Recovery boot entry with a read-only root shell; `fsck.cerfs` that
   repairs.
 - [ ] Service manager (start order, restart policy, per-service sandbox,
   resource limits), `svc` tool, log viewer.

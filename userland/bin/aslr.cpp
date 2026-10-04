@@ -1,7 +1,7 @@
 // Address-space layout randomisation: prints where its stack, heap mapping
 // and code are, then runs a second copy of itself and checks that all three
 // moved.
-#include <lumen.h>
+#include <cerberus.h>
 
 int main(int argc, char** argv, char**) {
     int on_stack = 0;

@@ -1,6 +1,6 @@
 // init: the first user process (pid 1). Its job for now is to exist, so
 // that processes whose parent has exited have someone to collect them.
-#include <lumen.h>
+#include <cerberus.h>
 
 int main(int, char**, char**) {
     for (;;) {
