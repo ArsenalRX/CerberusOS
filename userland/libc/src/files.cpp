@@ -114,6 +114,10 @@ const char* strerror(int err) {
     case ENOSYS: return "function not implemented";
     case ENOTEMPTY: return "directory not empty";
     case ELOOP: return "too many symbolic links";
+    case EPIPE: return "the other end is closed";
+    case EDEADLK: return "deadlock avoided";
+    case EMSGSIZE: return "message too long";
+    case ETIMEDOUT: return "timed out";
     }
     return "unknown error";
 }

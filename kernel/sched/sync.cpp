@@ -131,6 +131,19 @@ bool Semaphore::down_ticks(u64 ticks) {
     return true;
 }
 
+bool Semaphore::down_interruptible() {
+    u64 irq = sched_lock();
+    while (count <= 0) {
+        if (sched_block_interruptible_locked(&waiters, 0) == WaitResult::Interrupted && count <= 0) {
+            sched_unlock(irq);
+            return false;
+        }
+    }
+    count--;
+    sched_unlock(irq);
+    return true;
+}
+
 bool Semaphore::try_down() {
     u64 irq = sched_lock();
     bool got = count > 0;

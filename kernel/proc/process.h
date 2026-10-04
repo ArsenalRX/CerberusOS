@@ -67,12 +67,26 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
 // its wait status.
 int process_wait(Process* child);
 
-// The calling process ends with the given wait status. Its address space
-// and files are released now; its parent collects the status.
+// The calling process ends with the given wait status: its other threads
+// are stopped first, then its address space and files are released; its
+// parent collects the status.
 [[noreturn]] void process_exit(int wait_status);
 
+// The calling thread ends. If it is the last user thread of its process the
+// process ends with exit code `code`.
+[[noreturn]] void process_thread_exit(int code);
+// A new thread in the calling process, starting in user mode at `entry` with
+// `arg` in rdi, `stack` as its stack pointer and `tls` as its FS base.
+// Returns its id (for thread_join_user). Errors: NoMemory, Again (too many
+// threads, or the process is ending).
+Result<u32> process_thread_spawn(vaddr_t entry, u64 arg, vaddr_t stack, u64 tls);
+constexpr u32 PROCESS_MAX_THREADS = 256;
+// True if a child of the calling process has exited and not been collected.
+bool process_has_exited_child();
+
 // fork: a copy of the calling process that resumes from the same system-call
-// frame with 0 in rax. Returns the child's pid. Error: NoMemory.
+// frame with 0 in rax. Only the calling thread exists in the copy. Returns
+// the child's pid. Error: NoMemory.
 Result<i64> process_fork(const InterruptFrame* frame);
 // execve: replaces the calling process's program. On success the frame is
 // rewritten to start the new image and the old address space is gone; on
@@ -81,12 +95,14 @@ Result<i64> process_fork(const InterruptFrame* frame);
 Result<void> process_exec(InterruptFrame* frame, const char* path, const ExecArgs& args);
 // waitpid: collects an exited child (pid > 0: that child; -1: any). Returns
 // its pid and stores its wait status, or returns 0 at once with nohang when
-// none has exited. Errors: NoChild, Invalid.
+// none has exited. Errors: NoChild, Invalid, Interrupted.
 Result<i64> process_waitpid(i64 pid, int* status, bool nohang);
 
 // A CPU exception raised by user code, or a user-mode page fault that could
-// not be resolved: the process is killed and the kernel carries on.
-[[noreturn]] void user_exception(InterruptFrame* frame);
+// not be resolved. If the process handles the matching signal (SIGSEGV,
+// SIGILL, SIGFPE) the frame is rewritten to run its handler and the call
+// returns; otherwise the process is killed and the call does not return.
+void user_exception(InterruptFrame* frame);
 
 // Defined in usermode.asm.
 extern "C" [[noreturn]] void enter_user(const InterruptFrame* frame);

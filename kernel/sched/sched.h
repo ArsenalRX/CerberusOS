@@ -72,6 +72,7 @@ struct Credentials {
 
 struct File;
 struct Vnode;
+struct ShmMapping;
 constexpr usize PROCESS_MAX_FDS = 32;
 
 // A process: an address space, the threads that run in it, its open files
@@ -98,6 +99,15 @@ struct Process {
     u32 umask;                  // permission bits removed from new files
     WaitQueue child_wait;       // woken when a child of this process exits
     vaddr_t mmap_hint;          // randomised base for the process's mmap region
+    // Threads and exit (phase 11).
+    u32 live_threads;           // user threads that have not exited yet
+    bool exiting;               // one thread is ending the process; the others must leave
+    WaitQueue exit_wait;        // the ending thread waits here for the others
+    // Signals (proc/signal.h).
+    u64 sig_pending;            // bit per signal number
+    u64 sig_handlers[32];       // 0 = default, 1 = ignore, else the handler's address
+    vaddr_t sig_trampoline;     // code in the process that calls sigreturn
+    ShmMapping* shm_maps;       // shared memory mapped by this process (ipc/shm.h)
 };
 
 struct Thread {
@@ -111,6 +121,13 @@ struct Thread {
     bool detached;
     bool timed_out;
     bool is_idle;
+    bool user;                  // a user thread counted in process->live_threads
+    bool joining;               // a thread_join is waiting for this thread
+    bool interrupt_pending;     // a signal or the end of the process is waiting: see thread_interrupt_locked
+    bool interruptible;         // blocked in a wait that an interruption may end
+    bool interrupted;           // the last interruptible wait was ended that way
+    bool iret_return;           // leave the current system call through iretq (all registers restored)
+    u64 fs_base;                // the thread's TLS pointer (FS base) in user mode
     u32 cpu_affinity;           // bit per CPU the thread may run on
     u32 cpu;                    // the CPU it is running on, queued on, or last ran on
     Process* process;
@@ -138,6 +155,7 @@ struct SchedStats {
     u64 context_switches;
     u64 steals;                 // threads taken from another CPU's queue
     u32 threads;
+    u32 processes;
     u32 cpus;                   // CPUs scheduling
 };
 
@@ -203,6 +221,12 @@ void thread_reset_fpu();
 // space; otherwise it takes ownership of the one given (fork passes a
 // copy-on-write clone). Error: NoMemory.
 Result<Process*> process_create(const char* name, AddressSpace* space = nullptr);
+// Hands every thread of `p` except `keep` to the kernel process, to be freed
+// by the reaper once it has ended. For a process that is ending: its other
+// threads have already left user mode for good.
+void process_release_threads(Process* p, Thread* keep);
+// Scheduler lock held: the process with this pid, or null.
+Process* process_find_locked(u32 pid);
 // Frees a process and its address space. It must have no threads left.
 void process_destroy(Process* p);
 
@@ -215,6 +239,29 @@ void sched_unlock(u64 saved);
 // With the lock held: blocks the calling thread on `wq`. Returns with the
 // lock held again, possibly on another CPU.
 void sched_block_locked(WaitQueue& wq);
+
+// How an interruptible wait ended.
+enum class WaitResult : u8 { Woken, Timeout, Interrupted };
+// With the lock held: as sched_block_locked, but the wait also ends when the
+// thread is interrupted (a signal arrives or its process is ending), and
+// does not start at all if an interruption is already pending. `wq` may be
+// null (a plain sleep); ticks 0 = no timeout. Long waits made on behalf of
+// a user program use this, so the program can always be stopped.
+WaitResult sched_block_interruptible_locked(WaitQueue* wq, u64 ticks);
+// With the lock held: marks `t` interrupted. If it is in an interruptible
+// wait it is woken; if it is running on another CPU that CPU is told, so
+// the thread reaches its return-to-user check soon.
+void thread_interrupt_locked(Thread* t);
+// Ends an interruptible sleep of the calling thread early or after `ticks`.
+WaitResult thread_sleep_interruptible(u64 ticks);
+// User thread support: joins thread `tid` of the calling process (frees it,
+// returns its exit code). Errors: NoProcess (no such thread), Invalid
+// (itself, or already being joined), Interrupted.
+Result<int> thread_join_user(u32 tid);
+// Loads a 512-byte FXSAVE image as the calling thread's FPU state.
+void thread_restore_fpu(const u8* image);
+// Sets the calling thread's user TLS pointer (FS base).
+void thread_set_fs_base(u64 base);
 // As sched_block_locked, but wakes after `ticks` timer ticks at the latest;
 // false if it was the timeout.
 bool sched_block_locked_ticks(WaitQueue& wq, u64 ticks);

@@ -4,6 +4,8 @@
 #include <arch/x86_64/gdt.h>
 #include <fs/file.h>
 #include <fs/vfs.h>
+#include <ipc/object.h>
+#include <ipc/shm.h>
 #include <lib/csprng.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
@@ -13,6 +15,8 @@
 #include <mm/vmm.h>
 #include <proc/elf.h>
 #include <proc/process.h>
+#include <proc/signal.h>
+#include <sched/sync.h>
 #include <syscall/syscall.h>
 
 namespace {
@@ -58,7 +62,41 @@ struct ExecImage {
     vaddr_t entry;
     vaddr_t sp;
     vaddr_t mmap_hint;
+    vaddr_t trampoline;         // the sigreturn code (proc/signal.h)
 };
+
+// ------------------------------------------------------------ user threads --
+// A user thread is counted in its process's live_threads from before it is
+// created (so the count never reads low) until it ends. The first thing it
+// does is mark itself, and leave again if the process began to end in the
+// meantime.
+void become_user_thread() {
+    Thread* t = thread_current();
+    u64 irq = sched_lock();
+    t->user = true;
+    bool leaving = t->process->exiting;
+    sched_unlock(irq);
+    if (leaving) thread_exit(0);
+}
+
+// Makes the calling thread the only one in its process: the others are told
+// to leave (they do so at their next return to user mode, and waits made
+// for a user program end early for this) and are waited for. False if
+// another thread is already doing this, in which case the caller must leave.
+bool stop_other_threads(Process* p, Thread* t) {
+    u64 irq = sched_lock();
+    if (p->exiting) {
+        sched_unlock(irq);
+        return false;
+    }
+    p->exiting = true;
+    for (Thread* o = p->threads; o; o = o->proc_next)
+        if (o != t) thread_interrupt_locked(o);
+    while (p->live_threads > 1) sched_block_locked(p->exit_wait);
+    sched_unlock(irq);
+    process_release_threads(p, t);
+    return true;
+}
 
 // Loads `path` into `space`, which must be empty, and builds the initial
 // stack. Runs with `space` active and leaves it active on success; on
@@ -67,7 +105,9 @@ struct ExecImage {
 // The program file: resolved from the process's working directory, checked
 // for execute permission (and a noexec mount), read whole into memory.
 Result<u8*> read_program(Process* p, const char* path, usize* size) {
-    Result<Vnode*> found = vfs_resolve(p->cwd, path, p->cred, LookupFlags{});
+    Vnode* cwd = cwd_get();
+    Result<Vnode*> found = vfs_resolve(cwd, path, p->cred, LookupFlags{});
+    if (cwd) vnode_unref(cwd);
     if (!found.ok()) return found.error();
     Vnode* v = found.value();
     Result<void> ok = v->type == VType::Dir ? Result<void>(Error::IsDir)
@@ -147,11 +187,19 @@ Result<ExecImage> exec_load(AddressSpace* space, const char* path, const ExecArg
         }
     }
 
+    vaddr_t mmap_hint = MMAP_BASE_MIN + csprng_below(ASLR_SLOTS_MMAP) * PAGE_SIZE;
+    vaddr_t trampoline = 0;
+    if (err == Error::None) {
+        Result<vaddr_t> at = signal_map_trampoline(space, mmap_hint);
+        if (at.ok()) trampoline = at.value();
+        else err = at.error();
+    }
+
     if (err != Error::None) {
         previous.activate();
         return err == Error::Fault ? Error::NoMemory : err;     // a fault here means a frame could not be had
     }
-    return ExecImage{base + img.entry, sp, MMAP_BASE_MIN + csprng_below(ASLR_SLOTS_MMAP) * PAGE_SIZE};
+    return ExecImage{base + img.entry, sp, mmap_hint, trampoline};
 }
 
 InterruptFrame user_frame(vaddr_t entry, vaddr_t sp) {
@@ -173,6 +221,7 @@ struct SpawnCtx {
 void spawn_entry(void* arg) {
     SpawnCtx* ctx = (SpawnCtx*)arg;
     Process* p = thread_current()->process;
+    become_user_thread();
     Result<ExecImage> img = exec_load(p->space, ctx->path, ctx->args);
     Result<void> fpu = img.ok() ? thread_enable_fpu(nullptr) : Result<void>();
     if (!img.ok() || !fpu.ok()) {
@@ -184,23 +233,45 @@ void spawn_entry(void* arg) {
     exec_args_free(&ctx->args);
     kfree(ctx);
     p->mmap_hint = img.value().mmap_hint;
+    p->sig_trampoline = img.value().trampoline;
     InterruptFrame f = user_frame(img.value().entry, img.value().sp);
     enter_user(&f);
 }
 
 struct ForkCtx {
     InterruptFrame frame;
+    u64 fs_base;
     u8 fpu[FPU_STATE_SIZE];
 };
 
 void fork_entry(void* arg) {
     ForkCtx* ctx = (ForkCtx*)arg;
+    become_user_thread();
     if (!thread_enable_fpu(ctx->fpu).ok()) {
         kfree(ctx);
         process_exit(wait_status_exited(127));
     }
+    thread_set_fs_base(ctx->fs_base);
     InterruptFrame f = ctx->frame;
     kfree(ctx);
+    enter_user(&f);
+}
+
+struct ThreadCtx {
+    InterruptFrame frame;
+    u64 tls;
+    Semaphore go;               // raised once the creator has this thread's id
+};
+
+void user_thread_entry(void* arg) {
+    ThreadCtx* ctx = (ThreadCtx*)arg;
+    ctx->go.down();
+    InterruptFrame f = ctx->frame;
+    u64 tls = ctx->tls;
+    kfree(ctx);
+    become_user_thread();
+    if (!thread_enable_fpu(nullptr).ok()) process_exit(sig::KILL);
+    thread_set_fs_base(tls);
     enter_user(&f);
 }
 
@@ -271,6 +342,7 @@ Result<Process*> process_spawn(const char* path, const char* const argv[], bool 
     }
     if (err == Error::None) {
         p->auto_reap = auto_reap;
+        p->live_threads = 1;
         u64 irq = sched_lock();
         link_child(process_kernel(), p);
         if (!g_init) g_init = p;
@@ -310,7 +382,11 @@ int process_wait(Process* child) {
     Thread* t = thread_current();
     Process* p = t->process;
     ASSERT_ALWAYS(p != process_kernel());
+    interrupts_enable();
+    // Another thread got here first: it is waiting for this one to leave.
+    if (!stop_other_threads(p, t)) thread_exit(0);
 
+    // This is the only thread left, so the table needs no lock.
     for (File*& f : p->files) {
         if (f) file_unref(f);
         f = nullptr;
@@ -324,9 +400,14 @@ int process_wait(Process* child) {
     AddressSpace* space = p->space;
     p->space = nullptr;
     if (space) space->destroy();
+    shm_release_process(p);
 
     // The thread outlives the process record by a moment (the reaper frees
     // it), so it moves to the kernel's thread list first.
+    u64 last = sched_lock();
+    t->user = false;
+    p->live_threads = 0;
+    sched_unlock(last);
     thread_set_process(t, process_kernel());
 
     // Children go to init (or to the kernel if this is init, or init is
@@ -354,8 +435,13 @@ int process_wait(Process* child) {
     p->exit_status = wait_status;
     p->zombie = true;
     bool self_reap = p->auto_reap;
-    if (self_reap) unlink_child(p);
-    else sched_wake_all_locked(p->parent->child_wait);
+    if (self_reap) {
+        unlink_child(p);
+    } else {
+        sched_wake_all_locked(p->parent->child_wait);
+        if (p->parent != process_kernel()) signal_post_locked(p->parent, sig::CHLD);
+        poll_wake_locked();         // event queues watching for a child's exit
+    }
     sched_unlock(irq);
     // From here on a waiting parent may free `p` at any moment, unless
     // nobody waits and it is this thread's to free.
@@ -377,6 +463,7 @@ Result<i64> process_fork(const InterruptFrame* frame) {
     if (!ctx) return Error::NoMemory;
     ctx->frame = *frame;
     ctx->frame.rax = 0;                 // what fork returns in the child
+    ctx->fs_base = thread_current()->fs_base;
     thread_snapshot_fpu(ctx->fpu);
 
     Result<AddressSpace*> space = parent->space->clone();
@@ -394,22 +481,29 @@ Result<i64> process_fork(const InterruptFrame* frame) {
     child->cred = parent->cred;
     child->mmap_hint = parent->mmap_hint;
     child->umask = parent->umask;
-    child->fd_cloexec = parent->fd_cloexec;
-    if (parent->cwd) child->cwd = vnode_ref(parent->cwd);
-    for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++)
-        if (parent->files[fd]) child->files[fd] = file_ref(parent->files[fd]);
+    child->sig_trampoline = parent->sig_trampoline;
+    child->live_threads = 1;
+    fd_fork(child);
+    // The clone shares the parent's shared-memory mappings; count them.
+    Error err = shm_fork(parent, child).error();
     u64 irq = sched_lock();
+    memcpy(child->sig_handlers, parent->sig_handlers, sizeof child->sig_handlers);
     link_child(parent, child);
     sched_unlock(irq);
     i64 pid = child->pid;
 
-    Result<Thread*> t = kthread_create(fork_entry, ctx, child->name, prio::NORMAL, child, true);
+    Result<Thread*> t = err == Error::None ? kthread_create(fork_entry, ctx, child->name, prio::NORMAL, child, true)
+                                           : Result<Thread*>(err);
     if (!t.ok()) {
         irq = sched_lock();
         unlink_child(child);
         sched_unlock(irq);
         for (File*& f : child->files)
             if (f) file_unref(f);
+        // The translations go before the shared blocks may be freed.
+        child->space->destroy();
+        child->space = nullptr;
+        shm_release_process(child);
         process_destroy(child);
         kfree(ctx);
         return t.error();
@@ -427,16 +521,28 @@ Result<void> process_exec(InterruptFrame* frame, const char* path, const ExecArg
         fresh->destroy();               // exec_load put the old space back
         return img.error();
     }
+    // The new image replaces the whole process: its other threads end
+    // first (they are still running the old one).
+    Thread* t = thread_current();
+    if (!stop_other_threads(p, t)) {
+        vmm_kernel().activate();        // the process is ending instead
+        fresh->destroy();
+        thread_exit(0);
+    }
     // Point of no return: the new image is loaded and its space is active.
     AddressSpace* old = p->space;
     p->space = fresh;
     old->destroy();
-    for (usize fd = 0; fd < PROCESS_MAX_FDS; fd++)
-        if ((p->fd_cloexec >> fd) & 1 && p->files[fd]) {
-            file_unref(p->files[fd]);
-            p->files[fd] = nullptr;
-        }
-    p->fd_cloexec = 0;
+    shm_release_process(p);
+    fd_close_on_exec();
+    u64 irq = sched_lock();
+    p->exiting = false;
+    // Handlers were addresses in the old image; ignored signals stay ignored.
+    for (u64& h : p->sig_handlers)
+        if (h != sig::IGN) h = sig::DFL;
+    p->sig_trampoline = img.value().trampoline;
+    sched_unlock(irq);
+    thread_set_fs_base(0);
     p->mmap_hint = img.value().mmap_hint;
     strlcpy(p->name, base_name(path), sizeof p->name);
     strlcpy(thread_current()->name, p->name, sizeof thread_current()->name);
@@ -470,21 +576,91 @@ Result<i64> process_waitpid(i64 pid, int* status, bool nohang) {
             sched_unlock(irq);
             return (i64)0;
         }
-        sched_block_locked(self->child_wait);
+        if (sched_block_interruptible_locked(&self->child_wait, 0) == WaitResult::Interrupted) {
+            sched_unlock(irq);
+            return Error::Interrupted;
+        }
     }
 }
 
-[[noreturn]] void user_exception(InterruptFrame* f) {
+bool process_has_exited_child() {
+    Process* self = thread_current()->process;
+    bool any = false;
+    u64 irq = sched_lock();
+    for (Process* c = self->children; c; c = c->sibling) any |= c->zombie;
+    sched_unlock(irq);
+    return any;
+}
+
+[[noreturn]] void process_thread_exit(int code) {
+    Thread* t = thread_current();
+    Process* p = t->process;
+    // Leave the address space first: once this thread is counted out,
+    // another may tear the space down.
+    vmm_kernel().activate();
+    u64 irq = sched_lock();
+    if (p->live_threads > 1 && !p->exiting) {
+        t->user = false;
+        p->live_threads--;
+        sched_wake_all_locked(p->exit_wait);
+        sched_unlock(irq);
+        thread_exit(code);
+    }
+    sched_unlock(irq);
+    process_exit(wait_status_exited(code));     // the last thread: the process ends with it
+}
+
+Result<u32> process_thread_spawn(vaddr_t entry, u64 arg, vaddr_t stack, u64 tls) {
+    Process* p = thread_current()->process;
+    ThreadCtx* ctx = (ThreadCtx*)kzalloc(sizeof(ThreadCtx));
+    if (!ctx) return Error::NoMemory;
+    ctx->frame = user_frame(entry, stack);
+    ctx->frame.rdi = arg;
+    ctx->tls = tls;
+    u64 irq = sched_lock();
+    bool room = !p->exiting && p->live_threads < PROCESS_MAX_THREADS;
+    if (room) p->live_threads++;
+    sched_unlock(irq);
+    if (!room) {
+        kfree(ctx);
+        return Error::Again;
+    }
+    Result<Thread*> t = kthread_create(user_thread_entry, ctx, p->name, prio::NORMAL, p, false);
+    if (!t.ok()) {
+        irq = sched_lock();
+        p->live_threads--;
+        sched_wake_all_locked(p->exit_wait);
+        sched_unlock(irq);
+        kfree(ctx);
+        return t.error();
+    }
+    // The thread cannot end (and so cannot be joined and freed) before it
+    // is let go, so its id can be read safely here.
+    u32 id = t.value()->id;
+    ctx->go.up();
+    return id;
+}
+
+void user_exception(InterruptFrame* f) {
     Process* p = thread_current()->process;
     int sig = f->vector == 6 ? WAIT_SIGILL : (f->vector == 0 || f->vector == 16 || f->vector == 19) ? WAIT_SIGFPE
                                                                                                     : WAIT_SIGSEGV;
+    u64 fault_address = f->vector == 14 ? read_cr2() : 0;
+    // A handler's frame is written to the user stack, which may fault and
+    // sleep: that needs interrupts on. They go off again before returning
+    // to the interrupt stub.
+    u64 flags = interrupts_save();
+    interrupts_enable();
+    if (signal_deliver_fault(f, sig)) {
+        interrupts_restore(flags);
+        return;
+    }
     if (f->vector == 14)
         kprintf("process %s (pid %u) killed: %s at %#lx, address %#lx, error %#lx\n", p->name, p->pid,
-                exception_name((u8)f->vector), (unsigned long)f->rip, (unsigned long)read_cr2(),
+                exception_name((u8)f->vector), (unsigned long)f->rip, (unsigned long)fault_address,
                 (unsigned long)f->error);
     else
         kprintf("process %s (pid %u) killed: %s at %#lx\n", p->name, p->pid, exception_name((u8)f->vector),
                 (unsigned long)f->rip);
-    interrupts_enable();
     process_exit(sig);
 }

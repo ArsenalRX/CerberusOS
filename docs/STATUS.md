@@ -22,26 +22,28 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Latest release: **0.0.5e** (2026-10-04, tag `v0.0.5e`): phase 10, drivers.
-Before it on the same day: 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
+Latest release: **0.0.5f** (2026-10-04, tag `v0.0.5f`): phase 11, IPC.
+Before it on the same day: 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
 files; the OS renamed **Cerberus**, formerly Lumen), 0.0.5b (desktop
 polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.5f-dev+<commit>`. History: docs/CHANGELOG.md.
+tree now builds as `0.0.5g-dev+<commit>`. The source is also on GitHub:
+https://github.com/ArsenalRX/CerberusOS (pushed on the owner's request,
+2026-10-04). History: docs/CHANGELOG.md.
 
 ---
 
 ## Current phase
 
-**Phase 10 — Drivers: COMPLETE (2026-10-04).** Phases 0–3 complete
-2026-09-14; phases 4–7 complete 2026-10-03; phases 8, 9 and 10 complete
+**Phase 11 — IPC: COMPLETE (2026-10-04).** Phases 0–3 complete
+2026-09-14; phases 4–7 complete 2026-10-03; phases 8 to 11 complete
 2026-10-04. Desktop preview (owner-requested, brought forward from phases
 12-13) runs in its own thread.
 
-Next up: **Phase 11 — IPC and the window-server foundation** (SPEC §5 and
-§5A). The owner said on 2026-10-04 to "finish all phases": phases follow
+Next up: **Phase 12 — Pane, the window server as a user program** (SPEC §5
+and §5A). The owner said on 2026-10-04 to "finish all phases": phases follow
 one another without waiting for a go-ahead, each ending in a verified
 release.
 
@@ -160,6 +162,16 @@ All on 2026-10-04, on the 0.0.5e code.
   input events through `/dev/input/kbd0` and `mouse0`; `/dev/fb0`; ACPI
   power off and restart (`poweroff`, `reboot`, system call 64); `runas`;
   sticky `/tmp`.
+- Phase 11: IPC. Kernel objects behind descriptors (`kernel/ipc/`): named
+  ports with channels, access control and kernel-recorded peer identity;
+  shared memory; futexes (shared and private); event queues over ports,
+  input devices, timers and child exit. Signals with user handlers
+  (`kernel/proc/signal.cpp`). Threads in a process (`thread_spawn`/`join`,
+  FS-base TLS), a process ending with all its threads, a descriptor table
+  safe to share. Private file `mmap`, `mprotect`, `kill`, identity calls,
+  `sysinfo`: 74 system calls. libc: pthreads, mutex and condition variable
+  on futexes, `__thread`, a locked allocator. Programs `ipctest`,
+  `threadtest`, `sigtest`, `eventtest`, `mmaptest`.
 - Fatal-error tests (each halts by design): `test exceptions
   de|ud|pf|pfw|gp|bp` (CPU exceptions), `so` (a runaway thread reported as
   a kernel stack overflow), `ub` (undefined behaviour), `fl|waf|df` (heap
@@ -170,7 +182,8 @@ All on 2026-10-04, on the 0.0.5e code.
     gradients, box blur, PSF text with ellipsis, clip stack.
   - Compositor: wallpaper, back buffer, damage rectangles, windows with
     rounded corners, cached shadows, title bars with close/maximise/
-    minimise, move and resize by mouse, stacking, software cursor.
+    minimise, move and resize by mouse (the cursor changes shape over
+    edges and corners since 0.0.5f), stacking, software cursor.
   - Panel: launcher button + menu, task buttons, RAM %, clock and date.
   - Windows: Terminal (the kernel shell), About, System Monitor, Memory Map.
   - Hotkeys: Alt+Tab, Alt+F4, Super (on release, alone), Super+T, Super+M.
@@ -237,6 +250,13 @@ In place (each demonstrated by a test):
 - A program that is not root cannot open the screen, the keyboard, the
   mouse or a disk (`drivers` test, as uid 1000); `/tmp` is sticky. (0.0.5e)
 
+- A port refuses a connection from a user without write permission to it,
+  and the receiver's knowledge of who connected comes from the kernel
+  (`user-ipc`, as uid 1000). Queues are bounded. (0.0.5f)
+- Signals go only to processes of the same user; root, once given up with
+  `setuid`, cannot be regained (`user-signals`, `user-ipc`). (0.0.5f)
+- The new calls are in the random system-call fuzzer. (0.0.5f)
+
 Still missing:
 
 - The desktop and the kernel shell still run in ring 0. Permissions are
@@ -285,8 +305,11 @@ Known limits:
 
 - `early_map` still hands out kernel virtual addresses on its own (first GiB
   of the vmalloc region); drivers can move to `mmap_device` when convenient.
-- File-backed `mmap` is not done (moved to phase 11; docs/DECISIONS.md,
-  phase 9). `read` from the console returns 0 for programs (terminals are
+- File-backed `mmap` is private and read in when mapped; shared and
+  demand-paged file mappings are not done. Phase 11 deviations are in
+  docs/DECISIONS.md (2026-10-04, phase 11): no signal masks, `port_send`
+  cannot be non-blocking, ports cannot be passed through ports, unjoined
+  threads are kept until their process ends. `read` from the console returns 0 for programs (terminals are
   phase 17). No hard links. No `fsck.cerfs` (phase 18): after a power cut a
   file deleted while still open can leave a leaked inode, which the host
   checker reports as a warning.
@@ -317,9 +340,8 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Next
 
-1. Phase 11: ports (named message channels with access control), shared
-   memory, signals, futex, threads in programs, event waiting; file-backed
-   `mmap` (moved from phase 9).
+1. Phase 12: Pane, the window server as a user program, on ports, shared
+   memory and event queues; `libpane`; the kernel desktop is the model.
 2. Look at the minor-page-fault cost (over budget).
 3. Desktop: window open/close animations; frame pacing from a one-shot
    timer.

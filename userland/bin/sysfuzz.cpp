@@ -30,8 +30,15 @@ static const long CALLS[] = {
     SYS_openat, SYS_seek,   SYS_stat,     SYS_lstat,    SYS_fstat,  SYS_mkdir,   SYS_rmdir,  SYS_unlink,
     SYS_rename, SYS_readdir, SYS_chdir,   SYS_getcwd,   SYS_dup,    SYS_dup2,    SYS_ioctl,  SYS_truncate,
     SYS_symlink, SYS_readlink, SYS_chmod, SYS_fsync,    SYS_mount,  SYS_umount,
+    // Phase 11: threads, signals, ports, shared memory, futexes, event queues.
+    SYS_mprotect, SYS_kill,  SYS_signal,  SYS_sigreturn, SYS_thread_spawn, SYS_thread_exit, SYS_thread_join,
+    SYS_futex_wait, SYS_futex_wake, SYS_port_create, SYS_port_connect, SYS_port_send, SYS_port_recv, SYS_port_peer,
+    SYS_shm_create, SYS_shm_map, SYS_shm_unmap, SYS_event_create, SYS_event_ctl, SYS_event_wait, SYS_set_tls,
+    SYS_setuid, SYS_setgid, SYS_umask, SYS_sysinfo,
 };
-static const char* const PATHS[] = {"/bin/hello", "/tmp/fz", "/tmp/fz/a", "/tmp", "/", "/dev/null", "tmpfs", "."};
+// "fz.port" and "tmpfs" are also valid port names.
+static const char* const PATHS[] = {"/bin/hello", "/tmp/fz", "/tmp/fz/a", "/tmp", "/", "/dev/null", "tmpfs", ".",
+                                    "fz.port"};
 
 static const unsigned long HOSTILE[] = {
     0,                      1,                      2,                      3,
@@ -76,6 +83,16 @@ static void child(unsigned long calls) {
         if (nr == SYS_reboot && (a[0] == 1 || a[0] == 2)) continue;
         // A sleep that would be accepted is kept to one tick, and that rarely.
         if (nr == SYS_sleep_ms && a[0] <= (1ul << 31)) a[0] = below(16) == 0;
+        // The fuzzer runs as root and may signal anything: only itself and
+        // processes that do not exist are fair targets.
+        if (nr == SYS_kill) a[0] = below(2) ? (unsigned long)getpid() : 100000 + below(1000);
+        // Waits are kept short: a child asleep for ever would hang the run.
+        if (nr == SYS_futex_wait) a[2] = below(3);
+        if (nr == SYS_port_recv) a[5] = below(3);
+        if (nr == SYS_event_wait) a[3] = below(3);
+        if (nr == SYS_event_ctl && below(4)) a[1] = 1 + below(3);
+        // Shared memory is zero-filled when made; keep most blocks small.
+        if (nr == SYS_shm_create && below(8)) a[0] &= 0xFFFFF;
         // Unmapping most of the address space takes the child's own code
         // with it and ends the run early, so most huge lengths are cut down.
         if (nr == SYS_munmap && a[1] > (1ul << 30) && below(8)) a[1] &= 0xFFFFF;

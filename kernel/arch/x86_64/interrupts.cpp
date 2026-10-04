@@ -13,6 +13,7 @@
 #include <lib/csprng.h>
 #include <mm/vmm.h>
 #include <proc/process.h>
+#include <proc/signal.h>
 #include <sched/sched.h>
 
 extern "C" const u64 isr_stub_table[256];
@@ -210,6 +211,8 @@ extern "C" void interrupt_dispatch(InterruptFrame* f) {
     else if (__atomic_fetch_add(&g_unhandled_irq_count[f->vector], 1u, __ATOMIC_RELAXED) < 3)   // spurious or unclaimed: report the first few
         kprintf("interrupt: unhandled vector %lu (no handler registered)\n", (unsigned long)f->vector);
     sched_irq_exit();
+    // On the way back to user code: signals, and the end of the process.
+    if ((f->cs & 3) == 3) user_return(f);
 }
 
 void dump_frame(const InterruptFrame& f) {

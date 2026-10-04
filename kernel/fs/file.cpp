@@ -37,6 +37,7 @@ u8 dirent_type(VType t) {
     case VType::Symlink: return abi::DT_LNK;
     case VType::CharDev: return abi::DT_CHR;
     case VType::BlockDev: return abi::DT_BLK;
+    case VType::Object: break;
     }
     return abi::DT_UNKNOWN;
 }
@@ -187,6 +188,7 @@ void file_stat(const Vnode* v, abi::Stat* out) {
     case VType::Symlink: type = abi::S_IFLNK; break;
     case VType::CharDev: type = abi::S_IFCHR; break;
     case VType::BlockDev: type = abi::S_IFBLK; break;
+    case VType::Object: break;          // no file type: a port, shared memory or an event queue
     }
     out->ino = v->ino;
     out->size = v->size;

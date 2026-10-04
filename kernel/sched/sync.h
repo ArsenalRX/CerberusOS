@@ -87,6 +87,9 @@ struct Semaphore {
     bool try_down();
     // As down, but gives up after `ticks` timer ticks; false on timeout.
     bool down_ticks(u64 ticks);
+    // As down, but gives up when the thread is interrupted (a signal, or its
+    // process ending); false then.
+    bool down_interruptible();
     // Returns one unit and wakes a waiter. Interrupt-safe.
     void up();
 };

@@ -1,0 +1,13 @@
+# Phase 11: threads in one process: a mutex keeps a counter exact, each
+# thread has its own thread-local variables and errno, the allocator works
+# from every thread at once, and exit or a fault ends every thread.
+cerberus kernel shell
+!send run /bin/threadtest
+!wait 30
+8 threads added 100000 each under a mutex: exactly 800000
+every thread kept its own thread-local variables and errno
+8 threads allocated and freed at once without stepping on each other
+two threads took 1000 turns through a condition variable
+exit and a fault each ended every thread of their process
+threadtest: PASS
+run: /bin/threadtest exited with status 0

@@ -51,9 +51,11 @@ SYSCALL(19, sync,      "int sync(void)",
         "Writes every file system's changes to its disk. Returns 0.")
 
 SYSCALL(20, mmap,      "void* mmap(void* hint, size_t len, int prot, int flags, int fd, long off)",
-        "Maps zero-filled private memory. flags must be MAP_PRIVATE|MAP_ANONYMOUS, optionally MAP_FIXED (which never replaces an existing mapping); fd must be -1 and off 0. Writable and executable together is refused. EINVAL, ENOMEM, EEXIST.")
+        "Maps private memory. With MAP_PRIVATE|MAP_ANONYMOUS (fd -1, off 0) it is zero-filled; with MAP_PRIVATE and a file descriptor it is the caller's own copy of the file from the page-aligned offset off, read in when mapped, zero past the end of the file (PROT_EXEC needs execute permission on the file). MAP_FIXED never replaces an existing mapping. Writable and executable together is refused. Memory shared between processes comes from shm_create. EINVAL, EBADF, EACCES, ENODEV (not a regular file), ENOMEM, EEXIST, EIO.")
 SYSCALL(21, munmap,    "int munmap(void* addr, size_t len)",
         "Unmaps a page-aligned range. EINVAL.")
+SYSCALL(22, mprotect,  "int mprotect(void* addr, size_t len, int prot)",
+        "Changes the protection of a page-aligned range that is entirely mapped. Writable and executable together is refused. EINVAL.")
 
 SYSCALL(30, fork,      "int fork(void)",
         "Creates a copy of the calling process. Returns the child's pid in the parent and 0 in the child. ENOMEM.")
@@ -63,17 +65,78 @@ SYSCALL(32, waitpid,   "int waitpid(int pid, int* status, int flags)",
         "Waits for a child to exit (pid > 0: that child, -1: any) and returns its pid. flags may be WNOHANG (1): return 0 if none has exited. status may be null. ECHILD, EINVAL, EFAULT.")
 SYSCALL(33, getpid,    "int getpid(void)",
         "Returns the calling process's id.")
+SYSCALL(34, getppid,   "int getppid(void)",
+        "Returns the parent's process id (0 for a process started by the kernel).")
+SYSCALL(35, kill,      "int kill(int pid, int sig)",
+        "Sends a signal to a process of the same user (root: any process). sig 0 only checks that it could be sent. ESRCH, EPERM, EINVAL.")
+SYSCALL(36, signal,    "void* signal(int sig, void* handler)",
+        "Sets what a signal does: SIG_DFL (0), SIG_IGN (1) or a function void handler(int). Returns the previous setting. SIGKILL cannot be changed. Handlers run on the thread's own stack and return through sigreturn. EINVAL.")
+SYSCALL(37, sigreturn, "void sigreturn(void)",
+        "Restores the state a signal handler interrupted. Called by the kernel-provided trampoline a handler returns into, not by programs.")
 SYSCALL(38, yield,     "int yield(void)",
         "Gives up the rest of the time slice. Returns 0.")
 SYSCALL(39, sleep_ms,  "int sleep_ms(uint64_t ms)",
-        "Sleeps at least ms milliseconds (at most 2^31). Returns 0. EINVAL.")
+        "Sleeps at least ms milliseconds (at most 2^31). Returns 0. EINVAL, EINTR (a signal arrived).")
+SYSCALL(40, thread_spawn, "int thread_spawn(void* entry, void* arg, void* stack, void* tls)",
+        "Starts a thread in the calling process at entry(arg) with the given stack pointer and FS base. Returns its id. The C library's pthread_create wraps this. EINVAL, EAGAIN (256 threads), ENOMEM.")
+SYSCALL(41, thread_exit, "void thread_exit(int code)",
+        "Ends the calling thread; the process ends with it if it was the last. Does not return.")
+SYSCALL(42, thread_join, "int thread_join(int tid, int* code)",
+        "Waits for a thread of the calling process to end and stores its exit code. Each thread can be joined once. ESRCH, EINVAL, EINTR, EFAULT.")
+SYSCALL(43, futex_wait, "int futex_wait(uint32_t* addr, uint32_t val, uint64_t timeout_ms)",
+        "If *addr still equals val, sleeps until futex_wake(addr) or the timeout (~0 = none). A word in shared memory is the same futex in every process mapping it. EAGAIN (the value differs), ETIMEDOUT, EINTR, EINVAL (unaligned), EFAULT.")
+SYSCALL(44, futex_wake, "int futex_wake(uint32_t* addr, int count)",
+        "Wakes up to count threads waiting on addr; returns how many. EINVAL, EFAULT.")
+
+SYSCALL(50, port_create, "int port_create(const char* name, int mode)",
+        "Creates a named port (letters, digits, '.', '-', '_'; up to 63) and returns a descriptor to accept connections on. mode is permission bits as for a file: connecting needs write permission. EEXIST, EINVAL, EMFILE, ENOMEM.")
+SYSCALL(51, port_connect, "int port_connect(const char* name)",
+        "Connects to a named port; returns one end of a new two-way channel. ENOENT, EACCES, EAGAIN (the server has 32 connections waiting), EMFILE, ENOMEM.")
+SYSCALL(52, port_send, "int port_send(int port, const void* msg, size_t len, const int* fds, int nfds)",
+        "Sends one message of up to 64 KiB with up to 8 descriptors (files, devices, shared memory) over a channel. Waits while 64 messages or 1 MiB are queued. EMSGSIZE, EPIPE (the other end is closed), EBADF, EINVAL, EINTR, EFAULT.")
+SYSCALL(53, port_recv, "long port_recv(int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms)",
+        "Receives the next message; returns its length. *nfds is the room in fds on entry and the number of descriptors received on return. On a named port it accepts a connection: length 0 and one descriptor, the server's end of the channel. timeout 0 = do not wait, ~0 = no limit. EAGAIN, ETIMEDOUT, EPIPE, ENOSPC (the message or its descriptors do not fit; it stays queued), EMFILE, EINTR, EFAULT.")
+SYSCALL(55, shm_create, "int shm_create(size_t size)",
+        "Creates a block of zero-filled shared memory (at most 256 MiB) and returns a descriptor, which can be sent over a port. EINVAL, ENOMEM, EMFILE.")
+SYSCALL(56, shm_map,   "void* shm_map(int handle, int prot)",
+        "Maps a shared-memory block; prot is PROT_READ, optionally with PROT_WRITE. Returns the address. EBADF, EINVAL, ENOMEM.")
+SYSCALL(57, shm_unmap, "int shm_unmap(void* addr)",
+        "Removes a mapping made by shm_map. EINVAL.")
+SYSCALL(58, port_peer, "int port_peer(int port, struct port_peer* out)",
+        "Stores the pid, uid and gid of the process at the other end of a channel, as recorded by the kernel when the channel was made. EBADF, EINVAL, EFAULT.")
 
 SYSCALL(60, time_ms,   "uint64_t time_ms(void)",
         "Milliseconds since the system started (monotonic).")
+SYSCALL(63, sysinfo,   "int sysinfo(struct sysinfo* out)",
+        "Stores memory, file-cache and scheduler figures. EFAULT.")
 SYSCALL(64, reboot,    "int reboot(int how)",
         "Writes every file system to disk, then powers the machine off (how = 1) or restarts it (how = 2). Root only. Returns only on failure: EPERM, EINVAL, ENOSYS (power off not available).")
 SYSCALL(66, getrandom, "long getrandom(void* buf, size_t n, unsigned flags)",
         "Fills buf with random bytes from the kernel generator; returns the number written (at most 1 MiB per call). flags must be 0. EINVAL, EFAULT.")
+SYSCALL(67, time_us,   "uint64_t time_us(void)",
+        "Microseconds since the system started (monotonic).")
+
+SYSCALL(90, event_create, "int event_create(int flags)",
+        "Creates an event queue. flags: 0 or O_CLOEXEC. EINVAL, EMFILE, ENOMEM.")
+SYSCALL(91, event_ctl, "int event_ctl(int ev, int op, int fd, const struct event* e)",
+        "Adds (1), changes (2) or removes (3) a watch: on a descriptor (e->events: EVENT_READ, EVENT_WRITE), a one-shot timer (fd EVENT_FD_TIMER, e->timeout_ms) or the exit of a child (fd EVENT_FD_CHILD). e->data comes back with the event. EBADF, EEXIST, EINVAL, ENOSPC (64 watches), EFAULT.")
+SYSCALL(92, event_wait, "int event_wait(int ev, struct event* out, int max, uint64_t timeout_ms)",
+        "Sleeps until something watched is ready and stores up to max events; returns how many, 0 after the timeout (~0 = none). Level-triggered. EBADF, EINVAL, EINTR, EFAULT.")
+
+SYSCALL(100, getuid,   "int getuid(void)",
+        "Returns the user id of the calling process.")
+SYSCALL(101, geteuid,  "int geteuid(void)",
+        "The same as getuid: a process has one identity.")
+SYSCALL(102, getgid,   "int getgid(void)",
+        "Returns the group id of the calling process.")
+SYSCALL(103, getegid,  "int getegid(void)",
+        "The same as getgid.")
+SYSCALL(104, setuid,   "int setuid(int uid)",
+        "Changes the user id. Root only, and one way: once root is given up it cannot be taken back. EPERM, EINVAL.")
+SYSCALL(105, setgid,   "int setgid(int gid)",
+        "Changes the group id. Root only (call it before setuid). EPERM, EINVAL.")
+SYSCALL(111, umask,    "int umask(int mask)",
+        "Sets the permission bits removed from new files; returns the previous mask.")
 
 // Phase 9, files part 2: calls the spec's table has no number for.
 SYSCALL(120, openat,   "int openat(int dirfd, const char* path, int flags, int mode)",
@@ -96,3 +159,5 @@ SYSCALL(128, lstat,    "int lstat(const char* path, struct stat* out)",
         "As stat, but describes a symbolic link itself. ENOENT, EACCES, EFAULT.")
 SYSCALL(129, chown,    "int chown(const char* path, int uid, int gid)",
         "Changes owner and group; root only. EPERM, EROFS, ENOENT, EFAULT.")
+SYSCALL(130, set_tls,  "int set_tls(void* base)",
+        "Sets the calling thread's FS base (the thread pointer). EINVAL.")

@@ -40,7 +40,9 @@ constexpr u32 MNT_NODEV = 1 << 3;
 constexpr u32 R_OK = 4, W_OK = 2, X_OK = 1;
 } // namespace vfs
 
-enum class VType : u8 { File, Dir, Symlink, CharDev, BlockDev };
+// Object: a kernel object behind a descriptor (ports, shared memory, event
+// queues; ipc/object.h). It has no name in the tree.
+enum class VType : u8 { File, Dir, Symlink, CharDev, BlockDev, Object };
 
 struct Vnode;
 struct Mount;

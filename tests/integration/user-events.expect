@@ -1,0 +1,12 @@
+# Phase 11: event queues: a server blocked in event_wait uses no CPU while
+# idle and wakes within 1 ms of a message; timers, the peer closing and a
+# child's exit arrive as events.
+cerberus kernel shell
+!send run /bin/eventtest
+!wait 30
+a timeout and a one-shot timer were both on time
+during a 1 s event_wait the
+woke
+the peer closing and the child exiting both arrived as events
+eventtest: PASS
+run: /bin/eventtest exited with status 0

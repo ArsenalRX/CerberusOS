@@ -2,8 +2,8 @@
 // kernel in 256 KiB arenas; each arena is a run of blocks with a size header,
 // and free blocks sit on one address-ordered list so neighbours can be
 // merged when freed. Requests of 128 KiB or more get their own mapping and
-// go straight back to the kernel on free. Single-threaded (the library has
-// no threads yet).
+// go straight back to the kernel on free. One lock makes it safe to call
+// from several threads.
 #include <cerberus.h>
 
 namespace {
@@ -24,6 +24,7 @@ struct FreeBlock {
 };
 
 FreeBlock* g_free = nullptr;
+pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 inline size_t round_up(size_t n, size_t a) { return (n + a - 1) & ~(a - 1); }
 
@@ -51,7 +52,7 @@ void insert_free(FreeBlock* b) {
 
 extern "C" {
 
-void* malloc(size_t n) {
+static void* malloc_locked(size_t n) {
     if (n == 0) return nullptr;
     if (n > (size_t)-1 - sizeof(Block) - PAGE) {
         errno = ENOMEM;
@@ -96,6 +97,13 @@ void* malloc(size_t n) {
     return nullptr;
 }
 
+void* malloc(size_t n) {
+    pthread_mutex_lock(&g_lock);
+    void* p = malloc_locked(n);
+    pthread_mutex_unlock(&g_lock);
+    return p;
+}
+
 void free(void* p) {
     if (!p) return;
     Block* b = (Block*)p - 1;
@@ -105,7 +113,9 @@ void free(void* p) {
     }
     FreeBlock* f = (FreeBlock*)b;
     f->size = b->size;
+    pthread_mutex_lock(&g_lock);
     insert_free(f);
+    pthread_mutex_unlock(&g_lock);
 }
 
 void* calloc(size_t count, size_t size) {

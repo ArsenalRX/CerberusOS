@@ -15,7 +15,8 @@ namespace err {
 constexpr i64 PERM = 1, NOENT = 2, SRCH = 3, INTR = 4, IO = 5, TOOBIG = 7, NOEXEC = 8, BADF = 9, CHILD = 10,
               AGAIN = 11, NOMEM = 12, FAULT = 14, BUSY = 16, EXIST = 17, NOTDIR = 20, ISDIR = 21, INVAL = 22,
               MFILE = 24, NOSPC = 28, DEADLK = 35, NOSYS = 38, TIMEDOUT = 110, ACCES = 13, XDEV = 18,
-              NODEV = 19, ROFS = 30, NAMETOOLONG = 36, NOTEMPTY = 39, LOOP = 40, SPIPE = 29;
+              NODEV = 19, ROFS = 30, NAMETOOLONG = 36, NOTEMPTY = 39, LOOP = 40, SPIPE = 29, PIPE = 32,
+              MSGSIZE = 90;
 } // namespace err
 
 // The -errno value for a kernel Error.
@@ -26,5 +27,7 @@ i64 errno_of(Error e);
 void syscall_init();
 
 // Called from usermode.asm with the saved user state. Stores the result in
-// frame->rax and makes the frame safe to return through sysret.
-extern "C" void syscall_dispatch(InterruptFrame* frame);
+// frame->rax and makes the frame safe to return to user mode. Returns
+// nonzero if every register in the frame must be restored (iretq), zero if
+// the fast return (sysret, which loses rcx and r11) will do.
+extern "C" u64 syscall_dispatch(InterruptFrame* frame);

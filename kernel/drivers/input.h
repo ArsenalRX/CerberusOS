@@ -39,3 +39,5 @@ constexpr u32 DEV_KBD = 0, DEV_MOUSE = 1;
 void input_init();
 // Queues an event for readers of device `dev`. Interrupt context.
 void input_report(u32 dev, u16 type, u16 code, i32 value, u32 unicode = 0, u16 mods = 0);
+// True if device `dev` has events queued (for event_wait).
+bool input_pending(u32 dev);

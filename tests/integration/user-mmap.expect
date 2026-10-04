@@ -1,0 +1,10 @@
+# Phase 11 (moved from phase 9): mmap of a file gives a private copy of its
+# bytes from a page-aligned offset; mprotect changes access; W+X is refused.
+cerberus kernel shell
+!send run /bin/mmaptest
+!wait 10
+a read-only mapping holds the file from its offset, zero past the end
+writes to a private mapping stayed out of the file
+mprotect removed and restored write access; W+X is refused
+mmaptest: PASS
+run: /bin/mmaptest exited with status 0

@@ -13,11 +13,11 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-04**, at release **0.0.5e** (phase 10 complete).
+Last updated: **2026-10-04**, at release **0.0.5f** (phase 11 complete).
 
 ---
 
-## What Cerberus can do today (0.0.5e)
+## What Cerberus can do today (0.0.5f)
 
 Cerberus is a 64-bit operating system written from scratch. It boots in
 QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
@@ -43,11 +43,21 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   busy ones.
 - Runs real user programs in a protected mode (ring 3). A crashing program
   is stopped and reported; the system keeps going.
-- 14 system calls (open/read/write/close files, memory mapping, fork,
-  execve, wait, exit, random numbers and so on) and a small C library for
+- 74 system calls (files, memory mapping, processes and threads, signals,
+  ports, shared memory, events, random numbers and so on) and a small C library for
   programs.
 - Programs included: `hello`, `args`, `forktest`, `badptr`, `crash`,
   `aslr`, `sysbench`, `sysfuzz`, plus `init` (the first process).
+
+**Programs working together** (new in 0.0.5f)
+- Programs send each other messages through named **ports**, which can
+  carry open files and shared memory; the kernel checks who may connect and
+  tells the receiver who is really on the other end.
+- **Threads** inside a program, with locks that cost nothing when nobody
+  is waiting, and thread-local variables.
+- **Signals** (stop a program, tell it a child finished, catch its own
+  crash), and one call that waits for "any of these things" so servers
+  sleep instead of spinning.
 
 **Desktop (a preview of the real one)**
 - A graphical desktop with a wallpaper, a taskbar (launcher button, open
@@ -150,7 +160,7 @@ windows. The Spec programming language has not been started.
   private file; `noexec` stops programs; a 64 MiB file's second read comes
   from the cache (6 ms); thousands of damaged disk images a minute never
   crash the kernel.
-- [ ] Moved to phase 11: memory-mapping files (`mmap` of a file).
+- [x] Memory-mapping files (`mmap` of a file): done in phase 11.
 
 ---
 
@@ -172,23 +182,28 @@ windows. The Spec programming language has not been started.
 
 ## Phase 11 — Programs talking to each other (IPC)
 
+**Done 2026-10-04 (0.0.5f).** Measured: 100,000 messages in 68 ms; an idle
+server at 0% CPU waking about 50 microseconds after a message.
+
 **Add**
-- [ ] **Ports**: named message channels (create, connect, send, receive),
+- [x] **Ports**: named message channels (create, connect, send, receive),
   messages up to 64 KiB that can carry open files and shared memory.
-- [ ] **Shared memory** that can be handed to another program.
-- [ ] **Signals**: kill, terminate, segmentation fault, child exited, user
+- [x] **Shared memory** that can be handed to another program.
+- [x] **Signals**: kill, terminate, segmentation fault, child exited, user
   signals, with handlers in programs.
-- [ ] **Futex**: fast locks for programs without a system call when
+- [x] **Futex**: fast locks for programs without a system call when
   uncontended.
-- [ ] **Threads in programs**: create/join, thread-local storage, a
+- [x] **Threads in programs**: create/join, thread-local storage, a
   pthread-style API in the C library.
-- [ ] **Event waiting** over files, ports, timers and child processes
+- [x] **Event waiting** over files, ports, timers and child processes
   (`event_create/ctl/wait`), so servers sleep instead of polling.
+- [x] Mapping a file into memory (`mmap`, private copies).
+- [ ] Left for later: shared and demand-paged file mappings, signal masks.
 
 **Security**
-- [ ] Who may connect to a port is checked; the receiver learns the
+- [x] Who may connect to a port is checked; the receiver learns the
   sender's identity from the kernel, so it can't be faked.
-- [ ] Message sizes and queue lengths are limited; a full queue blocks or
+- [x] Message sizes and queue lengths are limited; a full queue blocks or
   says "try again", never grows without limit.
 
 **Done when:** two programs exchange 100,000 messages in order with none

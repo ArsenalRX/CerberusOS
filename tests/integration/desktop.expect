@@ -8,7 +8,17 @@ cerberus kernel shell
 !wait 1
 cerberus> help
 !screenshot build/desktop-1.png
-# Drag the About window by its title bar (starts at x=760..1220, y=90..122).
+# Resize the About window: over its right edge (x=1220) the cursor turns
+# into a two-headed arrow, and dragging moves the edge.
+!mouseto 1221 300
+!wait 0.3
+!screenshot build/desktop-resize-1.png
+!button left down
+!mouse -100 0
+!button left up
+!wait 0.5
+!screenshot build/desktop-resize-2.png
+# Drag the About window by its title bar (now x=760..1120, y=90..122).
 !mouseto 1000 105
 !button left down
 !mouse -220 180

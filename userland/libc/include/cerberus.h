@@ -15,7 +15,8 @@ extern "C" {
 #endif
 
 // ---- errno ----
-extern int errno;
+// One per thread.
+extern __thread int errno;
 #define EPERM 1
 #define ENOENT 2
 #define ESRCH 3
@@ -44,6 +45,13 @@ extern int errno;
 #define ENAMETOOLONG 36
 #define ENOTEMPTY 39
 #define ELOOP 40
+#define EPIPE 32
+#define EDEADLK 35
+#define EMSGSIZE 90
+#define ETIMEDOUT 110
+
+// "No time limit" for the calls that take a timeout in milliseconds.
+#define WAIT_FOREVER (~0ull)
 
 // ---- raw system call: returns the kernel's result, negative values being -errno ----
 long syscall6(long number, long a0, long a1, long a2, long a3, long a4, long a5);
@@ -64,6 +72,118 @@ int sleep_ms(uint64_t ms);
 #define WIFSIGNALED(s) (((s) & 0x7F) != 0)
 #define WTERMSIG(s) ((s) & 0x7F)
 extern char** environ;
+pid_t getppid(void);
+// A process has one identity (no separate effective ids). setuid and setgid
+// are for root, and one way: call setgid first.
+int getuid(void);
+int geteuid(void);
+int getgid(void);
+int getegid(void);
+int setuid(int uid);
+int setgid(int gid);
+int umask(int mask);
+
+// ---- signals ----
+#define SIGILL 4
+#define SIGFPE 8
+#define SIGKILL 9
+#define SIGUSR1 10
+#define SIGSEGV 11
+#define SIGUSR2 12
+#define SIGTERM 15
+#define SIGCHLD 17
+typedef void (*sighandler_t)(int);
+#define SIG_DFL ((sighandler_t)0)
+#define SIG_IGN ((sighandler_t)1)
+#define SIG_ERR ((sighandler_t)-1)
+// Sets what a signal does and returns the previous setting. A handler runs
+// on the stack of whichever thread takes the signal; a system call that was
+// waiting returns EINTR.
+sighandler_t signal(int sig, sighandler_t handler);
+int kill(pid_t pid, int sig);
+int raise(int sig);
+
+// ---- threads ----
+// Thread-local variables (__thread) work, and errno is one.
+struct __tcb;
+typedef struct __tcb* pthread_t;
+// These return 0 or an error number (they do not set errno).
+int pthread_create(pthread_t* out, const void* attr, void* (*fn)(void*), void* arg);
+int pthread_join(pthread_t t, void** result);
+pthread_t pthread_self(void);
+__attribute__((noreturn)) void pthread_exit(void* result);
+
+// Locks that enter the kernel only to wait. Placed in shared memory they
+// work between processes.
+typedef struct {
+    volatile uint32_t state;
+} pthread_mutex_t;
+#define PTHREAD_MUTEX_INITIALIZER {0}
+int pthread_mutex_init(pthread_mutex_t* m, const void* attr);
+int pthread_mutex_destroy(pthread_mutex_t* m);
+int pthread_mutex_lock(pthread_mutex_t* m);
+int pthread_mutex_trylock(pthread_mutex_t* m);
+int pthread_mutex_unlock(pthread_mutex_t* m);
+typedef struct {
+    volatile uint32_t seq;
+} pthread_cond_t;
+#define PTHREAD_COND_INITIALIZER {0}
+int pthread_cond_init(pthread_cond_t* c, const void* attr);
+int pthread_cond_wait(pthread_cond_t* c, pthread_mutex_t* m);
+int pthread_cond_signal(pthread_cond_t* c);
+int pthread_cond_broadcast(pthread_cond_t* c);
+
+// If *addr still equals val, sleeps until futex_wake(addr) or the timeout.
+int futex_wait(uint32_t* addr, uint32_t val, uint64_t timeout_ms);
+// Wakes up to count waiters; returns how many.
+int futex_wake(uint32_t* addr, int count);
+
+// ---- ports: messages between processes ----
+#define PORT_MESSAGE_MAX 65536
+#define PORT_FDS_MAX 8
+struct port_peer {
+    uint32_t pid, uid, gid;
+};
+// A server creates a named port; mode says who may connect (write permission,
+// as for a file).
+int port_create(const char* name, int mode);
+// A client connects and gets one end of a two-way channel.
+int port_connect(const char* name);
+// The server's end of the next connection made to a named port.
+int port_accept(int port, uint64_t timeout_ms);
+// One whole message, optionally with open descriptors (files, shared memory).
+int port_send(int port, const void* msg, size_t len, const int* fds, int nfds);
+// Returns the message's length. *nfds: room in fds on entry, count on return.
+long port_recv(int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms);
+// Who is at the other end, as the kernel recorded it.
+int port_peer(int port, struct port_peer* out);
+
+// ---- shared memory ----
+int shm_create(size_t size);
+void* shm_map(int handle, int prot);        // MAP_FAILED on failure
+int shm_unmap(void* addr);
+
+// ---- event queues: wait for any of several things ----
+#define EVENT_READ 1
+#define EVENT_WRITE 2
+#define EVENT_HUP 4         // the other end closed; always reported
+#define EVENT_TIMER 8
+#define EVENT_CHILD 16
+#define EVENT_ADD 1
+#define EVENT_MOD 2
+#define EVENT_DEL 3
+#define EVENT_FD_TIMER (-2) // a one-shot timer: event.timeout_ms from now
+#define EVENT_FD_CHILD (-3) // a child of this process has exited
+struct event {
+    uint32_t events;
+    int32_t fd;
+    uint64_t data;          // yours; comes back with the event
+    uint64_t timeout_ms;
+};
+int event_create(int flags);
+int event_ctl(int ev, int op, int fd, const struct event* e);
+// Returns how many events were stored; 0 after the timeout.
+int event_wait(int ev, struct event* out, int max, uint64_t timeout_ms);
 
 // ---- files ----
 // Values match the kernel (kernel/syscall/abi.h).
@@ -174,6 +294,7 @@ int closedir(DIR* d);
 #define MAP_FAILED ((void*)-1)
 void* mmap(void* hint, size_t len, int prot, int flags, int fd, long off);
 int munmap(void* addr, size_t len);
+int mprotect(void* addr, size_t len, int prot);
 void* malloc(size_t n);
 void* calloc(size_t count, size_t size);
 void* realloc(void* p, size_t n);
@@ -186,6 +307,17 @@ void free(void* p);
 // returns only on failure.
 int reboot(int how);
 uint64_t time_ms(void);
+uint64_t time_us(void);
+struct sysinfo {
+    uint64_t uptime_ms;
+    uint64_t mem_total, mem_free;
+    uint64_t cache_pages, cache_hits, cache_misses;
+    uint64_t ticks, idle_ticks;         // timer ticks over all CPUs, and those spent idle
+    uint64_t context_switches;
+    uint32_t cpus, threads, processes;
+    uint32_t page_size;
+};
+int sysinfo(struct sysinfo* out);
 
 // ---- input devices (/dev/input/kbd0, /dev/input/mouse0; root only) ----
 #define EV_KEY 1        // code: key code; value: 1 press, 0 release, 2 repeat

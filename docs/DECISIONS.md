@@ -1168,3 +1168,70 @@ Deviations from SPEC phase 10, for the owner to see:
 Rejected: an AML interpreter now (large; only `_S5` and interrupt routing
 need it so far); keeping the controller's translation as the only mode (it
 cannot express some keys and hides the keyboard's real codes).
+
+---
+
+## 2026-10-04 — Phase 11: IPC, signals, threads
+
+- **Kernel objects are descriptors.** A port, a shared-memory block and an
+  event queue are each a File whose vnode has type Object (`ipc/object.h`).
+  They close, duplicate, survive `fork` and travel through ports like any
+  other descriptor, and die with their last reference. `port_close` (SPEC
+  number 54) is therefore not needed: `close` does it.
+- **Ports.** `port_create(name, mode)` gives a listener; `port_connect`
+  makes a two-way channel and hands the server its end through `port_recv`
+  on the listener (like accept). Queue state lives under the scheduler
+  lock, so "queue empty, go to sleep" is one step. Limits: 64 KiB per
+  message, 8 descriptors per message, 64 messages or 1 MiB queued per
+  direction, 32 connections waiting.
+- **What may be passed:** files, devices and shared memory. Ports and event
+  queues may not: a descriptor queued inside the object it names (directly
+  or through a second port) keeps both alive for ever, and the kernel has
+  no cycle collector. The window server does not need it (clients connect
+  to its named port themselves).
+- **Shared memory** is physically contiguous and mapped as a device range,
+  which is what makes a futex in it the same futex in every process (the
+  key is the physical address). Large blocks can fail on a fragmented
+  machine; paged shared memory comes when something needs it.
+- **Signals** are posted to the process and taken by whichever thread next
+  returns to user mode (`user_return`, called at the end of every system
+  call and interrupt from ring 3). The handler frame (registers and FPU
+  state) is on the thread's own stack; the handler returns into a
+  trampoline page the kernel maps into every program, which calls
+  `sigreturn`. sigreturn leaves through `iretq` so every register comes
+  back. No signal masks, no queued signals (one pending bit each), no
+  alternate stack.
+- **Ending a process with several threads** uses the same check: the
+  ending thread marks the process, interrupts the others and waits; they
+  leave at their next return to user mode. Waits made for a user program
+  (sleep, waitpid, port, futex, event, input) are interruptible so this is
+  prompt. `execve` does the same before it replaces the image.
+- **Descriptor table.** Threads share it, so lookups take a reference for
+  the length of the call under one short lock (`fd_get`), and the working
+  directory likewise.
+- **Thread-local storage:** the FS base, set by `set_tls` and
+  `thread_spawn(entry, arg, stack, tls)` (one argument more than the spec's
+  prototype), kept per thread and across `fork`. The C library lays out the
+  program's PT_TLS template below the thread pointer (variant II,
+  local-exec), so `__thread` works; `errno` is thread-local.
+- **Event queues** are level-triggered and built on one readiness function
+  (`file_poll`) plus a global "something changed" wake-up; fine for the
+  handful of servers there will be, to be made per-object if it shows up
+  in profiles.
+- **File-backed mmap** is private only and reads the file in when mapped
+  (no demand paging from the page cache yet). Shared file mappings are
+  refused; shared memory covers the IPC use.
+- **Identity:** `setuid`/`setgid` are root-only and one-way; there is one
+  identity per process (no effective/saved ids) until phase 15.
+- New numbers outside the spec's table: 58 `port_peer`, 67 `time_us`,
+  130 `set_tls`.
+
+Deviations from SPEC phase 11, for the owner to see: `port_send` always
+waits when the queue is full (no non-blocking flag yet); no `getgroups`/
+`setgroups` (phase 15); a signal interrupts every waiting thread of the
+process, not just one.
+
+Rejected: a separate handle table for IPC objects (two namespaces to pass
+and inherit); delivering signals by interrupting kernel code (every wait
+would need unwinding); `pipe` now (ports do the job until the POSIX layer
+in phase 17).

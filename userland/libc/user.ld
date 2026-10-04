@@ -10,6 +10,7 @@ PHDRS
     text   PT_LOAD FILEHDR PHDRS FLAGS(5);
     rodata PT_LOAD FLAGS(4);
     data   PT_LOAD FLAGS(6);
+    tls    PT_TLS FLAGS(4);
 }
 
 SECTIONS
@@ -33,6 +34,10 @@ SECTIONS
     .gnu.hash : { *(.gnu.hash) } :rodata
 
     . = ALIGN(0x1000);
+    /* Thread-local variables: the template each thread's copy is made from
+       (the library finds it through the PT_TLS header). */
+    .tdata : { *(.tdata .tdata.*) } :data :tls
+    .tbss : { *(.tbss .tbss.*) *(.tcommon) } :data :tls
     .data.rel.ro : { *(.data.rel.ro .data.rel.ro.*) } :data
     .dynamic : { *(.dynamic) } :data
     .got : { *(.got .got.plt) } :data

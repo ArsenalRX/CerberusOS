@@ -81,6 +81,8 @@ syscall_entry:
     sti                         ; system calls are preemptible
     call syscall_dispatch
     cli
+    test eax, eax               ; nonzero: every register must come back (sigreturn)
+    jnz .return_by_iret
     POP_REGS
     add rsp, 16
     ; syscall_dispatch has checked that rip is a canonical user address and
@@ -90,3 +92,8 @@ syscall_entry:
     mov rsp, [rsp + 24]         ; user stack; interrupts are off until sysret
     swapgs
     o64 sysret
+.return_by_iret:
+    POP_REGS
+    add rsp, 16
+    swapgs
+    iretq

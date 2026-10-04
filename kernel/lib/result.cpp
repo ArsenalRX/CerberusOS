@@ -33,6 +33,7 @@ const char* error_name(Error e) {
     case Error::Loop: return "too-many-links";
     case Error::CrossDevice: return "cross-device";
     case Error::NoDevice: return "no-device";
+    case Error::Pipe: return "peer-closed";
     }
     return "unknown";
 }

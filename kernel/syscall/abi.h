@@ -47,6 +47,17 @@ struct Dirent {
     char name[256];             // NUL-terminated
 };
 
+// sysinfo(): what the machine is doing. Nothing here is a kernel address.
+struct SysInfo {
+    u64 uptime_ms;
+    u64 mem_total, mem_free;            // bytes of usable and of free memory
+    u64 cache_pages, cache_hits, cache_misses;      // the file cache
+    u64 ticks, idle_ticks;              // timer ticks over all CPUs, and those spent idle
+    u64 context_switches;
+    u32 cpus, threads, processes;
+    u32 page_size;
+};
+
 // mount() flags (vfs::MNT_* values).
 constexpr u32 MS_RDONLY = 1, MS_NOEXEC = 2, MS_NOSUID = 4, MS_NODEV = 8;
 

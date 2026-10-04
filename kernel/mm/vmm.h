@@ -98,6 +98,9 @@ public:
     Result<void> protect(vaddr_t virt, usize size, u32 flags);
     // Physical address behind a virtual one. NotFound if unmapped.
     Result<paddr_t> translate(vaddr_t virt) const;
+    // Physical address behind `virt` if it lies in a device mapping (which
+    // is how shared memory is mapped); NotFound otherwise.
+    Result<paddr_t> device_phys(vaddr_t virt);
 
     // --- VMA-level operations (what mmap/munmap/mprotect syscalls use) ---
     // Reserves `len` bytes (rounded up to pages) of zero-filled memory with

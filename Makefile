@@ -262,7 +262,8 @@ UBUILD    := $(BUILD)/user
 # global guard that the start-up code seeds from the kernel's AT_RANDOM bytes.
 UCXXFLAGS := -std=c++20 -ffreestanding -fno-exceptions -fno-rtti -fno-threadsafe-statics \
              -fno-use-cxa-atexit -fno-builtin -nostdinc++ \
-             -fPIE -fvisibility=hidden -fstack-protector-strong -mstack-protector-guard=global \
+             -fPIE -fvisibility=hidden -ftls-model=local-exec \
+             -fstack-protector-strong -mstack-protector-guard=global \
              -fstack-clash-protection \
              -Wall -Wextra -Werror=return-type -O2 -g -MMD -MP \
              -I$(USER_DIR)/libc/include -I$(GEN)

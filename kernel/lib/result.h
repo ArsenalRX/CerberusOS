@@ -37,6 +37,7 @@ enum class Error : u8 {
     Loop,               // too many symbolic links
     CrossDevice,        // rename across file systems
     NoDevice,           // no such device, or the device does not support it
+    Pipe,               // the other end of a channel is closed
 };
 
 // Short lowercase name for logs ("no-memory", "invalid", ...).

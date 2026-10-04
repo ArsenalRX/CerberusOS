@@ -312,7 +312,8 @@ void page_fault(InterruptFrame* f, void*) {
         // A user program touched memory it has not been given yet (demand
         // paging, copy-on-write) or is not allowed to touch at all.
         if (user_addr && current_space()->handle_fault(addr, f->error)) return;
-        user_exception(f);
+        user_exception(f);      // ends the process, or returns with a signal handler set up
+        return;
     }
     if (user_addr) {
         // Ring 0 may touch user memory only inside the user-copy routines;
@@ -685,6 +686,20 @@ Result<vaddr_t> AddressSpace::mmap_device(paddr_t phys, usize len, u32 prot) {
     lock_.unlock();
     if (err != Error::None) return err;
     return base + offset;
+}
+
+Result<paddr_t> AddressSpace::device_phys(vaddr_t virt) {
+    lock_.lock();
+    Result<paddr_t> r = Error::NotFound;
+    for (const Vma* v = vmas_; v; v = v->next) {
+        if (virt < v->start) break;
+        if (virt < v->end) {
+            if (v->kind == VmaKind::Device) r = v->phys + (virt - v->start);
+            break;
+        }
+    }
+    lock_.unlock();
+    return r;
 }
 
 Result<void> AddressSpace::munmap(vaddr_t addr, usize len) {

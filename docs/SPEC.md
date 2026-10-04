@@ -996,17 +996,18 @@ SYSCALL(36,  signal,      (int sig, void* handler))
 SYSCALL(37,  sigreturn,   (void))
 SYSCALL(38,  yield,       (void))
 SYSCALL(39,  sleep_ms,    (uint64_t ms))
-SYSCALL(40,  thread_spawn,(void* entry, void* arg, void* stack))
+SYSCALL(40,  thread_spawn,(void* entry, void* arg, void* stack, void* tls))
 SYSCALL(41,  thread_exit, (int code))
 SYSCALL(42,  thread_join, (int tid, int* code))
 SYSCALL(43,  futex_wait,  (uint32_t* addr, uint32_t val, uint64_t timeout_ms))
 SYSCALL(44,  futex_wake,  (uint32_t* addr, int count))
 
-SYSCALL(50,  port_create, (const char* name))
+SYSCALL(50,  port_create, (const char* name, int mode))
 SYSCALL(51,  port_connect,(const char* name))
 SYSCALL(52,  port_send,   (int port, const void* msg, size_t len, const int* fds, int nfds))
 SYSCALL(53,  port_recv,   (int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms))
-SYSCALL(54,  port_close,  (int port))
+SYSCALL(54,  port_close,  (int port))          // not implemented: close() closes a port
+SYSCALL(58,  port_peer,   (int port, struct port_peer* out))   // added in phase 11
 SYSCALL(55,  shm_create,  (size_t size))
 SYSCALL(56,  shm_map,     (int handle, int prot))
 SYSCALL(57,  shm_unmap,   (void* addr))
@@ -1018,6 +1019,7 @@ SYSCALL(63,  sysinfo,     (struct sysinfo* out))
 SYSCALL(64,  reboot,      (int cmd))
 SYSCALL(65,  log,         (int level, const char* msg))
 SYSCALL(66,  getrandom,   (void* buf, size_t n, unsigned flags))
+SYSCALL(67,  time_us,     (void))                               // added in phase 11
 
 // files, part 2 (added in phase 9, 2026-10-04; docs/DECISIONS.md)
 SYSCALL(120, openat,      (int dirfd, const char* path, int flags, int mode))
@@ -1030,6 +1032,7 @@ SYSCALL(126, mount,       (const char* source, const char* target, const char* t
 SYSCALL(127, umount,      (const char* target))
 SYSCALL(128, lstat,       (const char* path, struct stat* out))
 SYSCALL(129, chown,       (const char* path, int uid, int gid))
+SYSCALL(130, set_tls,     (void* base))                         // added in phase 11
 
 // v2: networking (phase 14)
 SYSCALL(70,  socket,      (int domain, int type, int protocol))

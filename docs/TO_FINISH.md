@@ -27,14 +27,15 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: phase 11 (IPC and the window-server foundation)
+## Right now: phase 12 (Pane, the window server as a user program)
 
-Version **0.0.5e** (phase 10, drivers) was released on 2026-10-04. The tree
-is on `0.0.5f` development builds. The owner said on 2026-10-04 to "finish
+Version **0.0.5f** (phase 11, IPC) was released on 2026-10-04. The tree
+is on `0.0.5g` development builds. The owner said on 2026-10-04 to "finish
 all phases": do not stop to ask between phases; finish, verify and release
 each, then go on.
 
-- Phase 11 also takes file-backed `mmap` (moved from phase 9).
+- Phase 11 left-overs: demand-paged and shared file mappings, a
+  non-blocking `port_send`, signal masks, passing ports through ports.
 - Phase 10 left-overs: MSI-X (NVMe and virtio-blk are polled), keyboard
   LEDs, layouts other than US.
 - **Minor page fault is over budget** (docs/BENCH.md). Profile it first.
@@ -132,10 +133,10 @@ Spec v2 (2026-10-03) added security and performance rows to phases 4–13
 only when its §5 criteria *and* its §5A rows are demonstrated with real
 output.
 
-- [ ] **Phase 11 — IPC and window-server foundation.** Ports, shared memory,
-  signals, futex, userland threading. `port`/`shm` self-tests.
-  **+v2:** port access control with kernel-supplied sender identity; bounded
-  queues; event multiplexing (`event_create/ctl/wait`).
+- [x] **Phase 11 — IPC and window-server foundation.** Done 2026-10-04
+  (0.0.5f): ports, shared memory, signals, futex, threads in programs,
+  event queues, private file `mmap`. Tests `user-ipc`, `user-threads`,
+  `user-signals`, `user-events`, `user-mmap`.
 - [ ] **Phase 12 — Pane: window server as a userland process.** Move the
   compositor out of the kernel behind the port protocol (`docs/SPEC.md` §9);
   per-window shm buffers, `libpane`. The kernel-hosted desktop is the

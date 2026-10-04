@@ -22,6 +22,47 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5f — 2026-10-04 (security release)
+
+Spec phase 11, programs talking to each other, is complete.
+
+### Security
+- A named port has an owner and permission bits like a file; a program
+  without write permission cannot connect to it (tested as user 1000).
+- The receiver of a connection learns the other side's process, user and
+  group from the kernel, not from the message, so it cannot be faked.
+- Message sizes, descriptors per message and queue lengths are limited; a
+  sender that finds a queue full waits, and nothing is dropped.
+- A signal can be sent only to a process of the same user (root: any).
+- A process can give up root (`setuid`, `setgid`) and cannot take it back.
+- Every thread of a program shares its open files; a file being used by one
+  thread stays valid while another closes it.
+
+### Added
+- **Ports**: named message channels between programs. Whole messages of up
+  to 64 KiB, in order, which can carry open files and shared memory.
+- **Shared memory** that several programs map at once.
+- **Signals**: SIGKILL, SIGTERM, SIGSEGV (also SIGILL, SIGFPE), SIGCHLD,
+  SIGUSR1/2, with handlers in programs; a waiting call returns EINTR.
+- **Threads in programs**: `pthread_create`/`join`, mutexes and condition
+  variables, thread-local variables (`__thread`, and `errno` is one).
+- **Futexes**: locks that enter the kernel only to wait, also between
+  processes through shared memory.
+- **Event queues** (`event_create`/`ctl`/`wait`): one wait over ports,
+  timers and child exit. A waiting server uses no CPU and wakes about
+  50 microseconds after a message is sent.
+- `mmap` of a file (a private copy), `mprotect`, `kill`, `getppid`,
+  `getuid` and friends, `umask`, `sysinfo`, `time_us`: 74 system calls now.
+- Desktop: the mouse cursor turns into a two-headed arrow over a window's
+  edges and corners, and they are easier to grab, so resizing a window is
+  discoverable.
+- Programs: `ipctest`, `threadtest`, `sigtest`, `eventtest`, `mmaptest`.
+
+### Changed
+- `sleep_ms` and `waitpid` return early (EINTR) when a signal arrives.
+- A program's fault is delivered as a signal first; only an unhandled one
+  ends the program.
+
 ## 0.0.5e — 2026-10-04 (security release)
 
 Spec phase 10, drivers, is complete.

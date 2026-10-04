@@ -5,6 +5,7 @@
 #include <drivers/input.h>
 #include <drivers/refclock.h>
 #include <fs/dev.h>
+#include <ipc/object.h>
 #include <lib/string.h>
 #include <sched/sync.h>
 
@@ -45,13 +46,15 @@ Result<usize> in_read(u32 minor, u64, void* buf, usize n) {
         }
         d.lock.unlock();
         if (done) return done * sizeof(input::Event);
-        d.available.down();
+        if (!d.available.down_interruptible()) return Error::Interrupted;
     }
 }
 
 const CharDeviceOps g_ops = {in_open, in_read, nullptr, nullptr};
 
 } // namespace
+
+bool input_pending(u32 dev) { return dev <= 1 && __atomic_load_n(&g_devices[dev].count, __ATOMIC_RELAXED) != 0; }
 
 void input_init() { dev_register_char(dev::INPUT, &g_ops); }
 
@@ -69,4 +72,5 @@ void input_report(u32 dev, u16 type, u16 code, i32 value, u32 unicode, u16 mods)
     d.lock.unlock();
     // The count may run ahead of the ring after drops; it need not run away.
     if (__atomic_load_n(&d.available.count, __ATOMIC_RELAXED) < (i64)RING) d.available.up();
+    poll_wake();
 }

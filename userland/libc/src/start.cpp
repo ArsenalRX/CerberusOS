@@ -5,14 +5,14 @@
 // in data, such as tables of strings). Until that is done this code must not
 // touch any such pointer; it uses only its arguments and addresses the
 // compiler computes relative to the instruction pointer.
-#include <cerberus.h>
+#include "internal.h"
 
 extern "C" {
 
 int main(int argc, char** argv, char** envp);
 
 char** environ;
-int errno;
+__thread int errno;
 
 // Stack-protector guard (the compiler's -mstack-protector-guard=global).
 // Set from the 16 random bytes the kernel supplies before any protected
@@ -56,6 +56,13 @@ __attribute__((noreturn, no_stack_protector)) void __libc_start(uint64_t* sp) {
         if ((r->info & 0xFFFFFFFF) != R_X86_64_RELATIVE) continue;     // the only kind a static PIE needs
         *(uint64_t*)(base + r->offset) = base + (uint64_t)r->addend;
     }
+
+    // Thread-local variables (errno among them) for the first thread.
+    __tls_locate(base);
+    size_t tls_size = (__tls_area_size() + 4095) & ~4095ul;
+    long area = syscall6(SYS_mmap, 0, (long)tls_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (area < 0 && area > -4096) exit(127);
+    syscall6(SYS_set_tls, (long)__tls_init((void*)area), 0, 0, 0, 0, 0);
 
     if (random) {
         uint64_t guard = 0;

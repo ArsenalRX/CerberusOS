@@ -260,6 +260,8 @@ void schedule() {
     // one, not lazily.
     if (prev->fpu && prev->state != ThreadState::Zombie) fpu_save(prev->fpu);
     if (next->fpu) fpu_restore(next->fpu);
+    // The FS base register always holds the running thread's TLS pointer.
+    if (next->fs_base != prev->fs_base) wrmsr(msr::FS_BASE, next->fs_base);
     // Each thread carries the address space it was running in; reload CR3
     // only when it differs from what this CPU has loaded.
     prev->space = pc->space;
@@ -485,6 +487,37 @@ void WaitQueue::wake_all() {
 
 void sched_block_locked(WaitQueue& wq) { block_current(&wq, 0); }
 
+WaitResult sched_block_interruptible_locked(WaitQueue* wq, u64 ticks) {
+    Thread* t = this_cpu()->current;
+    if (t->interrupt_pending) return WaitResult::Interrupted;
+    t->interruptible = true;
+    t->interrupted = false;
+    block_current(wq, ticks ? g_ticks + ticks : 0);
+    t->interruptible = false;
+    if (t->interrupted) return WaitResult::Interrupted;
+    return t->timed_out ? WaitResult::Timeout : WaitResult::Woken;
+}
+
+void thread_interrupt_locked(Thread* t) {
+    t->interrupt_pending = true;
+    if (t->interruptible && (t->state == ThreadState::Blocked || t->state == ThreadState::Sleeping)) {
+        if (t->waiting_on) wq_remove(t->waiting_on, t);
+        sleep_remove(t);
+        t->interrupted = true;
+        t->interruptible = false;
+        make_ready(t);
+    } else if (t->state == ThreadState::Running && t->cpu != this_cpu()->id) {
+        smp_send_resched(t->cpu);
+    }
+}
+
+WaitResult thread_sleep_interruptible(u64 ticks) {
+    u64 irq = sched_lock();
+    WaitResult r = sched_block_interruptible_locked(nullptr, ticks ? ticks : 1);
+    sched_unlock(irq);
+    return r;
+}
+
 bool sched_block_locked_ticks(WaitQueue& wq, u64 ticks) {
     Thread* self = this_cpu()->current;
     block_current(&wq, g_ticks + (ticks ? ticks : 1));
@@ -503,12 +536,20 @@ Result<Thread*> kthread_create(void (*fn)(void*), void* arg, const char* name, u
 }
 
 [[noreturn]] void thread_exit(int code) {
+    // A user thread leaves its process's address space first: once it is
+    // counted out below, another thread may tear that space down.
+    if (thread_current()->user) vmm_kernel().activate();
     interrupts_disable();
     g_lock.acquire();
     Thread* t = this_cpu()->current;
     ASSERT_ALWAYS(!t->is_idle);
     t->exit_code = code;
     t->state = ThreadState::Zombie;
+    if (t->user) {
+        t->user = false;
+        t->process->live_threads--;
+        sched_wake_all_locked(t->process->exit_wait);
+    }
     sched_wake_all_locked(t->joiners);
     if (t->detached) {
         t->next = g_dead;
@@ -527,6 +568,46 @@ int thread_join(Thread* t) {
     int code = t->exit_code;
     free_thread(t);
     return code;
+}
+
+Result<int> thread_join_user(u32 tid) {
+    Thread* self = thread_current();
+    u64 irq = sched_lock();
+    Thread* t = nullptr;
+    for (Thread* o = self->process->threads; o; o = o->proc_next)
+        if (o->id == tid) t = o;
+    if (!t || t == self || t->detached || t->joining) {
+        sched_unlock(irq);
+        return t ? Error::Invalid : Error::NoProcess;
+    }
+    t->joining = true;
+    while (t->state != ThreadState::Zombie) {
+        if (sched_block_interruptible_locked(&t->joiners, 0) == WaitResult::Interrupted) {
+            t->joining = false;
+            sched_unlock(irq);
+            return Error::Interrupted;
+        }
+    }
+    sched_unlock(irq);
+    int code = t->exit_code;
+    free_thread(t);
+    return code;
+}
+
+void thread_restore_fpu(const u8* image) {
+    u64 irq = interrupts_save();
+    Thread* t = thread_current();
+    ASSERT_ALWAYS(t->fpu);
+    memcpy(t->fpu, image, FPU_STATE_SIZE);
+    fpu_restore(t->fpu);
+    interrupts_restore(irq);
+}
+
+void thread_set_fs_base(u64 base) {
+    u64 irq = interrupts_save();
+    thread_current()->fs_base = base;
+    wrmsr(msr::FS_BASE, base);
+    interrupts_restore(irq);
 }
 
 void thread_detach(Thread* t) {
@@ -650,6 +731,43 @@ Result<Process*> process_create(const char* name, AddressSpace* existing) {
     return p;
 }
 
+void process_release_threads(Process* p, Thread* keep) {
+    Process* k = &g_kernel_process;
+    u64 irq = sched_lock();
+    Thread* t = p->threads;
+    p->threads = nullptr;
+    while (t) {
+        Thread* next = t->proc_next;
+        if (t == keep) {
+            t->proc_next = p->threads;
+            p->threads = t;
+        } else {
+            p->thread_count--;
+            t->process = k;
+            t->proc_next = k->threads;
+            k->threads = t;
+            k->thread_count++;
+            if (!t->detached) {
+                // Nobody is left to join it.
+                t->detached = true;
+                if (t->state == ThreadState::Zombie) {
+                    t->next = g_dead;
+                    g_dead = t;
+                    sched_wake_one_locked(g_reaper_wq);
+                }
+            }
+        }
+        t = next;
+    }
+    sched_unlock(irq);
+}
+
+Process* process_find_locked(u32 pid) {
+    for (Process* p = g_processes; p; p = p->next)
+        if (p->pid == pid) return p;
+    return nullptr;
+}
+
 void process_destroy(Process* p) {
     ASSERT_ALWAYS(p != &g_kernel_process && p->thread_count == 0);
     u64 irq = sched_lock();
@@ -758,6 +876,7 @@ SchedStats sched_stats() {
         s.cpus++;
     }
     s.threads = g_thread_count;
+    for (Process* p = g_processes; p; p = p->next) s.processes++;
     sched_unlock(irq);
     return s;
 }

@@ -78,7 +78,9 @@ constexpr int SHADOW_PAD = 22;
 constexpr int SHADOW_OFF = 5;
 constexpr int SHADOW_BLUR = 9;
 constexpr int PANEL_H = 40;
-constexpr int RESIZE_BAND = 6;
+constexpr int RESIZE_BAND = 7;      // how far outside a window's edge the mouse still grabs it
+constexpr int RESIZE_INSIDE = 4;    // and how far inside
+constexpr int RESIZE_CORNER = 20;   // this close to a corner along an edge, both edges move
 constexpr int BTN_W = 46;           // caption buttons: Windows-style, full title-bar height
 constexpr int MENU_W = 260;
 constexpr int MENU_ITEM_H = 38;
@@ -176,7 +178,11 @@ struct State {
 } g;
 
 // ------------------------------------------------------------- cursor art --
-constexpr int CURSOR_W = 12, CURSOR_H = 19;
+// Every shape lives in a 19x19 box. The arrow points with its top-left
+// pixel; the four resize shapes (drawn by build_cursor) with their centre.
+enum CursorShape { CUR_ARROW, CUR_RESIZE_H, CUR_RESIZE_V, CUR_RESIZE_NWSE, CUR_RESIZE_NESW, CUR_COUNT };
+constexpr int CURSOR_W = 19, CURSOR_H = 19;
+constexpr int CURSOR_ART_W = 12;
 const char* const CURSOR_ART[CURSOR_H] = {
     "#           ",
     "##          ",
@@ -198,8 +204,9 @@ const char* const CURSOR_ART[CURSOR_H] = {
     "       ##   ",
     "            ",
 };
-u32 g_cursor_px[CURSOR_W * CURSOR_H];
-Surface g_cursor;
+u32 g_cursor_px[CUR_COUNT][CURSOR_W * CURSOR_H];
+int g_cursor_shape = CUR_ARROW;
+inline int cursor_hot() { return g_cursor_shape == CUR_ARROW ? 0 : CURSOR_W / 2; }
 
 // ------------------------------------------------------------ allocation --
 // Pixel buffers come from the kernel heap. Buffers this size take its large
@@ -258,7 +265,7 @@ Rect menu_rect() {
     int h = MENU_COUNT * theme::MENU_ITEM_H + 16;
     return {8, g.H - theme::PANEL_H - h - 8, theme::MENU_W, h};
 }
-Rect cursor_rect(int x, int y) { return {x, y, CURSOR_W, CURSOR_H}; }
+Rect cursor_rect(int x, int y) { return {x - cursor_hot(), y - cursor_hot(), CURSOR_W, CURSOR_H}; }
 
 // Title-bar buttons, right to left: close, maximise, minimise.
 Rect button_rect(const Window& w, int index) {
@@ -769,10 +776,12 @@ inline void copy_to_fb(int x, int y, int w) {
 
 // The cursor blended over the back buffer, written to the screen.
 void draw_cursor_on_fb() {
-    Rect cr = cursor_rect(g.mx, g.my).intersect({0, 0, g.W, g.H});
+    Rect whole = cursor_rect(g.mx, g.my);
+    Rect cr = whole.intersect({0, 0, g.W, g.H});
+    const u32* shape = g_cursor_px[g_cursor_shape];
     for (int y = cr.y; y < cr.bottom(); y++) {
         for (int x = cr.x; x < cr.right(); x++) {
-            u32 c = g_cursor_px[(y - g.my) * CURSOR_W + (x - g.mx)];
+            u32 c = shape[(y - whole.y) * CURSOR_W + (x - whole.x)];
             u32 under = g.back.row(y)[x];
             u8 a = alpha_of(c);
             present_px(x, y, a == 0 ? under : a == 255 ? c : mix(under, c | 0xFF000000u, a));
@@ -846,6 +855,21 @@ void move_cursor(int nx, int ny) {
     draw_cursor_on_fb();
 }
 
+void set_cursor_shape(int shape) {
+    if (shape == g_cursor_shape) return;
+    Rect c = cursor_rect(g.mx, g.my).intersect({0, 0, g.W, g.H});
+    g_cursor_shape = shape;
+    for (int y = c.y; y < c.bottom(); y++) copy_to_fb(c.x, y, c.w);
+    draw_cursor_on_fb();
+}
+
+// The cursor that shows which way an edge or corner can be dragged.
+int resize_shape(u8 edges) {
+    bool horizontal = edges & 3, vertical = edges & 12;
+    if (horizontal && vertical) return ((edges & 1) != 0) == ((edges & 4) != 0) ? CUR_RESIZE_NWSE : CUR_RESIZE_NESW;
+    return horizontal ? CUR_RESIZE_H : vertical ? CUR_RESIZE_V : CUR_ARROW;
+}
+
 struct Hit {
     enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu } what = Nothing;
     int win = -1;
@@ -883,10 +907,17 @@ Hit hit_test(int x, int y) {
         if (!outer.contains(x, y)) continue;
         h.win = g.order[i];
         u8 edges = 0;
-        if (x < w.frame.x + theme::RESIZE_BAND) edges |= 1;
-        if (x >= w.frame.right() - theme::RESIZE_BAND) edges |= 2;
-        if (y < w.frame.y + theme::RESIZE_BAND) edges |= 4;
-        if (y >= w.frame.bottom() - theme::RESIZE_BAND) edges |= 8;
+        if (x < w.frame.x + theme::RESIZE_INSIDE) edges |= 1;
+        if (x >= w.frame.right() - theme::RESIZE_INSIDE) edges |= 2;
+        if (y < w.frame.y + theme::RESIZE_INSIDE) edges |= 4;
+        if (y >= w.frame.bottom() - theme::RESIZE_INSIDE) edges |= 8;
+        // Near a corner, an edge grab moves both edges: corners are easy to hit.
+        if (edges) {
+            bool near_left = x < w.frame.x + theme::RESIZE_CORNER, near_right = x >= w.frame.right() - theme::RESIZE_CORNER;
+            bool near_top = y < w.frame.y + theme::RESIZE_CORNER, near_bottom = y >= w.frame.bottom() - theme::RESIZE_CORNER;
+            if (edges & 12) edges |= near_left ? 1 : near_right ? 2 : 0;
+            if (edges & 3) edges |= near_top ? 4 : near_bottom ? 8 : 0;
+        }
         if (!w.maximised && edges) {
             int b = button_at(w, x, y);
             if (b < 0) {
@@ -999,9 +1030,15 @@ void on_release(int button) {
     }
     g.drag = Drag::None;
     g.drag_win = -1;
+    Hit h = hit_test(g.mx, g.my);
+    set_cursor_shape(h.what == Hit::Edge ? resize_shape(h.edges) : CUR_ARROW);
 }
 
 void on_motion() {
+    if (g.drag == Drag::None) {
+        Hit over = hit_test(g.mx, g.my);
+        set_cursor_shape(over.what == Hit::Edge ? resize_shape(over.edges) : CUR_ARROW);
+    }
     if (g.drag != Drag::None && g.drag_win >= 0 && g.windows[g.drag_win].used) {
         Window& w = g.windows[g.drag_win];
         int dx = g.mx - g.drag_sx, dy = g.my - g.drag_sy;
@@ -1208,13 +1245,50 @@ void build_wallpaper() {
 }
 
 void build_cursor() {
+    const u32 BLACK = rgba(0, 0, 0, 230), WHITE = rgb(255, 255, 255);
     for (int y = 0; y < CURSOR_H; y++) {
-        for (int x = 0; x < CURSOR_W; x++) {
+        for (int x = 0; x < CURSOR_ART_W; x++) {
             char c = CURSOR_ART[y][x];
-            g_cursor_px[y * CURSOR_W + x] = c == '#' ? rgba(0, 0, 0, 230) : c == 'o' ? rgb(255, 255, 255) : 0;
+            g_cursor_px[CUR_ARROW][y * CURSOR_W + x] = c == '#' ? BLACK : c == 'o' ? WHITE : 0;
         }
     }
-    g_cursor = Surface(g_cursor_px, CURSOR_W, CURSOR_H, CURSOR_W);
+    // The resize shapes: a white two-headed arrow through the centre along
+    // (dx, dy), then a black outline around it.
+    const int dirs[4][2] = {{1, 0}, {0, 1}, {1, 1}, {1, -1}};
+    for (int s = 0; s < 4; s++) {
+        u32* px = g_cursor_px[CUR_RESIZE_H + s];
+        int dx = dirs[s][0], dy = dirs[s][1];
+        bool diagonal = dx && dy;
+        int reach = diagonal ? 5 : 7, mid = CURSOR_W / 2;
+        auto put = [&](int x, int y) {
+            if (x >= 1 && y >= 1 && x < CURSOR_W - 1 && y < CURSOR_H - 1) px[y * CURSOR_W + x] = WHITE;
+        };
+        for (int t = -reach; t <= reach; t++) put(mid + t * dx, mid + t * dy);
+        for (int end = -1; end <= 1; end += 2) {
+            int tx = mid + end * reach * dx, ty = mid + end * reach * dy;
+            for (int a = 0; a <= 4; a++)
+                for (int b = 0; a + b <= 4; b++) {
+                    if (diagonal) {
+                        put(tx - end * a * dx, ty - end * b * dy);
+                    } else if (b <= a && a <= 3) {
+                        // a steps back from the tip, b steps to either side
+                        put(tx - end * a * dx + b * dy, ty - end * a * dy + b * dx);
+                        put(tx - end * a * dx - b * dy, ty - end * a * dy - b * dx);
+                    }
+                }
+        }
+        for (int y = 0; y < CURSOR_H; y++)
+            for (int x = 0; x < CURSOR_W; x++) {
+                if (px[y * CURSOR_W + x]) continue;
+                bool edge = false;
+                for (int oy = -1; oy <= 1; oy++)
+                    for (int ox = -1; ox <= 1; ox++) {
+                        int nx = x + ox, ny = y + oy;
+                        if (nx >= 0 && ny >= 0 && nx < CURSOR_W && ny < CURSOR_H && px[ny * CURSOR_W + nx] == WHITE) edge = true;
+                    }
+                if (edge) px[y * CURSOR_W + x] = BLACK;
+            }
+    }
 }
 
 } // namespace
