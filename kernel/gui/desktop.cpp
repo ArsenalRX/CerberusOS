@@ -250,7 +250,7 @@ Rect shadow_rect(const Window& w) {
 
 Rect panel_rect() { return {0, g.H - theme::PANEL_H, g.W, theme::PANEL_H}; }
 Rect work_area() { return {0, 0, g.W, g.H - theme::PANEL_H}; }
-Rect launcher_rect() { return {8, g.H - theme::PANEL_H + 6, 96, theme::PANEL_H - 12}; }
+Rect launcher_rect() { return {8, g.H - theme::PANEL_H + 6, 118, theme::PANEL_H - 12}; }
 Rect clock_rect() { return {g.W - 250, g.H - theme::PANEL_H, 250, theme::PANEL_H}; }
 Rect menu_rect() {
     int h = MENU_COUNT * theme::MENU_ITEM_H + 16;

@@ -15,7 +15,7 @@ cerberus> help
 !button left up
 !wait 0.5
 !screenshot build/desktop-2.png
-# Open the launcher menu (button at x=8..104, y=766..794).
+# Open the launcher menu (button at x=8..126, y=766..794).
 !mouseto 50 780
 !button left down
 !button left up
