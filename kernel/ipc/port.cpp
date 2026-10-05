@@ -74,8 +74,13 @@ void endpoint_destroy(KObject* self) {
     c->open[e->side] = false;
     bool last = !c->open[e->side ^ 1];
     // Nobody will read this side's inbox any more.
-    Message* dead = c->inbox[e->side].head;
-    c->inbox[e->side] = Queue{};
+    // (Only the messages go: senders may be asleep on the queue's wait list,
+    // and are woken just below to find the channel closed.)
+    Queue& mine = c->inbox[e->side];
+    Message* dead = mine.head;
+    mine.head = mine.tail = nullptr;
+    mine.count = 0;
+    mine.bytes = 0;
     // The peer may be waiting for a message from us, or for room.
     sched_wake_all_locked(c->inbox[e->side ^ 1].readers);
     sched_wake_all_locked(c->inbox[e->side].writers);

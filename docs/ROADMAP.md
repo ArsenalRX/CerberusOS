@@ -64,8 +64,12 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   windows, memory use, clock and date) and a launcher menu.
 - Windows with rounded corners, shadows and title-bar buttons; they can be
   moved, resized, stacked, minimised, maximised and closed with the mouse.
-- Four windows: Terminal (the kernel shell), System Monitor, Memory Map,
-  About.
+- Five windows: Terminal (the kernel shell), Settings, System Monitor,
+  Memory Map, About.
+- **Settings**: accent colours, three wallpapers, window corner shape,
+  RGB window borders (static, breathing, flashing, rainbow, chase), and
+  the screen resolution (in VirtualBox and QEMU).
+- A logo start button, a search box to find apps, Power off and Restart.
 - Keyboard shortcuts: Alt+Tab, Alt+F4, Super (menu), Super+T (terminal),
   Super+M (maximise).
 - PS/2 keyboard (every key, keypad, repeat) and mouse (with wheel).

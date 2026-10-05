@@ -25,14 +25,14 @@ cerberus> help
 !button left up
 !wait 0.5
 !screenshot build/desktop-2.png
-# Open the launcher menu (button at x=8..126, y=766..794).
-!mouseto 50 780
+# Open the launcher menu (the logo button at x=13..53, y=752..790).
+!mouseto 28 780
 !button left down
 !button left up
 !wait 0.5
 !screenshot build/desktop-3.png
-# Pick "System Monitor": menu at y=584..752, second item centre y~649.
-!mouseto 100 649
+# Pick "System Monitor": the list starts at y=488, 38 per item; third item.
+!mouseto 100 583
 !button left down
 !button left up
 !wait 1.5

@@ -31,6 +31,7 @@
 #include <mm/pmm.h>
 #include <arch/x86_64/power.h>
 #include <drivers/ahci.h>
+#include <drivers/bga.h>
 #include <drivers/fbdev.h>
 #include <drivers/input.h>
 #include <drivers/driver.h>
@@ -100,6 +101,7 @@ void init_thread(void*) {
     virtio_blk_register();
     ata_register();
     drivers_probe_all();
+    bga_init();
     fs_init();
     if (gui_init() && !gui_start_compositor()) kprintf("gui: could not start the compositor thread\n");
     // The first user process. It is not waited for: it runs for as long as

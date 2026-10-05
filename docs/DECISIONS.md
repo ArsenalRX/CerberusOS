@@ -1235,3 +1235,34 @@ Rejected: a separate handle table for IPC objects (two namespaces to pass
 and inherit); delivering signals by interrupting kernel code (every wait
 would need unwinding); `pipe` now (ports do the job until the POSIX layer
 in phase 17).
+
+---
+
+## 2026-10-04 — Desktop: Settings, launcher, resolution (owner request)
+
+The owner asked for a settings page (colours, three wallpapers, RGB borders
+with effects), a logo start button with app search, and a way to change the
+screen size. All of it is in the kernel-hosted desktop for now and moves
+with it to Pane and the Settings application (phases 12 and 13).
+
+- **Preferences** are one struct in memory (`g_prefs`). They are not saved:
+  the root file system is read-only and there is no per-user storage until
+  phase 15. They reset at boot.
+- **Border effects** are drawn per pixel as a ring between two rounded
+  rectangles; an animated effect redraws the affected windows about 30
+  times a second. With the effect off (the default) an idle desktop still
+  draws nothing.
+- **Resolution** changes go through the Bochs display interface (ports
+  0x1CE/0x1CF), which QEMU's standard VGA and VirtualBox's VBoxVGA/VBoxSVGA
+  provide. The adapter's whole video memory (PCI BAR 0, at most 64 MiB) is
+  mapped once. The driver only claims the adapter if the bootloader's
+  frame buffer lies inside that BAR and the adapter reports the mode the
+  bootloader set; real graphics cards keep the firmware's resolution until
+  there are native drivers (phase 19).
+- **Launcher**: applications are a table with keywords; search is a
+  case-insensitive substring match on both. Power off and Restart in the
+  menu sync the disks first.
+
+Rejected: saving preferences to `/tmp` (lost at reboot anyway, and would
+look like persistence); VBE BIOS calls for mode setting (need real mode or
+an emulator).

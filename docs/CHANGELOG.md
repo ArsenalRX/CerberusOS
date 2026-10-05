@@ -24,7 +24,8 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## 0.0.5f — 2026-10-04 (security release)
 
-Spec phase 11, programs talking to each other, is complete.
+Spec phase 11, programs talking to each other, is complete, and the desktop
+gained a Settings window, a new launcher and resolution switching.
 
 ### Security
 - A named port has an owner and permission bits like a file; a program
@@ -56,9 +57,30 @@ Spec phase 11, programs talking to each other, is complete.
 - Desktop: the mouse cursor turns into a two-headed arrow over a window's
   edges and corners, and they are easier to grab, so resizing a window is
   discoverable.
+- **Settings** (launcher, or search for it): nine accent colours; three
+  wallpapers (Nebula, Aurora, Ember); square, soft or round window corners;
+  floating or docked, glass or solid taskbar; 12- or 24-hour clock with or
+  without seconds.
+- **Window-border effects** in Settings: static, breathing, flashing,
+  rainbow and chase (colours running round the window), with a choice of
+  colour, thickness, speed, glow, and the focused window or all windows.
+- **Screen resolution** can be changed in Settings (800x600 to 1920x1080)
+  on the standard display adapter of VirtualBox and QEMU.
+- **A new launcher**: a "C" logo button in the corner, a search box on the
+  taskbar, and a menu with a search field (type to filter, Enter opens the
+  first match), coloured application icons, and Power off / Restart.
+- **A new taskbar**: a rounded bar floating clear of the screen edges, an
+  icon for each open window with a mark under the focused one, a memory
+  meter, and a bolder clock.
+- `resolution [<width> <height>]` in the shell shows or changes the screen
+  resolution from the keyboard.
+- `help` in the shell is grouped and gives each command one short line;
+  `help <command>` and `help tests` show more.
 - Programs: `ipctest`, `threadtest`, `sigtest`, `eventtest`, `mmaptest`.
 
 ### Changed
+- Taskbar buttons narrow to share the space when many windows are open or
+  the screen is small.
 - `sleep_ms` and `waitpid` return early (EINTR) when a signal arrives.
 - A program's fault is delivered as a signal first; only an unhandled one
   ends the program.

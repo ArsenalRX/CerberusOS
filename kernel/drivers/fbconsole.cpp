@@ -154,6 +154,19 @@ void fbconsole_enable() {
     fbconsole_clear();
 }
 
+void fbconsole_retarget(const FramebufferInfo& fb) {
+    if (!g.font || fb.bpp != 32) return;
+    g.fb = (u8*)fb.address;
+    g.width = fb.width;
+    g.height = fb.height;
+    g.pitch = fb.pitch;
+    g.cols = min(g.width / g.font->width, MAX_COLS);
+    g.rows = min(g.height / g.font->height, MAX_ROWS);
+    if (g.cx >= g.cols) g.cx = 0;
+    if (g.cy >= g.rows) g.cy = g.rows - 1;
+    g.all_dirty = true;
+}
+
 void fbconsole_set_colour(u32 fg, u32 bg) {
     g.fg = fg;
     g.bg = bg;

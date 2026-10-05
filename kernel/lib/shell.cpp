@@ -38,6 +38,7 @@ int cmd_test(int argc, char** argv);
 int cmd_idle(int argc, char** argv);
 int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
+int cmd_resolution(int argc, char** argv);
 int cmd_irqs(int argc, char** argv);
 int cmd_heapstat(int, char**);
 int cmd_ps(int, char**);
@@ -54,31 +55,75 @@ int cmd_panic(int, char**);
 int cmd_halt(int, char**);
 int cmd_reboot(int, char**);
 
+// The table `help` prints: in groups, each command with its arguments and
+// one short line. An entry without a function is a group heading.
 const ShellCommandEntry COMMANDS[] = {
-    {"help", "list commands", cmd_help},
-    {"ticks", "show the timer tick count and uptime", cmd_ticks},
-    {"mem", "print the boot memory map", cmd_mem},
-    {"sym", "sym <hex-address>: resolve an address to a symbol", cmd_sym},
-    {"test", "test <name|all> [args]: run a kernel self-test", cmd_test},
-    {"ps", "list threads: state, priority level, CPU time, switches", cmd_ps},
-    {"bench", "run the micro-benchmarks behind `make bench`", cmd_bench},
-    {"run", "run <path> [args]: start a user program and wait for it", cmd_run},
-    {"cd", "cd [dir]: change the shell's working directory (programs start there)", cmd_cd},
-    {"pwd", "print the shell's working directory", cmd_pwd},
-    {"mount", "mount: list mounted file systems (with arguments: run /bin/mount)", cmd_mount},
-    {"pci", "list PCI devices", cmd_pci},
-    {"drivers", "list drivers and how many devices each has attached", cmd_drivers},
-    {"idle", "idle hlt|spin: what the idle thread does (spin is a hypervisor workaround)", cmd_idle},
-    {"timermode", "timermode periodic|oneshot: APIC timer mode (diagnostic)", cmd_timermode},
-    {"heapstat", "kernel heap usage and outstanding allocations by call site", cmd_heapstat},
-    {"gui", "compositor statistics", cmd_gui},
-    {"irqs", "interrupt counts per vector", cmd_irqs},
-    {"panic", "trigger a kernel panic", cmd_panic},
-    {"runas", "runas <uid> <program> [args]: run a program as another user id", cmd_runas},
-    {"poweroff", "write everything to disk and power the machine off (ACPI)", cmd_poweroff},
-    {"halt", "halt the CPU", cmd_halt},
-    {"reboot", "reset the machine", cmd_reboot},
+    {"Files and programs", nullptr, nullptr, nullptr},
+    {"run", "<path> [args]", "start a program and wait for it", cmd_run},
+    {"runas", "<uid> <program> [args]", "start a program as another user", cmd_runas},
+    {"cd", "[dir]", "change the working directory", cmd_cd},
+    {"pwd", "", "print the working directory", cmd_pwd},
+    {"mount", "", "list mounted file systems", cmd_mount},
+
+    {"System", nullptr, nullptr, nullptr},
+    {"help", "[command|tests]", "this list, or more about one entry", cmd_help},
+    {"ticks", "", "uptime and the timer tick count", cmd_ticks},
+    {"ps", "", "list threads and their CPU time", cmd_ps},
+    {"mem", "", "the boot memory map", cmd_mem},
+    {"heapstat", "", "kernel heap usage", cmd_heapstat},
+    {"pci", "", "list PCI devices", cmd_pci},
+    {"drivers", "", "list drivers and their devices", cmd_drivers},
+    {"irqs", "", "interrupt counts", cmd_irqs},
+
+    {"Desktop", nullptr, nullptr, nullptr},
+    {"resolution", "[<width> <height>]", "show or change the screen resolution", cmd_resolution},
+    {"gui", "", "compositor statistics", cmd_gui},
+
+    {"Power", nullptr, nullptr, nullptr},
+    {"poweroff", "", "save everything and switch off", cmd_poweroff},
+    {"reboot", "", "restart the machine", cmd_reboot},
+    {"halt", "", "stop the CPU", cmd_halt},
+
+    {"Testing and diagnostics", nullptr, nullptr, nullptr},
+    {"test", "<name|all> [args]", "run a kernel self-test (help tests)", cmd_test},
+    {"bench", "", "run the micro-benchmarks", cmd_bench},
+    {"sym", "<hex-address>", "name the function at an address", cmd_sym},
+    {"idle", "hlt|spin", "what idle CPUs do", cmd_idle},
+    {"timermode", "periodic|oneshot", "APIC timer mode", cmd_timermode},
+    {"panic", "", "trigger a kernel panic (halts)", cmd_panic},
 };
+
+int cmd_resolution(int argc, char** argv) {
+    if (!gui_active()) {
+        kprintf("resolution: the desktop is not running\n");
+        return 1;
+    }
+    u32 w = 0, h = 0;
+    if (argc == 1) {
+        gui_screen_size(&w, &h);
+        kprintf("resolution: %ux%u\n", w, h);
+        return 0;
+    }
+    auto number = [](const char* s, u32* out) {
+        u32 v = 0;
+        if (!*s) return false;
+        for (; *s; s++) {
+            if (*s < '0' || *s > '9' || v > 100000) return false;
+            v = v * 10 + (u32)(*s - '0');
+        }
+        *out = v;
+        return true;
+    };
+    if (argc != 3 || !number(argv[1], &w) || !number(argv[2], &h)) {
+        kprintf("usage: resolution [<width> <height>]\n");
+        return 1;
+    }
+    if (!gui_request_resolution(w, h)) {
+        kprintf("resolution: this display cannot show %ux%u\n", w, h);
+        return 1;
+    }
+    return 0;
+}
 
 int cmd_irqs(int, char**) {
     for (unsigned v = 0; v < 256; v++) {
@@ -281,10 +326,33 @@ int cmd_timermode(int argc, char** argv) {
     return 0;
 }
 
-int cmd_help(int, char**) {
-    for (const auto& c : COMMANDS) kprintf("  %-8s %s\n", c.name, c.help);
-    kprintf("tests:\n");
-    for (usize i = 0; i < ktest_count(); i++) kprintf("  test %-8s %s\n", ktests()[i].name, ktests()[i].help);
+void help_line(const ShellCommandEntry& c) {
+    char left[40];
+    ksnprintf(left, sizeof left, "%s %s", c.name, c.args);
+    kprintf("  %-30s %s\n", left, c.help);
+}
+
+int cmd_help(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "tests") == 0) {
+        kprintf("Kernel self-tests (run one with: test <name>, or all with: test all)\n");
+        for (usize i = 0; i < ktest_count(); i++) kprintf("  %-10s %s\n", ktests()[i].name, ktests()[i].help);
+        return 0;
+    }
+    if (argc > 1) {
+        for (const auto& c : COMMANDS)
+            if (c.fn && strcmp(c.name, argv[1]) == 0) {
+                help_line(c);
+                return 0;
+            }
+        kprintf("help: no command called '%s' (a program? try: ls /bin)\n", argv[1]);
+        return 1;
+    }
+    for (const auto& c : COMMANDS) {
+        if (!c.fn) kprintf("\n%s\n", c.name);
+        else help_line(c);
+    }
+    kprintf("\nPrograms\n  Type a program's name to run it: ls, cat, cp, mkdir, hello, ipctest ...\n"
+            "  ls /bin lists them all. Add > file to save a program's output.\n");
     return 0;
 }
 
@@ -449,7 +517,7 @@ int split_args(char* line, char** argv, int max) {
         if (!argc) continue;
         bool found = false;
         for (const auto& c : COMMANDS) {
-            if (strcmp(c.name, argv[0]) == 0) {
+            if (c.fn && strcmp(c.name, argv[0]) == 0) {
                 found = true;
                 int rc = c.fn(argc, argv);
                 if (rc) kprintf("(exit %d)\n", rc);

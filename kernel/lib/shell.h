@@ -9,8 +9,9 @@ using ShellCommand = int (*)(int argc, char** argv);
 
 struct ShellCommandEntry {
     const char* name;
-    const char* help;
-    ShellCommand fn;
+    const char* args;           // its arguments, for `help`
+    const char* help;           // one short line
+    ShellCommand fn;            // null: a group heading in `help`
 };
 
 [[noreturn]] void shell_run();

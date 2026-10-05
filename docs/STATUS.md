@@ -53,23 +53,31 @@ performance are requirements; our own web browser is phase 15B (owner,
 
 ## Last verified
 
-All on 2026-10-04, on the 0.0.5e code.
+All on 2026-10-04, on the 0.0.5f code.
 
-- `make test` in QEMU/KVM, 4 CPUs: all **35** integration tests passed (the
-  30 of 0.0.5c plus `cerfs-nvme`, `cerfs-virtio`, `drivers`, `input`,
-  `poweroff`). The disk tests end with an independent check of the image
-  on the build machine (`mkfs.cerfs --check`).
-- `make fuzz` (60 s per harness): ELF loader 4.7 million mutated inputs, tar
-  reader 35 thousand, no crash; random system calls (now including the file
-  calls): 600 processes, up to 1.2 million calls; cerfs: 5,031 damaged disk
-  images mounted and exercised; the kernel still running after each.
-- `make bench`: recorded in docs/BENCH.md.
-- **VirtualBox 7.2.6 (Hyper-V backend), a temporary headless VM with 4 CPUs,
-  2 GiB, BIOS, a blank 128 MiB SATA disk**: booted; keyboard in scancode
-  set 2 (every shifted symbol typed correctly); `drivers`; `mkfs.cerfs -y`,
-  mount, an 8 MiB file written and verified; `test all` (10 tests) passed;
-  `poweroff` powered the VM off through ACPI. The SATA controller there has
-  no MSI, so the disk is polled.
+- `make test` in QEMU/KVM, 4 CPUs: all **41** integration tests passed (the
+  35 of 0.0.5e plus `user-ipc`, `user-threads`, `user-signals`,
+  `user-events`, `user-mmap`, `desktop-settings`). After that run only the
+  shell's `help` text changed; `keyboard`, `desktop`, `shell-tests` and
+  `user-ipc` were run again on the final build.
+- `user-ipc` was looped 16 times to chase one failure in a full run: it was
+  the test's own 50 ms timing check being 1 ms too strict (now 45 ms), not
+  the kernel.
+- `make fuzz` (60 s per harness): ELF loader 4.3 million mutated inputs, tar
+  reader 26 thousand, no crash; random system calls (now including the
+  phase 11 calls): 600 processes, up to 1.2 million calls; the kernel still
+  running after each.
+- `make bench`: not re-run for 0.0.5f; docs/BENCH.md is from 0.0.5c. New
+  figures from the tests: 100,000 port messages in 68-88 ms; event wake-up
+  53 us (median) after a send; 0 busy ticks during a 1 s `event_wait`.
+- **VirtualBox 7.2.6 (Hyper-V backend), the VM "cerberus-check" with 4
+  CPUs, 2 GiB, VBoxVGA**: booted; `ipctest` (4 runs), `threadtest`,
+  `sigtest`, `mmaptest` passed; `eventtest` fails its 1 ms wake-up limit
+  there (1.6 ms median; interrupts between CPUs are slow on that backend);
+  the display adapter was found (32 MiB) and `resolution 1280 720`
+  switched the screen; the launcher opened with Super and found Settings by
+  typing. Mouse-driven parts of Settings were tested in QEMU only
+  (VBoxManage cannot move the mouse).
 - Not run this session: UEFI boot, software emulation (TCG), a `DEBUG=0`
   build (last checked on 0.5.0), the fatal-error tests on VirtualBox, a
   power cut on VirtualBox (done in QEMU only), mouse dragging on VirtualBox
@@ -184,8 +192,17 @@ All on 2026-10-04, on the 0.0.5e code.
     rounded corners, cached shadows, title bars with close/maximise/
     minimise, move and resize by mouse (the cursor changes shape over
     edges and corners since 0.0.5f), stacking, software cursor.
-  - Panel: launcher button + menu, task buttons, RAM %, clock and date.
-  - Windows: Terminal (the kernel shell), About, System Monitor, Memory Map.
+  - Panel: a floating rounded bar (or docked): logo launcher button, search
+    box, task buttons with app icons (which narrow to fit), a memory meter,
+    clock and date. Launcher menu with a search field, app
+    list, Power off and Restart (0.0.5f).
+  - Windows: Terminal (the kernel shell), About, System Monitor, Memory
+    Map, Settings.
+  - Settings (0.0.5f): accent colour, three wallpapers, corner shape,
+    taskbar and clock options; window-border effects (static, breathing,
+    flashing, rainbow, chase; colour, width, speed, glow); screen
+    resolution through `kernel/drivers/bga.cpp` where the adapter has the
+    Bochs interface. Preferences are not saved across a restart.
   - Hotkeys: Alt+Tab, Alt+F4, Super (on release, alone), Super+T, Super+M.
   - Windows-style caption buttons; anti-aliased rounded corners (0.0.5b).
   - Terminal scrollback of 1,000 lines: mouse wheel, Shift+Page Up/Down,

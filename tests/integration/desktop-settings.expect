@@ -1,0 +1,79 @@
+# The launcher's search and the Settings window (0.0.5g): typing in the
+# search box finds an application; Settings changes the accent colour, the
+# wallpaper and the window-border effect; the screen resolution changes and
+# changes back, with the desktop and the shell still working at each size.
+# Coordinates assume the 1280x800 test display and the Settings window
+# opening centred (frame at 290,92, 700x560).
+bga: display adapter
+gui: desktop up at 1280x800
+cerberus kernel shell
+# Click the taskbar's search box, type, and take the first match with Enter.
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.5
+!key set
+!wait 1
+!screenshot build/settings-1.png
+# Appearance: the Aurora wallpaper and the teal accent.
+!mouseto 680 292
+!button left down
+!button left up
+!mouseto 769 185
+!button left down
+!button left up
+# Window borders: the Chase effect, 3 pixels wide.
+!mouseto 370 193
+!button left down
+!button left up
+!mouseto 510 223
+!button left down
+!button left up
+!mouseto 636 395
+!button left down
+!button left up
+!wait 0.7
+!screenshot build/settings-2.png
+# Display: down to 1024x768.
+!mouseto 340 233
+!button left down
+!button left up
+!mouseto 634 215
+!button left down
+!button left up
+!wait 1.5
+gui: resolution changed to 1024x768
+!screenshot build/settings-3.png
+# The terminal still takes input at the new size.
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 1
+ticks=
+# And back up to 1280x800.
+!mouseto 600 107
+!button left down
+!button left up
+!mouseto 864 215
+!button left down
+!button left up
+!wait 1.5
+gui: resolution changed to 1280x800
+!screenshot build/settings-4.png
+!mouseto 120 400
+!button left down
+!button left up
+!key gui
+!wait 1
+frames
+# The same from the keyboard: the shell's `resolution` command.
+!key resolution 1440 900
+!wait 1.5
+gui: resolution changed to 1440x900
+!key resolution
+!wait 1
+resolution: 1440x900
+!key resolution 99 99
+!wait 1
+resolution: this display cannot show 99x99

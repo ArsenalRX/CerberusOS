@@ -17,6 +17,9 @@ bool fbconsole_ready();
 // clears the screen and resumes (used for panic output).
 void fbconsole_disable();
 void fbconsole_enable();
+// The screen changed shape (a new resolution): draw to it from now on.
+// Nothing is painted until the console is enabled.
+void fbconsole_retarget(const FramebufferInfo& fb);
 void fbconsole_putc(char c);
 // Paints everything written since the last flush. Output is batched (at most
 // one repaint per ~20 ms during bursts); call this before blocking or halting.

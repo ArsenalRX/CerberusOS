@@ -39,4 +39,10 @@ struct GuiStats {
     u32 windows;
 };
 GuiStats gui_stats();
+// Asks the compositor to change the screen resolution (it does so on its
+// next pass). False if the display adapter cannot show that size. The
+// Settings window offers the same thing.
+bool gui_request_resolution(u32 width, u32 height);
+// The size of the desktop now.
+void gui_screen_size(u32* width, u32* height);
 void gui_reset_worst();

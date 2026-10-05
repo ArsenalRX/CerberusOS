@@ -5,7 +5,7 @@ cerberus kernel shell
 !key help
 !wait 1
 cerberus> help
-  help     list commands
+  help [command|tests]
 !key sym 0xffffffff80001000
 !wait 1
 cerberus> sym 0xffffffff80001000

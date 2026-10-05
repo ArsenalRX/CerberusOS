@@ -336,7 +336,7 @@ on Cerberus and a Spec application with windows runs on the desktop.
 - Has a built-in terminal shell that runs programs by name, with output
   redirection, system information and self-tests; the terminal scrolls back
   1,000 lines.
-- Has the security protections listed above, checked by 40 automated tests
+- Has the security protections listed above, checked by 41 automated tests
   and fuzzing.
 
 It cannot yet use the network, play sound, use USB, have user accounts,

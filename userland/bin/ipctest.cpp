@@ -249,7 +249,9 @@ static int test_futex() {
     start = time_ms();
     if (futex_wait(word, 5, 50) != -1 || errno != ETIMEDOUT) return fail("futex_wait timeout");
     uint64_t waited = time_ms() - start;
-    if (waited < 50 || waited > 500) return fail("futex_wait timeout length");
+    // The wait is counted in timer ticks and measured in whole milliseconds
+    // of another clock: allow for the rounding of both.
+    if (waited < 45 || waited > 500) return fail("futex_wait timeout length");
     if (futex_wake(word, 1) != 0) return fail("futex_wake with nobody waiting");
     shm_unmap(s);
     close(shm);
