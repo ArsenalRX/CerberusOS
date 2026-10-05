@@ -1,0 +1,26 @@
+# Clipboard (0.0.5h): dragging over the terminal selects text and copies
+# it; Ctrl+V pastes it back as input. The terminal frame is 56,56 740x470
+# (content from 57,89); its text starts at 63,95 in 8x16 cells. The second
+# line printed is "init: started as pid 1" at y=135; dragging from the
+# start of "started" (col 6) to the end of "pid" (col 17) selects
+# "started as pid", and "echo " + paste + Enter echoes it.
+gui: desktop up at 1280x800
+cerberus kernel shell
+!mouseto 112 139
+!button left down
+!mouse 112 0
+!wait 0.2
+!screenshot build/clip-1.png
+!button left up
+!wait 0.3
+!keys e
+!keys c
+!keys h
+!keys o
+!keys spc
+!keys ctrl v
+!wait 0.3
+!keys ret
+!wait 1
+cerberus> echo started as pid
+started as pid

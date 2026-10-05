@@ -35,7 +35,7 @@ cerberus kernel shell
 == timer: PASS ==
 == test idle ==
 == idle: PASS ==
-tests: 10 run, 0 failed
+tests: 11 run, 0 failed
 !send ticks
 !wait 1
 ticks=

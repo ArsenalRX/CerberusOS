@@ -43,7 +43,7 @@ make it better each phase; i want you to complete it. I mess around with
 it then ask you to iterate." So, in order, each step a verified build in
 `dist/` and an updated Desktop HTML list:
 
-1. **Round 2 (→ 0.0.5h), the 8 additions:** (1) saved settings and
+1. **Round 2 (→ 0.0.5h): DONE 2026-10-05.** The eight additions: (1) saved settings and
    reminders — the owner's "do all" is the yes to auto-mounting a cerfs
    disk at boot (`/data`), with a Settings button that formats an empty
    disk for it; (2) text selection, copy and paste in the terminal and a
@@ -54,7 +54,7 @@ it then ask you to iterate." So, in order, each step a verified build in
    notification history. New windows go in their own files under
    `kernel/gui/` (an app = paint + key + click + wheel over a Surface),
    dispatched from `desktop.cpp`.
-2. **Round 3 (→ 0.0.5i…), phases 1–11 revisited:** for each phase, read
+2. **Round 3 (→ 0.0.5i…), phases 1–11 revisited — START HERE:** for each phase, read
    its SPEC §5/§5A rows and docs/DECISIONS.md deviations, run its tests
    and benchmarks, and close what is closable: phase 4 the minor-page-fault
    cost; phase 6 one-shot timer / tickless idle; phase 9 `fsck`-lite and
@@ -175,6 +175,10 @@ First steps of phase 12, in order (SPEC §5, §5A and §9 first):
   access rule, ACPI power off and restart, `runas`, sticky `/tmp`.
 - **Phase 11 — IPC. Release 0.0.5f (2026-10-04).** Plus the Settings
   window, launcher with search, floating taskbar, resolution switching.
+- **Release 0.0.5h (2026-10-05): polish round 2.** `/data` auto-mount and
+  Settings → Storage; saved settings and reminders; clipboard and terminal
+  selection; Files, Notes, Calculator; keyboard layouts and repeat; lock
+  screen (SHA-256); tray with night light, CPU meter, history; 49 tests.
 - **Release 0.0.5g (2026-10-05): desktop polish.** Calendar with
   reminders, notifications, animations, window snapping, Alt+Tab
   switcher, Super+D, double-click maximise, right-click menu, Print

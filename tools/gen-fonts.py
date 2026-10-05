@@ -28,6 +28,8 @@ from PIL import Image, ImageDraw, ImageFont
 DEJAVU = "/usr/share/fonts/truetype/dejavu/"
 ASCII = [chr(c) for c in range(32, 127)]
 LETTERS = [chr(c) for c in range(32, 127) if chr(c).isalpha() or chr(c) == " "]
+# The large fonts also show the clock (lock screen): digits and a colon.
+CLOCK = [chr(c) for c in range(32, 127) if chr(c).isalpha() or chr(c).isdigit() or chr(c) in " :"]
 
 # name, file, pixel size, characters, forced cell (advance, line height) or None
 FONTS = [
@@ -35,8 +37,8 @@ FONTS = [
     ("ui-bold", "DejaVuSans-Bold.ttf", 14, ASCII, None),
     # 13.3 px gives an advance of 8.0: the terminal keeps its 8x16 cells.
     ("mono", "DejaVuSansMono.ttf", 13.3, ASCII, (8, 16)),
-    ("display", "DejaVuSans-Bold.ttf", 64, LETTERS, None),
-    ("display-big", "DejaVuSans-Bold.ttf", 104, LETTERS, None),
+    ("display", "DejaVuSans-Bold.ttf", 64, CLOCK, None),
+    ("display-big", "DejaVuSans-Bold.ttf", 104, CLOCK, None),
 ]
 
 def render(name, path, size, chars, cell):

@@ -194,6 +194,10 @@ $(BUILD)/%.o: $(ROOT)/%.S $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(CXX) $(KCXXFLAGS) $(KASFLAGS) -c $< -o $@
 
+# The blobs that font.S embeds with .incbin (B-014: a regenerated fonts.bin
+# was not picked up before this).
+$(BUILD)/kernel/boot/font.o: $(ROOT)/kernel/gfx/fonts.bin $(wildcard $(ROOT)/kernel/boot/font/*.psf)
+
 $(BUILD)/%.o: $(ROOT)/%.asm $(ROOT)/Makefile
 	@mkdir -p $(dir $@)
 	$(NASM) $(KNASMFLAGS) $< -o $@

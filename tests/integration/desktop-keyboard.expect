@@ -1,0 +1,44 @@
+# Keyboard settings (0.0.5h): the German layout swaps Y and Z; Caps Lock
+# shows a CAPS pill on the taskbar and capitalises; the repeat rate can be
+# changed. Settings window at 290,92 (700x560); the Keyboard tab is the
+# 5th sidebar entry; its Layout card's third chip is "German".
+gui: desktop up at 1280x800
+cerberus kernel shell
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key set
+!wait 0.8
+!mouseto 370 313
+!button left down
+!button left up
+!wait 0.4
+!screenshot build/kbd-1.png
+!mouseto 640 198
+!button left down
+!button left up
+!wait 0.4
+# Repeat rate: "10 per second" (first chip of the third card).
+!mouseto 560 382
+!button left down
+!button left up
+!wait 0.4
+!screenshot build/kbd-2.png
+!mouseto 120 400
+!button left down
+!button left up
+!key echo yz
+!wait 0.8
+cerberus> echo zy
+!keys caps_lock
+!wait 0.3
+!key echo caps
+!wait 0.8
+cerberus> ECHO CAPS
+!screenshot build/kbd-3.png
+!keys caps_lock
+!wait 0.3
+!key ticks
+!wait 0.5
+ticks=

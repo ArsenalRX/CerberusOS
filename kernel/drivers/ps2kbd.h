@@ -41,3 +41,17 @@ int ps2kbd_getc();
 bool ps2kbd_poll_event(KeyEvent* out);
 // "set 2" or "set 1 (translated)".
 const char* ps2kbd_mode();
+// Layouts (0.0.5h): 0 US, 1 UK, 2 German, 3 French (AZERTY). ASCII only:
+// a key whose character has no ASCII form types nothing. AltGr (the right
+// Alt) gives the third character of a key where the layout has one.
+constexpr int KBD_LAYOUTS = 4;
+const char* ps2kbd_layout_name(int layout);
+int ps2kbd_layout();
+void ps2kbd_set_layout(int layout);
+// Typematic repeat: delay 0..3 (250/500/750/1000 ms), rate 0..2
+// (10/20/30 per second). Talks to the keyboard; thread context.
+void ps2kbd_set_repeat(int delay, int rate);
+int ps2kbd_repeat_delay();
+int ps2kbd_repeat_rate();
+// The lock and modifier bits at this moment (mod::*).
+u8 ps2kbd_mods();

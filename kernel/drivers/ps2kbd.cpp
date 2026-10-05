@@ -5,6 +5,7 @@
 // make code (the table the controller itself would apply), so one key map
 // serves both modes; if the keyboard does not confirm set 2, translation is
 // switched back on and the bytes are decoded as set 1.
+#include <arch/x86_64/cpu.h>
 #include <arch/x86_64/interrupts.h>
 #include <arch/x86_64/io.h>
 #include <drivers/input.h>
@@ -51,6 +52,34 @@ const char MAP_UPPER[128] = {
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 };
+
+// Other layouts as differences from the US maps: set-1 code, then the
+// plain, shifted and AltGr characters (0 = nothing typed).
+struct Override {
+    u8 code;
+    char lower, upper, altgr;
+};
+const Override UK[] = {
+    {0x03, '2', '"', 0}, {0x28, '\'', '@', 0}, {0x2B, '#', '~', 0}, {0x29, '`', '|', 0}, {0x56, '\\', '|', 0},
+};
+const Override DE[] = {
+    {0x15, 'z', 'Z', 0},   {0x2C, 'y', 'Y', 0},   {0x03, '2', '"', 0},  {0x04, '3', 0, 0},    {0x07, '6', '&', 0},
+    {0x08, '7', '/', '{'}, {0x09, '8', '(', '['}, {0x0A, '9', ')', ']'}, {0x0B, '0', '=', '}'}, {0x0C, 0, '?', '\\'},
+    {0x0D, '\'', '`', 0}, {0x1A, 0, 0, 0},       {0x1B, '+', '*', '~'}, {0x27, 0, 0, 0},      {0x28, 0, 0, 0},
+    {0x29, '^', 0, 0},     {0x2B, '#', '\'', 0}, {0x33, ',', ';', 0},  {0x34, '.', ':', 0},  {0x35, '-', '_', 0},
+    {0x56, '<', '>', '|'}, {0x10, 'q', 'Q', '@'},
+};
+const Override FR[] = {
+    {0x10, 'a', 'A', 0},   {0x1E, 'q', 'Q', 0},   {0x11, 'z', 'Z', 0},  {0x2C, 'w', 'W', 0},  {0x27, 'm', 'M', 0},
+    {0x32, ',', '?', 0},   {0x33, ';', '.', 0},   {0x34, ':', '/', 0},  {0x35, '!', 0, 0},    {0x02, '&', '1', 0},
+    {0x03, 0, '2', '~'},   {0x04, '"', '3', '#'}, {0x05, '\'', '4', '{'}, {0x06, '(', '5', '['}, {0x07, '-', '6', '|'},
+    {0x08, 0, '7', '`'},   {0x09, '_', '8', '\\'}, {0x0A, 0, '9', '^'}, {0x0B, 0, '0', '@'},  {0x0C, ')', 0, ']'},
+    {0x0D, '=', '+', '}'}, {0x1A, '^', 0, 0},     {0x1B, '$', 0, 0},    {0x28, 0, '%', 0},    {0x29, 0, 0, 0},
+    {0x2B, '*', 0, 0},     {0x56, '<', '>', 0},
+};
+const char* const LAYOUT_NAMES[KBD_LAYOUTS] = {"US", "UK", "German", "French"};
+int g_layout = 0;
+int g_repeat_delay = 1, g_repeat_rate = 2;
 
 // Set 2 make code -> set 1 make code, for ordinary and for extended (E0)
 // keys. Built once from pairs; 0 = no such key.
@@ -171,6 +200,16 @@ void handle_key(u8 code, bool extended, bool pressed) {
     } else if (!extended) {
         bool shift = g_mods & mod::SHIFT;
         char c = shift && !keypad ? MAP_UPPER[code] : MAP_LOWER[code];
+        if (g_layout && !keypad) {
+            const Override* table = g_layout == 1 ? UK : g_layout == 2 ? DE : FR;
+            usize count = g_layout == 1 ? sizeof UK / sizeof UK[0] : g_layout == 2 ? sizeof DE / sizeof DE[0] : sizeof FR / sizeof FR[0];
+            bool altgr = g_down[0x138 / 8] & (1 << (0x138 % 8));      // the right Alt is held
+            for (usize i = 0; i < count; i++) {
+                if (table[i].code != code) continue;
+                c = altgr ? table[i].altgr : shift ? table[i].upper : table[i].lower;
+                break;
+            }
+        }
         if (c) {
             bool caps = g_mods & mod::CAPS;
             if (caps && !shift && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
@@ -327,6 +366,31 @@ void ps2kbd_init() {
 }
 
 const char* ps2kbd_mode() { return g_set2 ? "set 2" : "set 1 (translated by the controller)"; }
+
+const char* ps2kbd_layout_name(int layout) { return layout >= 0 && layout < KBD_LAYOUTS ? LAYOUT_NAMES[layout] : "?"; }
+int ps2kbd_layout() { return g_layout; }
+void ps2kbd_set_layout(int layout) {
+    if (layout >= 0 && layout < KBD_LAYOUTS) g_layout = layout;
+}
+int ps2kbd_repeat_delay() { return g_repeat_delay; }
+int ps2kbd_repeat_rate() { return g_repeat_rate; }
+
+void ps2kbd_set_repeat(int delay, int rate) {
+    if (delay < 0 || delay > 3 || rate < 0 || rate > 2) return;
+    g_repeat_delay = delay;
+    g_repeat_rate = rate;
+    // Typematic byte: bits 5-6 the delay (250 ms steps), bits 0-4 the period
+    // (0 = 30/s, 0x0A = 20/s, 0x14 = 10/s). The keyboard's answers must not
+    // be taken by the interrupt handler, so the line is quiet meanwhile.
+    static const u8 RATE[3] = {0x14, 0x0A, 0x00};
+    u64 flags = interrupts_save();
+    flush_output();
+    if (kbd_send(0xF3)) kbd_send((u8)((delay << 5) | RATE[rate]));
+    kbd_send(0xF4);
+    interrupts_restore(flags);
+}
+
+u8 ps2kbd_mods() { return g_mods; }
 
 bool ps2kbd_poll_event(KeyEvent* out) {
     if (__atomic_load_n(&g_head, __ATOMIC_ACQUIRE) == g_tail) return false;

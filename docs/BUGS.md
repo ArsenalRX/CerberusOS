@@ -47,20 +47,6 @@ class of bug; if there is none, say so.
 - Guard: none on VirtualBox.
 - Status: OPEN.
 
-### B-011 — Settings and reminders are lost at restart
-- Found: 2026-10-04 (owner: "keep the desktop customisable").
-- Where: `kernel/gui/desktop.cpp` (`g_prefs`, `g_reminders`).
-- Symptom: every preference, the custom accent and every reminder are
-  gone after a restart.
-- Cause: there is nowhere per-user to keep them: the root file system is
-  read-only, `/tmp` is memory, and a cerfs disk is only mounted when the
-  user runs `mount`. Phase 15 brings users and home directories.
-- Fix: none yet. The owner has to decide whether Cerberus should mount
-  the first cerfs disk it finds at boot (docs/DECISIONS.md, OPEN
-  2026-10-05); then a `desktop.conf` can live there.
-- Guard: —.
-- Status: OPEN, waiting on the owner.
-
 ### B-012 — The Settings window does not scroll when it is small
 - Found: 2026-10-04.
 - Where: `paint_settings` in `kernel/gui/desktop.cpp`.
@@ -75,6 +61,33 @@ class of bug; if there is none, say so.
 ---
 
 ## Fixed
+
+### B-011 — Settings and reminders were lost at restart
+- Found: 2026-10-04 (owner: "keep the desktop customisable").
+- Where: `kernel/fs/fs.cpp`, `kernel/gui/desktop.cpp`.
+- Symptom: every preference, the custom accent and every reminder were
+  gone after a restart.
+- Cause: nowhere to keep them: the root file system is read-only, `/tmp`
+  is memory, and a cerfs disk was only mounted by hand.
+- Fix (0.0.5h): the first disk holding a cerfs volume labelled `data` is
+  mounted at `/data` at boot; Settings → Storage sets a blank disk up for
+  it (format, two presses); the desktop writes `/data/desktop.conf` and
+  `/data/reminders.txt` and reads them at start. The owner's "do all 1-8"
+  was the go-ahead for mounting at boot.
+- Guard: `desktop-storage-1` and `-2` (format, change, reboot, read back,
+  disk checked on the host).
+- Status: FIXED 2026-10-05.
+
+### B-014 — A regenerated `fonts.bin` was not linked in (build)
+- Found: 2026-10-05, when the lock screen's clock did not appear after
+  digits were added to the display fonts.
+- Where: `Makefile`, `kernel/boot/font.S`.
+- Symptom: `make iso` finished but the kernel still had the old fonts.
+- Cause: the object that `.incbin`s the blob depended only on its `.S`
+  file, not on the blob.
+- Fix: an explicit dependency on `kernel/gfx/fonts.bin` and the PSF files.
+- Guard: the Makefile rule.
+- Status: FIXED 2026-10-05.
 
 ### B-001 — VirtualBox: "CPU does not support 64-bit" at the Limine menu
 - Found: 2026-10-03 and again 2026-10-05 (owner, every new VM).

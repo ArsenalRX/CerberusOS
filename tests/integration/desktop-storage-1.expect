@@ -1,0 +1,50 @@
+#!disk blank 64M settings
+#!hostcheck settings
+# Saved settings, part 1 of 2 (0.0.5h, B-011): a blank disk is set up for
+# settings from the Storage tab (two presses of the button), the desktop
+# mounts it at /data, and a changed accent colour is written there.
+# Coordinates assume 1280x800 and the Settings window at 290,92 (700x560).
+ahci: sda
+fs: / from the boot archive
+cerberus kernel shell
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key set
+!wait 0.8
+# Storage tab (6th entry of the sidebar), then "Use for settings" twice.
+!mouseto 370 353
+!button left down
+!button left up
+!wait 0.4
+!screenshot build/storage-1.png
+!mouseto 560 228
+!button left down
+!button left up
+!wait 0.4
+!screenshot build/storage-2.png
+!mouseto 560 228
+!button left down
+!button left up
+!wait 2
+fs: sda formatted as cerfs "data"
+fs: /data is /dev/disk/sda
+!screenshot build/storage-3.png
+# Appearance: the teal accent; the file is written a moment later.
+!mouseto 370 153
+!button left down
+!button left up
+!mouseto 793 199
+!button left down
+!button left up
+!wait 2
+!mouseto 120 400
+!button left down
+!button left up
+!key cat /data/desktop.conf
+!wait 1
+accent=7
+!key poweroff
+!wait 3
+!poweredoff

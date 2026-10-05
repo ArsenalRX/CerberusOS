@@ -1,0 +1,74 @@
+# The built-in applications (0.0.5h): the Calculator evaluates a typed
+# expression; Notes takes text and saves it with Ctrl+S (to /tmp without a
+# data disk); Files lists /tmp and opens the note in Notes on a
+# double-click. Windows open through the launcher search (first match +
+# Enter) and are closed with Alt+F4. 1280x800.
+gui: desktop up at 1280x800
+cerberus kernel shell
+# Calculator: (2+3)*4 = 20, shown with hex 0x14.
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key calc
+!wait 0.8
+!key (2+3)*4
+!wait 0.5
+!screenshot build/apps-1.png
+!keys alt f4
+!wait 0.4
+# Notes: type two lines, save.
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key notes
+!wait 0.8
+!key hello from notes
+!key second line
+!keys ctrl s
+!wait 1
+!screenshot build/apps-2.png
+!keys alt f4
+!wait 0.4
+!mouseto 120 400
+!button left down
+!button left up
+!key cat /tmp/notes.txt
+!wait 1
+hello from notes
+second line
+# Files: open it, go to /tmp (type the path? no: Home is /, then double-click "tmp").
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key files
+!wait 1
+!screenshot build/apps-3.png
+# Files opens at / (frame 200,152 640x440; rows from y=229, 26 apart):
+# double-click "tmp" (the 7th row), then "notes.txt" (the only row), which
+# opens it in Notes; End, more text, Ctrl+S; the file has the new text.
+!mouseto 260 397
+!dblclick
+!wait 0.6
+!screenshot build/apps-4.png
+!mouseto 260 241
+!dblclick
+!wait 0.8
+!screenshot build/apps-5.png
+!keys end
+!key  edited
+!keys ctrl s
+!wait 0.8
+!keys alt f4
+!wait 0.4
+!mouseto 120 400
+!button left down
+!button left up
+!key cat /tmp/notes.txt
+!wait 1
+hello from notes edited
+!key ticks
+!wait 0.5
+ticks=

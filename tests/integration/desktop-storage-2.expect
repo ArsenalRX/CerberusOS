@@ -1,0 +1,27 @@
+#!disk keep settings
+#!hostcheck settings
+# Saved settings, part 2 of 2: the disk from part 1 is mounted at /data by
+# itself at boot and the desktop starts with the saved accent colour; a
+# reminder added now is on the disk too.
+fs: /data is /dev/disk/sda
+gui: desktop up
+cerberus kernel shell
+!key cat /data/desktop.conf
+!wait 1
+accent=7
+!screenshot build/storage-4.png
+!mouseto 1200 770
+!button left down
+!button left up
+!wait 0.5
+!key 08:15 Saved reminder
+!wait 1
+!mouseto 120 400
+!button left down
+!button left up
+!key cat /data/reminders.txt
+!wait 1
+08:15 Saved reminder
+!key poweroff
+!wait 3
+!poweredoff

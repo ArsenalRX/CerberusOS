@@ -31,7 +31,30 @@ public:
     int cell_w() const { return font_.width; }
     int cell_h() const { return font_.height; }
 
+    // Mouse selection, in content pixels. select_begin starts a new one at
+    // the cell under the point; select_extend stretches it; select_clear
+    // drops it. The selected text (lines joined with newlines, trailing
+    // spaces trimmed) is copied by selection_text; the return is its length.
+    void select_begin(int px, int py);
+    void select_extend(int px, int py);
+    void select_clear();
+    bool has_selection() const { return sel_active_ && !(sel_a_ == sel_b_); }
+    usize selection_text(char* out, usize max) const;
+
 private:
+    // A position in the history: line number and column.
+    struct Pos {
+        u64 line;
+        int col;
+        bool operator==(const Pos& o) const { return line == o.line && col == o.col; }
+        bool operator<(const Pos& o) const { return line < o.line || (line == o.line && col < o.col); }
+    };
+    Pos cell_at(int px, int py) const;
+    bool selected(u64 line, int col) const;
+    void mark_selection_rows();
+    bool sel_active_ = false;
+    Pos sel_a_{0, 0}, sel_b_{0, 0};      // anchor and moving end (either order)
+
     u8* line(u64 n) const { return cells_ + (usize)(n % (u64)hist_) * max_cols_; }
     void newline();
     void mark(int row) { if (row >= 0 && row < rows_) dirty_[row] = true; }

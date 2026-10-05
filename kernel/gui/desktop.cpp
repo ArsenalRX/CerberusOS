@@ -17,6 +17,7 @@
 #include <arch/x86_64/power.h>
 #include <drivers/bga.h>
 #include <drivers/fbconsole.h>
+#include <fs/fs.h>
 #include <fs/vfs.h>
 #include <drivers/lapic.h>
 #include <arch/x86_64/smp.h>
@@ -26,10 +27,15 @@
 #include <drivers/refclock.h>
 #include <drivers/rtc.h>
 #include <gfx/gfx.h>
+#include <gui/calc.h>
 #include <gui/desktop.h>
+#include <gui/files.h>
+#include <gui/notes.h>
 #include <gui/terminal.h>
 #include <lib/kprintf.h>
+#include <lib/csprng.h>
 #include <lib/panic.h>
+#include <lib/sha256.h>
 #include <lib/string.h>
 #include <lib/version.h>
 #include <drivers/ps2.h>
@@ -132,6 +138,12 @@ struct Prefs {
     bool glow = true;
     int fps = 144;                  // most frames per second the compositor presents
     int tz_minutes = 0;             // local time = the clock's time plus this
+    int layout = 0;                 // keyboard: ps2kbd layouts
+    int repeat_delay = 1, repeat_rate = 2;
+    // Lock screen: SHA-256(salt + password) and the salt, as hex; empty = no password.
+    char lock_hash[65] = {};
+    char lock_salt[33] = {};
+    bool night_light = false;       // a warm tint over the whole screen
 };
 Prefs g_prefs;
 
@@ -179,7 +191,7 @@ constexpr u64 ANIM_US = 160000;
 constexpr int SLIDE_OPEN = 12, SLIDE_MINIMISE = 30, SLIDE_MENU = 10;
 enum : u8 { ANIM_NONE, ANIM_IN, ANIM_OUT };
 
-enum class Kind { Terminal, About, SystemMonitor, MemoryMap, Settings };
+enum class Kind { Terminal, About, SystemMonitor, MemoryMap, Settings, Files, Notes, Calculator };
 
 struct Window {
     bool used = false;
@@ -220,6 +232,9 @@ struct App {
 };
 const App APPS[] = {
     {"Terminal", "shell console command prompt", Kind::Terminal, rgb(96, 165, 250)},
+    {"Files", "browse folders disk explorer manager", Kind::Files, rgb(250, 204, 21)},
+    {"Notes", "text editor write edit", Kind::Notes, rgb(45, 212, 191)},
+    {"Calculator", "maths math calc numbers hex binary", Kind::Calculator, rgb(248, 113, 113)},
     {"Settings", "theme colours colors wallpaper background border rgb display resolution screen appearance",
      Kind::Settings, rgb(167, 139, 250)},
     {"System Monitor", "cpu memory ram tasks performance", Kind::SystemMonitor, rgb(74, 222, 128)},
@@ -230,12 +245,30 @@ constexpr int APP_COUNT = sizeof APPS / sizeof APPS[0];
 // Launcher items that are not applications.
 constexpr int ITEM_NONE = -1, ITEM_POWER = -2, ITEM_RESTART = -3;
 
+// The built-in applications (one window each).
+CalcApp g_calc;
+NotesApp g_notes;
+FilesApp g_files;
+
 char g_search[24];                  // what has been typed into the launcher
 int g_search_len = 0;
 int g_found[APP_COUNT];             // indices into APPS that match it
 int g_found_count = 0;
 
-enum class Drag { None, Move, Resize };
+enum class Drag { None, Move, Resize, Select };
+
+// The desktop clipboard: one piece of text. Selecting text in the terminal
+// copies it; Ctrl+C / Ctrl+Shift+C copy; Ctrl+V / Ctrl+Shift+V paste into
+// whatever has the keyboard (terminal, launcher search, calendar line).
+char g_clipboard[4096];
+usize g_clip_len = 0;
+
+void clipboard_set(const char* text, usize len) {
+    if (len >= sizeof g_clipboard) len = sizeof g_clipboard - 1;
+    memcpy(g_clipboard, text, len);
+    g_clipboard[len] = 0;
+    g_clip_len = len;
+}
 
 struct State {
     bool active = false;
@@ -274,6 +307,8 @@ struct State {
     int snap_preview = 0;       // while dragging at an edge: 1 left, 2 right, 3 top (maximise)
     u64 last_click_us = 0;      // for double-clicks on a title bar
     int last_click_win = -1;
+    u64 last_content_us = 0;    // and inside a window's content
+    int last_content_win = -1;
     bool switcher_open = false; // Alt+Tab
     int switcher_sel = 0;
     int switcher_wins[MAX_WINDOWS];
@@ -281,6 +316,9 @@ struct State {
     bool ctx_open = false;      // the right-click menu on the desktop
     int ctx_x = 0, ctx_y = 0;
     u32 shown_before = 0;       // Super+D: the windows it hid, to bring back
+    bool tray_open = false;     // the quick-settings panel above the tray button
+    u8 tray_anim = ANIM_NONE;
+    u64 tray_anim_start = 0;
     bool cal_open = false;      // the calendar above the clock
     u8 cal_anim = ANIM_NONE;
     u64 cal_anim_start = 0;
@@ -352,7 +390,8 @@ u32 g_thumb_px[WALLPAPER_COUNT][THUMB_W * THUMB_H];
 // be matched to what it hit.
 enum : u8 {
     ACT_TAB, ACT_ACCENT, ACT_WALL, ACT_RADIUS, ACT_GLASS, ACT_FLOAT, ACT_CLOCK12, ACT_SECONDS,
-    ACT_FX, ACT_BCOLOR, ACT_BWIDTH, ACT_SPEED, ACT_BALL, ACT_GLOW, ACT_MODE, ACT_HUE, ACT_FPS, ACT_TZ,
+    ACT_FX, ACT_BCOLOR, ACT_BWIDTH, ACT_SPEED, ACT_BALL, ACT_GLOW, ACT_MODE, ACT_HUE, ACT_FPS, ACT_TZ, ACT_FORMAT,
+    ACT_LAYOUT, ACT_RDELAY, ACT_RRATE, ACT_PW_FIELD, ACT_PW_SET, ACT_PW_CLEAR, ACT_LOCK,
 };
 struct Ctl {
     Rect r;
@@ -364,6 +403,16 @@ Ctl g_ctls[MAX_CTLS];
 int g_ctl_count = 0;
 int g_settings_tab = 0;
 bool g_measuring = false;           // painting only to find out how tall a card is
+int g_format_confirm = -1;          // Storage: the disk whose "erase" button was pressed once
+// Security: the password being typed in Settings, and on the lock screen.
+char g_pw_text[40];
+int g_pw_len = 0;
+bool g_pw_editing = false;          // the Settings field has the keyboard
+bool g_locked = false;
+bool g_pw_wrong = false;
+u64 g_unlock_retry_us = 0;          // a wrong password costs a second
+bool g_prefs_dirty = false;         // settings changed and not yet written to /data
+u64 g_prefs_dirty_us = 0;
 int g_wrap_right = 0;               // where a row of chips wraps
 
 // ------------------------------------------------------------- calendar --
@@ -400,6 +449,23 @@ constexpr u64 TOAST_US = 8000000;
 // Posted from other threads (the shell's `notify`), taken by the compositor.
 Toast g_pending[MAX_TOASTS];
 volatile u32 g_pending_head = 0, g_pending_tail = 0;
+// What the tray shows: the last notifications, and CPU load per CPU.
+struct Past {
+    char title[32];
+    char text[64];
+    u8 hour, minute;
+};
+constexpr int HISTORY_MAX = 8;
+Past g_history[HISTORY_MAX];
+int g_history_count = 0;
+constexpr int MAX_CPUS_SHOWN = 8;
+u64 g_cpu_prev_ticks[MAX_CPUS_SHOWN], g_cpu_prev_idle[MAX_CPUS_SHOWN];
+u8 g_cpu_busy[MAX_CPUS_SHOWN];      // percent, refreshed once a second
+// The tray's controls, recorded as it is painted.
+enum : u8 { TRAY_NIGHT, TRAY_DESKTOP, TRAY_ACCENT, TRAY_FPS, TRAY_CLEAR, TRAY_LOCK, TRAY_SETTINGS };
+Ctl g_tray_ctls[32];
+int g_tray_ctl_count = 0;
+constexpr int TRAY_W = 340;
 
 const char* const MONTH_NAMES[] = {"January", "February", "March",     "April",   "May",      "June",
                                    "July",    "August",   "September", "October", "November", "December"};
@@ -542,7 +608,7 @@ Rect cal_area() {
     return a;
 }
 // The right-click menu's items and its place (kept on the screen).
-const char* const CTX_ITEMS[] = {"Terminal", "Settings", "Change wallpaper", "Show desktop", "About Cerberus"};
+const char* const CTX_ITEMS[] = {"Terminal", "Files", "Notes", "Settings", "Change wallpaper", "Show desktop", "About Cerberus"};
 constexpr int CTX_COUNT = sizeof CTX_ITEMS / sizeof CTX_ITEMS[0];
 constexpr int CTX_W = 200, CTX_ITEM_H = 32;
 Rect ctx_rect() {
@@ -564,6 +630,27 @@ Rect snap_target(int side) {
     if (side == 1) return {wa.x + 6, wa.y + 6, wa.w / 2 - 9, wa.h - 12};
     if (side == 2) return {wa.x + wa.w / 2 + 3, wa.y + 6, wa.w - wa.w / 2 - 9, wa.h - 12};
     return {wa.x + 6, wa.y + 6, wa.w - 12, wa.h - 12};
+}
+Rect tray_button_rect() {
+    Rect b = bar_rect();
+    int sep = b.right() - 16 - 104;
+    return {sep - 16 - 64 - 12 - 28, bar_mid() - 12, 24, 24};
+}
+Rect tray_rect() {
+    int cpus = (int)smp_cpu_count();
+    if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
+    // Two rows of buttons, swatches, frame rates, the CPU bars, RAM, the
+    // history: the same steps draw_tray takes.
+    int h = 16 + 46 + 46 + 54 + 54 + 20 + cpus * 16 + 4 + 30 + 24 + (g_history_count ? g_history_count * 22 : 22) + 16;
+    Rect b = bar_rect();
+    int x = tray_button_rect().x + 12 - TRAY_W / 2;
+    if (x + TRAY_W > b.right() - 8) x = b.right() - 8 - TRAY_W;
+    return {x, g.H - theme::PANEL_H - h - 8, TRAY_W, h};
+}
+Rect tray_area() {
+    Rect a = tray_rect().inset(-8);
+    a.h += 4 + SLIDE_MENU;
+    return a;
 }
 Rect toast_rect(int i) { return {g.W - TOAST_W - 16, 16 + i * (TOAST_H + TOAST_GAP), TOAST_W, TOAST_H}; }
 Rect menu_search_rect() {
@@ -597,9 +684,13 @@ bool matches(const char* text, const char* typed, int typed_len) {
 }
 
 void search_update() {
+    // Names that match come first, then keyword matches, so "c" offers
+    // Calculator before the Terminal's "console".
     g_found_count = 0;
     for (int i = 0; i < APP_COUNT; i++)
-        if (matches(APPS[i].label, g_search, g_search_len) || matches(APPS[i].keywords, g_search, g_search_len))
+        if (matches(APPS[i].label, g_search, g_search_len)) g_found[g_found_count++] = i;
+    for (int i = 0; i < APP_COUNT; i++)
+        if (!matches(APPS[i].label, g_search, g_search_len) && matches(APPS[i].keywords, g_search, g_search_len))
             g_found[g_found_count++] = i;
 }
 Rect cursor_rect(int x, int y) { return {x - cursor_hot(), y - cursor_hot(), CURSOR_W, CURSOR_H}; }
@@ -660,6 +751,7 @@ void terminal_fit(Window& w) {
     // The cell grid is written by whoever prints (any thread, any CPU) under
     // the console lock; resizing and painting it take the same lock.
     console_lock();
+    g.term.select_clear();
     g.term.resize((cr.w - 12) / g.term.cell_w(), (cr.h - 12) / g.term.cell_h());
     console_unlock();
     w.needs_paint = true;
@@ -813,6 +905,29 @@ void open_kind(Kind kind) {
     case Kind::About: idx = create_window(kind, "About Cerberus", {x + 120, y + 40, 460, 400}); break;
     case Kind::SystemMonitor: idx = create_window(kind, "System Monitor", {x + 60, y + 20, 520, 360}); break;
     case Kind::MemoryMap: idx = create_window(kind, "Memory Map", {x + 30, y + 10, 700, 480}); break;
+    case Kind::Files:
+        idx = create_window(kind, "Files", {x + 40, y + 20, 640, 440});
+        if (idx >= 0) {
+            g.windows[idx].min_w = FilesApp::MIN_W;
+            g.windows[idx].min_h = FilesApp::MIN_H;
+            if (!g_files.path()[1]) g_files.go(fs_data_mounted() ? "/data" : "/");
+            g_files.refresh();
+        }
+        break;
+    case Kind::Notes:
+        idx = create_window(kind, "Notes", {x + 70, y + 30, 640, 460});
+        if (idx >= 0) {
+            g.windows[idx].min_w = NotesApp::MIN_W;
+            g.windows[idx].min_h = NotesApp::MIN_H;
+        }
+        break;
+    case Kind::Calculator:
+        idx = create_window(kind, "Calculator", {x + 200, y + 40, 340, 480});
+        if (idx >= 0) {
+            g.windows[idx].min_w = CalcApp::MIN_W;
+            g.windows[idx].min_h = CalcApp::MIN_H;
+        }
+        break;
     case Kind::Settings: {
         int ww = g.W - 60 < 700 ? g.W - 60 : 700, wh = g.H - theme::PANEL_H - 60 < 560 ? g.H - theme::PANEL_H - 60 : 560;
         idx = create_window(kind, "Settings", {(g.W - ww) / 2, (g.H - theme::PANEL_H - wh) / 2, ww, wh});
@@ -1009,10 +1124,23 @@ void tab_icon(Surface& s, int x, int y, int tab, bool on) {
         stroke_rect_rounded(s, {x, y + 1, 15, 13}, 4, c);
         stroke_rect_rounded(s, {x + 1, y + 2, 13, 11}, 3, c);
         break;
-    default:    // a screen on a stand
+    case 3:     // a screen on a stand
         fill_rect_rounded(s, {x, y, 15, 10}, 2, c);
         fill_rect(s, {x + 5, y + 11, 5, 2}, c);
         fill_rect(s, {x + 3, y + 13, 9, 1}, c);
+        break;
+    case 4:     // a keyboard: a row of keys
+        stroke_rect_rounded(s, {x, y + 2, 15, 11}, 3, c);
+        for (int i = 0; i < 4; i++) fill_rect(s, {x + 3 + i * 3, y + 5, 2, 2}, c);
+        fill_rect(s, {x + 4, y + 9, 7, 2}, c);
+        break;
+    case 5:     // a disk: two platters
+        fill_rect_rounded(s, {x, y + 1, 15, 6}, 3, c);
+        fill_rect_rounded(s, {x, y + 8, 15, 6}, 3, c);
+        break;
+    default:    // a padlock
+        stroke_rect_rounded(s, {x + 3, y, 9, 8}, 4, c);
+        fill_rect_rounded(s, {x, y + 6, 15, 9}, 3, c);
         break;
     }
 }
@@ -1028,6 +1156,8 @@ void swatch(Surface& s, int cx, int cy, Color c, bool on, u8 act, int val) {
 }
 
 u8 rounded_coverage(const Rect& r, int R, int x, int y);
+bool password_set();
+void draw_lock_screen(Surface& back);
 
 // The strip every hue can be picked from, with a knob on the chosen one.
 void hue_strip(Surface& s, const Rect& r) {
@@ -1053,8 +1183,8 @@ void paint_settings(Surface& s) {
     // Sidebar.
     fill_rect(s, {0, 0, SIDE, s.height}, rgb(17, 19, 27));
     draw_vline(s, SIDE, 0, s.height - 1, rgba(255, 255, 255, 18));
-    static const char* const TABS[] = {"Appearance", "Wallpaper", "Window borders", "Display"};
-    for (int i = 0; i < 4; i++) {
+    static const char* const TABS[] = {"Appearance", "Wallpaper", "Window borders", "Display", "Keyboard", "Storage", "Security"};
+    for (int i = 0; i < 7; i++) {
         Rect r{8, 12 + i * 40, SIDE - 16, 34};
         bool on = i == g_settings_tab;
         if (on) {
@@ -1163,6 +1293,82 @@ void paint_settings(Surface& s) {
             chip(s, x, y, left, "Glow", g_prefs.glow, ACT_GLOW, !g_prefs.glow);
             return y + 30;
         });
+    } else if (g_settings_tab == 4) {
+        y = card(s, y, "Layout", [&](int x, int y) {
+            int left = x;
+            for (int i = 0; i < KBD_LAYOUTS; i++) chip(s, x, y, left, ps2kbd_layout_name(i), g_prefs.layout == i, ACT_LAYOUT, i);
+            return y + 30;
+        });
+        y = card(s, y, "Repeat delay", [&](int x, int y) {
+            int left = x;
+            static const char* const DELAYS[] = {"250 ms", "500 ms", "750 ms", "1 s"};
+            for (int i = 0; i < 4; i++) chip(s, x, y, left, DELAYS[i], g_prefs.repeat_delay == i, ACT_RDELAY, i);
+            return y + 30;
+        });
+        y = card(s, y, "Repeat rate", [&](int x, int y) {
+            int left = x;
+            static const char* const RATES[] = {"10 per second", "20 per second", "30 per second"};
+            for (int i = 0; i < 3; i++) chip(s, x, y, left, RATES[i], g_prefs.repeat_rate == i, ACT_RRATE, i);
+            return y + 30;
+        });
+        y = card(s, y, "Lock keys", [&](int x, int y) {
+            u8 m = ps2kbd_mods();
+            int left = x;
+            chip(s, x, y, left, "Caps Lock", m & mod::CAPS, ACT_TAB, g_settings_tab);
+            chip(s, x, y, left, "Num Lock", m & mod::NUM, ACT_TAB, g_settings_tab);
+            return y + 30;
+        });
+    } else if (g_settings_tab == 6) {
+        y = card(s, y, password_set() ? "Lock screen password is set" : "Lock screen password", [&](int x, int y) {
+            Rect f{x, y, 260, 30};
+            fill_rect_rounded(s, f, 8, rgba(255, 255, 255, 14));
+            stroke_rect_rounded(s, f, 8, g_pw_editing ? with_alpha(accent(), 150) : rgba(255, 255, 255, 22));
+            if (g_pw_len) {
+                for (int i = 0; i < g_pw_len && i < 22; i++) fill_circle_aa(s, f.x + 14 + i * 11, f.y + 15, 3, theme::TEXT);
+            } else {
+                draw_text(s, g.font, f.x + 10, f.y + (f.h - g.font.height) / 2,
+                          g_pw_editing ? "Type it, then Enter" : (password_set() ? "New password" : "Choose a password"), theme::TEXT_MUTED);
+            }
+            ctl_add(f, ACT_PW_FIELD, 0);
+            int cx = f.right() + 10;
+            chip(s, cx, y, x, "Set", false, ACT_PW_SET, 0);
+            if (password_set()) {
+                chip(s, cx, y, x, "Remove", false, ACT_PW_CLEAR, 0);
+                chip(s, cx, y, x, "Lock now  (Super+L)", true, ACT_LOCK, 0);
+            }
+            return y + 30;
+        });
+    } else if (g_settings_tab == 5) {
+        y = card(s, y, fs_data_mounted() ? "Settings are saved on /data" : "Settings are not saved yet", [&](int x, int y) {
+            DiskInfo disks[8];
+            u32 count = fs_disks(disks, 8);
+            if (!count) {
+                draw_text(s, g.font, x, y + 6, "No disk found. Add a virtual hard disk to the machine.", theme::TEXT_MUTED);
+                return y + 30;
+            }
+            char line[96];
+            for (u32 i = 0; i < count; i++) {
+                const DiskInfo& d = disks[i];
+                const char* what = d.state == DiskInfo::Data ? "holds the settings (/data)"
+                                   : d.state == DiskInfo::Busy ? "in use"
+                                   : d.state == DiskInfo::Cerfs ? "a Cerberus disk (mount it from the terminal)"
+                                                                 : "blank";
+                ksnprintf(line, sizeof line, "%s  %lu MiB  %s", d.name, (unsigned long)d.mib, what);
+                draw_text(s, g.font, x, y + 6, line, d.state == DiskInfo::Data ? theme::TEXT : theme::TEXT_MUTED);
+                y += 30;
+                if (!fs_data_mounted() && (d.state == DiskInfo::Blank || d.state == DiskInfo::Cerfs)) {
+                    int cx = x;
+                    if (g_format_confirm == (int)i) {
+                        ksnprintf(line, sizeof line, "Erase %s and use it", d.name);
+                        chip(s, cx, y, x, line, true, ACT_FORMAT, (int)i);
+                    } else {
+                        chip(s, cx, y, x, "Use for settings", false, ACT_FORMAT, (int)i);
+                    }
+                    y += 38;
+                }
+            }
+            return y;
+        });
     } else {
         y = card(s, y, "Screen resolution", [&](int x, int y) {
             int left = x;
@@ -1191,6 +1397,36 @@ void paint_settings(Surface& s) {
     }
 }
 
+void notify(const char* title, const char* text);
+void open_kind(Kind kind);
+
+AppContext app_ctx() {
+    AppContext c;
+    c.font = &g.font;
+    c.bold = &g.bold;
+    c.mono = &g.mono;
+    c.accent = accent();
+    c.text = theme::TEXT;
+    c.muted = theme::TEXT_MUTED;
+    c.bg = theme::CONTENT_BG;
+    c.clipboard = g_clipboard;
+    c.clipboard_len = g_clip_len;
+    c.clipboard_set = clipboard_set;
+    c.notify = notify;
+    return c;
+}
+
+// Files asked for a file to be opened: hand it to Notes.
+void serve_open_request() {
+    const char* path = g_files.take_open_request();
+    if (!path) return;
+    g_notes.load(path);
+    g_files.clear_open_request();
+    open_kind(Kind::Notes);
+    for (int i = 0; i < MAX_WINDOWS; i++)
+        if (g.windows[i].used && g.windows[i].kind == Kind::Notes) g.windows[i].needs_paint = true;
+}
+
 void paint_window_content(Window& w) {
     Surface view = content_view(w);
     int idx = window_index(&w);
@@ -1208,6 +1444,29 @@ void paint_window_content(Window& w) {
     }
     if (!w.needs_paint) return;
     switch (w.kind) {
+    case Kind::Files: {
+        g_files.paint(view, app_ctx());
+        char title[64];
+        ksnprintf(title, sizeof title, "Files - %s", g_files.path());
+        if (strcmp(w.title, title) != 0) {
+            strlcpy(w.title, title, sizeof w.title);
+            damage(w.frame);
+            damage(panel_rect());
+        }
+        break;
+    }
+    case Kind::Notes: {
+        g_notes.paint(view, app_ctx());
+        char title[64];
+        ksnprintf(title, sizeof title, "Notes - %s%s", g_notes.path()[0] ? g_notes.path() : "new", g_notes.modified() ? " *" : "");
+        if (strcmp(w.title, title) != 0) {
+            strlcpy(w.title, title, sizeof w.title);
+            damage(w.frame);
+            damage(panel_rect());
+        }
+        break;
+    }
+    case Kind::Calculator: g_calc.paint(view, app_ctx()); break;
     case Kind::About: paint_about(view); break;
     case Kind::SystemMonitor: paint_sysmon(view); break;
     case Kind::MemoryMap: paint_memmap(view); break;
@@ -1539,6 +1798,33 @@ void draw_panel(Surface& back) {
     PmmStats pm = pmm_stats();
     u32 pct = pm.usable_frames ? (u32)(pm.used_frames * 100 / pm.usable_frames) : 0;
     const int sep = right - 104;
+    {
+        // The tray button: a chevron that opens the quick settings.
+        Rect tb = tray_button_rect();
+        bool hover = tb.contains(g.mx, g.my);
+        if (hover || g.tray_open) fill_rect_rounded(back, tb, 8, hover && !g.tray_open ? rgba(255, 255, 255, 22) : with_alpha(accent(), 54));
+        int cx = tb.x + 12, cy = tb.y + 12 + (g.tray_open ? 2 : -1);
+        Color gc = theme::TEXT_MUTED;
+        if (g.tray_open) {
+            draw_line_aa(back, cx - 5, cy - 3, cx, cy + 2, 24, gc);
+            draw_line_aa(back, cx + 5, cy - 3, cx, cy + 2, 24, gc);
+        } else {
+            draw_line_aa(back, cx - 5, cy + 3, cx, cy - 2, 24, gc);
+            draw_line_aa(back, cx + 5, cy + 3, cx, cy - 2, 24, gc);
+        }
+        // Caps Lock on, or Num Lock off, is worth a glance: a small pill.
+        u8 m = ps2kbd_mods();
+        int px = tb.x - 8;
+        auto pill = [&](const char* label, Color c) {
+            int w = measure_text(g.font, label) + 12;
+            Rect r{px - w, mid - 10, w, 20};
+            fill_rect_rounded(back, r, 6, with_alpha(c, 50));
+            draw_text(back, g.font, r.x + 6, r.y + (20 - g.font.height) / 2, label, c);
+            px = r.x - 6;
+        };
+        if (m & mod::CAPS) pill("CAPS", accent());
+        if (!(m & mod::NUM)) pill("NUM off", theme::TEXT_MUTED);
+    }
     draw_vline(back, sep, mid - 12, mid + 12, rgba(255, 255, 255, 28));
     Rect meter{sep - 16 - 64, mid + 5, 64, 5};
     ksnprintf(buf, sizeof buf, "%u%%", pct);
@@ -1724,6 +2010,109 @@ void draw_switcher(Surface& back) {
     }
 }
 
+void tray_ctl(const Rect& r, u8 act, int val) {
+    if (g_tray_ctl_count < (int)(sizeof g_tray_ctls / sizeof g_tray_ctls[0])) g_tray_ctls[g_tray_ctl_count++] = Ctl{r, act, (i16)val};
+}
+
+// A small toggle or button in the tray.
+void tray_toggle(Surface& back, int x, int y, int w, const char* label, bool on, u8 act, int val) {
+    Rect r{x, y, w, 36};
+    fill_rect_rounded(back, r, 10, on ? with_alpha(accent(), 180) : rgba(255, 255, 255, 16));
+    int tw = measure_text(g.font, label);
+    draw_text(back, g.font, r.x + (r.w - tw) / 2, r.y + (r.h - g.font.height) / 2, label, on ? rgb(15, 23, 42) : theme::TEXT);
+    tray_ctl(r, act, val);
+}
+
+void draw_tray(Surface& back, int dy = 0) {
+    g_tray_ctl_count = 0;
+    Rect tr = tray_rect().translated(0, dy);
+    fill_rect_rounded(back, tr.translated(0, 4), 14, rgba(0, 0, 0, 90));
+    fill_rect_rounded(back, tr, 14, theme::MENU_BG);
+    stroke_rect_rounded(back, tr, 14, theme::BORDER);
+    int x = tr.x + 16, y = tr.y + 16, w = tr.w - 32;
+    // Toggles.
+    int half = (w - 8) / 2;
+    tray_toggle(back, x, y, half, "Night light", g_prefs.night_light, TRAY_NIGHT, 0);
+    tray_toggle(back, x + half + 8, y, half, "Show desktop", false, TRAY_DESKTOP, 0);
+    y += 36 + 10;
+    tray_toggle(back, x, y, half, "Lock", false, TRAY_LOCK, 0);
+    tray_toggle(back, x + half + 8, y, half, "Settings", false, TRAY_SETTINGS, 0);
+    y += 36 + 10;
+    // Accent swatches.
+    for (int i = 0; i < ACCENT_COUNT; i++) {
+        int cx = x + 12 + i * 34, cy = y + 16;
+        if (g_prefs.accent == i) {
+            fill_circle_aa(back, cx, cy, 14, rgb(255, 255, 255));
+            fill_circle_aa(back, cx, cy, 12, theme::MENU_BG);
+        }
+        fill_circle_aa(back, cx, cy, 10, ACCENTS[i].c);
+        tray_ctl({cx - 14, cy - 14, 28, 28}, TRAY_ACCENT, i);
+    }
+    y += 44 + 10;
+    // Frame rate.
+    {
+        int cx = x;
+        char line[16];
+        for (int i = 0; i < FPS_COUNT; i++) {
+            ksnprintf(line, sizeof line, "%d", FPS_CHOICES[i]);
+            int cw = measure_text(g.font, line) + 18;
+            Rect r{cx, y, cw, 28};
+            fill_rect_rounded(back, r, 8, g_prefs.fps == FPS_CHOICES[i] ? accent() : rgba(255, 255, 255, 16));
+            draw_text(back, g.font, r.x + 9, r.y + (r.h - g.font.height) / 2, line, g_prefs.fps == FPS_CHOICES[i] ? rgb(15, 23, 42) : theme::TEXT);
+            tray_ctl(r, TRAY_FPS, FPS_CHOICES[i]);
+            cx += cw + 6;
+        }
+        draw_text(back, g.font, cx + 4, y + (28 - g.font.height) / 2, "Hz", theme::TEXT_MUTED);
+    }
+    y += 44 + 10;
+    // CPU and memory.
+    draw_text(back, g.bold, x, y, "CPU", theme::TEXT);
+    y += 20;
+    int cpus = (int)smp_cpu_count();
+    if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
+    char line[48];
+    for (int i = 0; i < cpus; i++) {
+        ksnprintf(line, sizeof line, "%d", i);
+        draw_text(back, g.font, x, y, line, theme::TEXT_MUTED);
+        Rect bar{x + 24, y + 5, w - 24 - 44, 7};
+        fill_rect_rounded(back, bar, 3, rgba(255, 255, 255, 25));
+        int fw = bar.w * g_cpu_busy[i] / 100;
+        if (fw > 0) fill_rect_rounded(back, {bar.x, bar.y, fw < 7 ? 7 : fw, bar.h}, 3, g_cpu_busy[i] > 85 ? rgb(248, 113, 113) : accent());
+        ksnprintf(line, sizeof line, "%u%%", g_cpu_busy[i]);
+        int tw = measure_text(g.font, line);
+        draw_text(back, g.font, x + w - tw, y, line, theme::TEXT);
+        y += 16;
+    }
+    y += 4;
+    PmmStats pm = pmm_stats();
+    u64 used_mb = pm.used_frames * PAGE_SIZE / MIB, total_mb = pm.usable_frames * PAGE_SIZE / MIB;
+    ksnprintf(line, sizeof line, "RAM  %lu / %lu MiB", (unsigned long)used_mb, (unsigned long)total_mb);
+    draw_text(back, g.font, x, y, line, theme::TEXT_MUTED);
+    y += 20 + 10;
+    // Notification history.
+    draw_text(back, g.bold, x, y, "Notifications", theme::TEXT);
+    if (g_history_count) {
+        Rect cl{x + w - 56, y - 2, 56, 22};
+        fill_rect_rounded(back, cl, 6, rgba(255, 255, 255, 16));
+        draw_text(back, g.font, cl.x + 10, cl.y + (cl.h - g.font.height) / 2, "Clear", theme::TEXT);
+        tray_ctl(cl, TRAY_CLEAR, 0);
+    }
+    y += 24;
+    if (!g_history_count) {
+        draw_text(back, g.font, x, y, "None yet", theme::TEXT_MUTED);
+    } else {
+        for (int i = g_history_count - 1; i >= 0; i--) {
+            const Past& h = g_history[i];
+            ksnprintf(line, sizeof line, "%02u:%02u", h.hour, h.minute);
+            draw_text(back, g.mono, x, y + 1, line, theme::TEXT_MUTED);
+            char both[100];
+            ksnprintf(both, sizeof both, "%s: %s", h.title, h.text);
+            draw_text_ellipsis(back, g.font, x + 50, y, both, w - 50, theme::TEXT);
+            y += 22;
+        }
+    }
+}
+
 void draw_toasts(Surface& back) {
     for (int i = 0; i < MAX_TOASTS; i++) {
         const Toast& t = g_toasts[i];
@@ -1750,7 +2139,15 @@ void draw_toasts(Surface& back) {
 // VirtualBox's Hyper-V backend emulates string instructions that touch video
 // memory one byte per exit and effectively never finishes a frame. Only
 // pixels that differ from what the screen already shows are written.
+// Night light: less blue and a little less green, a warm evening screen.
+inline u32 warm(u32 v) {
+    if (!g_prefs.night_light) return v;
+    u32 r = (v >> 16) & 255, gr = (v >> 8) & 255, b = v & 255;
+    return (v & 0xFF000000u) | (r << 16) | ((gr * 230 / 255) << 8) | (b * 170 / 255);
+}
+
 inline void present_px(int x, int y, u32 v) {
+    v = warm(v);
     u32* f = g.front + (isize)y * g.W + x;
     if (*f == v) return;
     *f = v;
@@ -1763,9 +2160,10 @@ inline void copy_to_fb(int x, int y, int w) {
     u32* f = g.front + (isize)y * g.W + x;
     u32* dst = g.fb.row(y) + x;
     for (int i = 0; i < w; i++) {
-        if (f[i] == src[i]) continue;
-        f[i] = src[i];
-        dst[i] = src[i];
+        u32 v = warm(src[i]);
+        if (f[i] == v) continue;
+        f[i] = v;
+        dst[i] = v;
         g.stats.last_written_pixels++;
     }
 }
@@ -1847,8 +2245,19 @@ void compose(const Rect& r) {
     }
     if (g.ctx_open && ctx_area().overlaps(c)) draw_context_menu(g.back);
     if (g.switcher_open && switcher_rect().inset(-8).overlaps(c)) draw_switcher(g.back);
+    if ((g.tray_open || g.tray_anim == ANIM_OUT) && tray_area().overlaps(c)) {
+        u32 e = g.tray_anim ? anim_eased(g.tray_anim_start) : 255;
+        u32 shown = g.tray_anim == ANIM_OUT ? 255 - e : e;
+        if (shown == 255) {
+            draw_tray(g.back);
+        } else {
+            int dy = SLIDE_MENU * (int)(255 - shown) / 255;
+            draw_faded(g.back, tray_area(), shown, [&] { draw_tray(g.back, dy); });
+        }
+    }
     draw_toasts(g.back);
     if (panel_rect().overlaps(c)) draw_panel(g.back);
+    if (g_locked) draw_lock_screen(g.back);
     g.back.clip = g.back.bounds();
     present(c);
 }
@@ -1905,7 +2314,7 @@ int resize_shape(u8 edges) {
 }
 
 struct Hit {
-    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu, Clock, Calendar, Toast, Context } what = Nothing;
+    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu, Clock, Calendar, Toast, Context, Tray, TrayPopup } what = Nothing;
     int win = -1;
     int button = -1;
     u8 edges = 0;
@@ -1923,6 +2332,10 @@ Hit hit_test(int x, int y) {
     }
     if (g.cal_open && cal_rect().contains(x, y)) {
         h.what = Hit::Calendar;
+        return h;
+    }
+    if (g.tray_open && tray_rect().contains(x, y)) {
+        h.what = Hit::TrayPopup;
         return h;
     }
     if (g.ctx_open && ctx_rect().contains(x, y)) {
@@ -1949,6 +2362,7 @@ Hit hit_test(int x, int y) {
         }
         Rect ck = clock_rect();
         if (ck.contains(x, y) && x >= ck.right() - 118) h.what = Hit::Clock;
+        if (tray_button_rect().inset(-3).contains(x, y)) h.what = Hit::Tray;
         for (int i = 0; i < g.task_count; i++) {
             if (g.task_rects[i].contains(x, y)) {
                 h.what = Hit::Task;
@@ -2023,6 +2437,30 @@ void open_menu() {
     damage(launcher_rect());
 }
 
+void reminders_write();
+
+void close_tray() {
+    if (!g.tray_open) return;
+    g.tray_open = false;
+    g.tray_anim = ANIM_OUT;
+    g.tray_anim_start = refclock_now_us();
+    damage(tray_area());
+    damage(panel_rect());
+}
+
+void cpu_sample() {
+    int cpus = (int)smp_cpu_count();
+    if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
+    for (int i = 0; i < cpus; i++) {
+        u64 ticks = 0, idle = 0;
+        sched_cpu_ticks((u32)i, &ticks, &idle);
+        u64 dt = ticks - g_cpu_prev_ticks[i], di = idle - g_cpu_prev_idle[i];
+        g_cpu_busy[i] = dt ? (u8)((dt - (di < dt ? di : dt)) * 100 / dt) : 0;
+        g_cpu_prev_ticks[i] = ticks;
+        g_cpu_prev_idle[i] = idle;
+    }
+}
+
 void close_calendar() {
     if (!g.cal_open) return;
     g.cal_open = false;
@@ -2047,6 +2485,17 @@ void open_calendar() {
     damage(clock_rect());
 }
 
+void open_tray() {
+    close_menu();
+    close_calendar();
+    cpu_sample();
+    g.tray_open = true;
+    g.tray_anim = ANIM_IN;
+    g.tray_anim_start = refclock_now_us();
+    damage(tray_area());
+    damage(panel_rect());
+}
+
 void calendar_page(int months) {
     g.cal_month += months;
     while (g.cal_month < 1) { g.cal_month += 12; g.cal_year--; }
@@ -2054,7 +2503,10 @@ void calendar_page(int months) {
     damage(cal_rect());
 }
 
-void notify(const char* title, const char* text) {
+void notify(const char* title, const char* text);
+void open_kind(Kind kind);
+
+void notify_impl(const char* title, const char* text) {
     int slot = -1;
     for (int i = 0; i < MAX_TOASTS && slot < 0; i++)
         if (!g_toasts[i].used) slot = i;
@@ -2068,10 +2520,24 @@ void notify(const char* title, const char* text) {
     t.used = true;
     strlcpy(t.title, title, sizeof t.title);
     strlcpy(t.text, text, sizeof t.text);
+    // Remembered for the tray's history.
+    if (g_history_count == HISTORY_MAX) {
+        for (int i = 1; i < HISTORY_MAX; i++) g_history[i - 1] = g_history[i];
+        g_history_count--;
+    }
+    Past& h = g_history[g_history_count++];
+    strlcpy(h.title, title, sizeof h.title);
+    strlcpy(h.text, text, sizeof h.text);
+    DateTime now = local_now();
+    h.hour = now.hour;
+    h.minute = now.minute;
+    if (g.tray_open) damage(tray_area());
     t.start = refclock_now_us();
     t.until = t.start + TOAST_US;
     damage(toast_rect(slot).inset(-8).translated(0, -SLIDE_MENU));
 }
+
+void notify(const char* title, const char* text) { notify_impl(title, text); }
 
 void dismiss_toast(int i) {
     if (i < 0 || i >= MAX_TOASTS || !g_toasts[i].used) return;
@@ -2106,6 +2572,7 @@ void add_reminder() {
     }
     g_rem_len = 0;
     g_rem_text[0] = 0;
+    reminders_write();
     damage(cal_rect());
 }
 
@@ -2128,7 +2595,10 @@ void calendar_click(int x, int y) {
             g.sel_month = g.cal_month;
             g.sel_day = c.val;
             break;
-        case CAL_DELETE: g_reminders[c.val].used = false; break;
+        case CAL_DELETE:
+            g_reminders[c.val].used = false;
+            reminders_write();
+            break;
         }
         damage(cal_rect());
         return;
@@ -2143,6 +2613,7 @@ void fire_reminders(const DateTime& now) {
             continue;
         r.used = false;
         notify("Reminder", r.text);
+        reminders_write();
         if (g.cal_open) damage(cal_rect());
     }
 }
@@ -2247,6 +2718,269 @@ void save_screenshot() {
     notify("Screenshot", msg);
 }
 
+// ----------------------------------------------------------- persistence --
+// Settings and reminders live on /data when a disk labelled "data" is
+// mounted there (B-011). Plain text, one "key=value" per line; anything
+// unexpected in the file is ignored.
+const Credentials ROOT_CRED = {0, 0};
+
+bool write_whole_file(const char* path, const char* text, usize len) {
+    Result<Vnode*> v = vfs_create(nullptr, path, ROOT_CRED, VType::File, 0644, false);
+    if (!v.ok()) return false;
+    bool ok = vfs_truncate(v.value(), 0).ok() && vfs_write(v.value(), 0, text, len).ok();
+    vnode_unref(v.value());
+    return ok;
+}
+
+// Reads a small text file into a NUL-terminated heap buffer, or nullptr.
+char* read_whole_file(const char* path, usize max) {
+    Result<Vnode*> v = vfs_resolve(nullptr, path, ROOT_CRED, LookupFlags{});
+    if (!v.ok()) return nullptr;
+    usize size = 0;
+    Result<u8*> data = vfs_read_all(v.value(), max, &size);
+    vnode_unref(v.value());
+    if (!data.ok()) return nullptr;
+    char* text = (char*)kmalloc(size + 1);
+    if (text) {
+        memcpy(text, data.value(), size);
+        text[size] = 0;
+    }
+    kfree(data.value());
+    return text;
+}
+
+int parse_int(const char* p) {
+    bool neg = *p == '-';
+    if (neg) p++;
+    int v = 0;
+    for (; *p >= '0' && *p <= '9' && v < 100000; p++) v = v * 10 + (*p - '0');
+    return neg ? -v : v;
+}
+
+void prefs_write_now() {
+    g_prefs_dirty = false;
+    if (!fs_data_mounted()) return;
+    char text[512];
+    int len = ksnprintf(text, sizeof text,
+                        "accent=%d\nhue=%d\nwallpaper=%d\nradius=%d\nglass=%d\nfloating=%d\nclock12=%d\nseconds=%d\n"
+                        "fx=%d\nbcolor=%d\nbwidth=%d\nspeed=%d\nball=%d\nglow=%d\nfps=%d\ntz=%d\n"
+                        "layout=%d\nrdelay=%d\nrrate=%d\nlockhash=%s\nlocksalt=%s\nnight=%d\n",
+                        g_prefs.accent, g_prefs.custom_hue, g_prefs.wallpaper, g_prefs.radius, g_prefs.panel_glass,
+                        g_prefs.panel_floating, g_prefs.clock_12h, g_prefs.clock_seconds, (int)g_prefs.fx,
+                        g_prefs.border_color, g_prefs.border_w, g_prefs.speed, g_prefs.border_all, g_prefs.glow,
+                        g_prefs.fps, g_prefs.tz_minutes, g_prefs.layout, g_prefs.repeat_delay, g_prefs.repeat_rate,
+                        g_prefs.lock_hash, g_prefs.lock_salt, g_prefs.night_light);
+    if (len < 0 || len >= (int)sizeof text) return;
+    if (!write_whole_file("/data/desktop.conf", text, (usize)len)) kprintf("gui: could not write /data/desktop.conf\n");
+}
+
+// Marks the settings as changed; they are written a moment later, once.
+void prefs_changed() {
+    g_prefs_dirty = true;
+    g_prefs_dirty_us = refclock_now_us();
+}
+
+void prefs_load() {
+    char* text = read_whole_file("/data/desktop.conf", 4096);
+    if (!text) return;
+    auto clamp = [](int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; };
+    for (char* line = text; *line;) {
+        char* end = line;
+        while (*end && *end != '\n') end++;
+        bool more = *end == '\n';
+        *end = 0;
+        char* eq = line;
+        while (*eq && *eq != '=') eq++;
+        if (*eq == '=') {
+            *eq = 0;
+            int v = parse_int(eq + 1);
+            const char* k = line;
+            if (!strcmp(k, "accent")) g_prefs.accent = clamp(v, 0, ACCENT_COUNT);
+            else if (!strcmp(k, "hue")) g_prefs.custom_hue = clamp(v, 0, 1535);
+            else if (!strcmp(k, "wallpaper")) g_prefs.wallpaper = clamp(v, 0, WALLPAPER_COUNT - 1);
+            else if (!strcmp(k, "radius")) g_prefs.radius = v == 0 || v == 6 ? v : 12;
+            else if (!strcmp(k, "glass")) g_prefs.panel_glass = v != 0;
+            else if (!strcmp(k, "floating")) g_prefs.panel_floating = v != 0;
+            else if (!strcmp(k, "clock12")) g_prefs.clock_12h = v != 0;
+            else if (!strcmp(k, "seconds")) g_prefs.clock_seconds = v != 0;
+            else if (!strcmp(k, "fx")) g_prefs.fx = (BorderFx)clamp(v, 0, (int)BorderFx::COUNT - 1);
+            else if (!strcmp(k, "bcolor")) g_prefs.border_color = clamp(v, -1, ACCENT_COUNT - 1);
+            else if (!strcmp(k, "bwidth")) g_prefs.border_w = clamp(v, 1, 4);
+            else if (!strcmp(k, "speed")) g_prefs.speed = clamp(v, 0, 2);
+            else if (!strcmp(k, "ball")) g_prefs.border_all = v != 0;
+            else if (!strcmp(k, "glow")) g_prefs.glow = v != 0;
+            else if (!strcmp(k, "fps")) {
+                g_prefs.fps = 60;
+                for (int f : FPS_CHOICES)
+                    if (f == v) g_prefs.fps = v;
+            } else if (!strcmp(k, "tz")) g_prefs.tz_minutes = clamp(v, -12 * 60, 14 * 60);
+            else if (!strcmp(k, "layout")) g_prefs.layout = clamp(v, 0, KBD_LAYOUTS - 1);
+            else if (!strcmp(k, "rdelay")) g_prefs.repeat_delay = clamp(v, 0, 3);
+            else if (!strcmp(k, "rrate")) g_prefs.repeat_rate = clamp(v, 0, 2);
+            else if (!strcmp(k, "lockhash") && strlen(eq + 1) == 64) strlcpy(g_prefs.lock_hash, eq + 1, sizeof g_prefs.lock_hash);
+            else if (!strcmp(k, "locksalt") && strlen(eq + 1) == 32) strlcpy(g_prefs.lock_salt, eq + 1, sizeof g_prefs.lock_salt);
+            else if (!strcmp(k, "night")) g_prefs.night_light = v != 0;
+        }
+        line = more ? end + 1 : end;
+    }
+    kfree(text);
+}
+
+void reminders_write() {
+    if (!fs_data_mounted()) return;
+    char text[MAX_REMINDERS * 64];
+    usize len = 0;
+    for (const Reminder& r : g_reminders) {
+        if (!r.used) continue;
+        int n = ksnprintf(text + len, sizeof text - len, "%04u-%02u-%02u %02u:%02u %s\n", r.year, r.month, r.day, r.hour,
+                          r.minute, r.text);
+        if (n < 0 || len + (usize)n >= sizeof text) break;
+        len += (usize)n;
+    }
+    if (!write_whole_file("/data/reminders.txt", text, len)) kprintf("gui: could not write /data/reminders.txt\n");
+}
+
+void reminders_load() {
+    char* text = read_whole_file("/data/reminders.txt", 8192);
+    if (!text) return;
+    int count = 0;
+    for (char* line = text; *line && count < MAX_REMINDERS;) {
+        char* end = line;
+        while (*end && *end != '\n') end++;
+        bool more = *end == '\n';
+        *end = 0;
+        // "YYYY-MM-DD HH:MM text"
+        auto digits = [&](const char* p, int n) {
+            for (int i = 0; i < n; i++)
+                if (p[i] < '0' || p[i] > '9') return false;
+            return true;
+        };
+        if (end - line >= 17 && digits(line, 4) && line[4] == '-' && digits(line + 5, 2) && line[7] == '-' &&
+            digits(line + 8, 2) && line[10] == ' ' && digits(line + 11, 2) && line[13] == ':' && digits(line + 14, 2)) {
+            int y = parse_int(line), mo = parse_int(line + 5), d = parse_int(line + 8), h = parse_int(line + 11),
+                mi = parse_int(line + 14);
+            const char* t = line + 16;
+            while (*t == ' ') t++;
+            if (y >= 2000 && y <= 2200 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && *t) {
+                Reminder& r = g_reminders[count++];
+                r.used = true;
+                r.year = (u16)y;
+                r.month = (u8)mo;
+                r.day = (u8)d;
+                r.hour = (u8)h;
+                r.minute = (u8)mi;
+                strlcpy(r.text, t, sizeof r.text);
+            }
+        }
+        line = more ? end + 1 : end;
+    }
+    kfree(text);
+}
+
+// ------------------------------------------------------------ lock screen --
+void hex_of(const u8* bytes, usize n, char* out) {
+    static const char* D = "0123456789abcdef";
+    for (usize i = 0; i < n; i++) {
+        out[i * 2] = D[bytes[i] >> 4];
+        out[i * 2 + 1] = D[bytes[i] & 15];
+    }
+    out[n * 2] = 0;
+}
+
+bool unhex(const char* hex, u8* out, usize n) {
+    auto val = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    for (usize i = 0; i < n; i++) {
+        int hi = val(hex[i * 2]), lo = hi < 0 ? -1 : val(hex[i * 2 + 1]);
+        if (lo < 0) return false;
+        out[i] = (u8)(hi << 4 | lo);
+    }
+    return hex[n * 2] == 0;
+}
+
+bool password_set() { return g_prefs.lock_hash[0] != 0; }
+
+void password_hash(const u8* salt, const char* text, usize len, u8 out[32]) {
+    Sha256 h;
+    h.init();
+    h.update(salt, 16);
+    h.update(text, len);
+    h.final(out);
+}
+
+void set_password(const char* text, usize len) {
+    u8 salt[16], digest[32];
+    csprng_bytes(salt, sizeof salt);
+    password_hash(salt, text, len, digest);
+    hex_of(salt, 16, g_prefs.lock_salt);
+    hex_of(digest, 32, g_prefs.lock_hash);
+    memset(digest, 0, sizeof digest);
+    prefs_changed();
+}
+
+// Constant time: the comparison takes as long whatever the difference.
+bool password_matches(const char* text, usize len) {
+    u8 salt[16], want[32], got[32];
+    if (!password_set() || !unhex(g_prefs.lock_salt, salt, 16) || !unhex(g_prefs.lock_hash, want, 32)) return false;
+    password_hash(salt, text, len, got);
+    u8 diff = 0;
+    for (int i = 0; i < 32; i++) diff |= (u8)(want[i] ^ got[i]);
+    memset(got, 0, sizeof got);
+    return diff == 0;
+}
+
+void lock_screen() {
+    if (!password_set()) {
+        notify("Lock screen", "Set a password first: Settings, Security.");
+        return;
+    }
+    close_menu();
+    close_calendar();
+    close_context_menu();
+    switcher_finish(false);
+    close_tray();
+    g_locked = true;
+    g_pw_len = 0;
+    g_pw_text[0] = 0;
+    g_pw_wrong = false;
+    damage_all();
+}
+
+void draw_lock_screen(Surface& back) {
+    Rect all{0, 0, g.W, g.H};
+    Surface wv = g.wall.sub(all.intersect(back.clip));
+    blit(back, back.clip.x, back.clip.y, wv);
+    fill_rect(back, all, rgba(0, 0, 0, 120));
+    DateTime now = local_now();
+    char line[64];
+    u32 hour = now.hour;
+    const char* suffix = "";
+    if (g_prefs.clock_12h) {
+        suffix = hour >= 12 ? " PM" : " AM";
+        hour = hour % 12 ? hour % 12 : 12;
+    }
+    ksnprintf(line, sizeof line, "%02u:%02u%s", hour, now.minute, suffix);
+    const Font& big = g.W >= 1100 ? g.display_big : g.display;
+    int tw = measure_text(big, line);
+    int cy = g.H / 2 - 120;
+    draw_text(back, big, (g.W - tw) / 2, cy - big.height, line, theme::TEXT);
+    ksnprintf(line, sizeof line, "%s %d %s %d", DAY_LONG[weekday(now.year, now.month, now.day)], now.day,
+              MONTH_NAMES[now.month - 1], now.year);
+    tw = measure_text(g.font, line);
+    draw_text(back, g.font, (g.W - tw) / 2, cy + 8, line, theme::TEXT_MUTED);
+    // The password field: a dot per character.
+    Rect f{(g.W - 300) / 2, cy + 60, 300, 40};
+    fill_rect_rounded(back, f, 12, rgba(255, 255, 255, 18));
+    stroke_rect_rounded(back, f, 12, g_pw_wrong ? rgb(248, 113, 113) : with_alpha(accent(), 150));
+    if (g_pw_len) {
+        for (int i = 0; i < g_pw_len && i < 24; i++) fill_circle_aa(back, f.x + 18 + i * 11, f.y + 20, 4, theme::TEXT);
+    } else {
+        draw_text(back, g.font, f.x + 14, f.y + (f.h - g.font.height) / 2, "Password", theme::TEXT_MUTED);
+    }
+    const char* msg = g_pw_wrong ? "That is not the password." : "Enter to unlock";
+    tw = measure_text(g.font, msg);
+    draw_text(back, g.font, (g.W - tw) / 2, f.bottom() + 12, msg, g_pw_wrong ? rgb(248, 113, 113) : theme::TEXT_MUTED);
+}
+
 void refresh_everything() {
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g.windows[i].used) g.windows[i].needs_paint = true;
@@ -2288,15 +3022,70 @@ void settings_apply(u8 act, int val) {
         if (!set_resolution(MODES[val].w, MODES[val].h)) kprintf("gui: could not switch to %dx%d\n", MODES[val].w, MODES[val].h);
         break;
     case ACT_FPS: g_prefs.fps = val; break;
+    case ACT_PW_FIELD:
+        g_pw_editing = true;
+        g_pw_len = 0;
+        g_pw_text[0] = 0;
+        break;
+    case ACT_PW_SET:
+        if (g_pw_len) set_password(g_pw_text, (usize)g_pw_len);
+        else g_pw_editing = true;
+        memset(g_pw_text, 0, sizeof g_pw_text);
+        g_pw_len = 0;
+        if (password_set()) g_pw_editing = false;
+        break;
+    case ACT_PW_CLEAR:
+        g_prefs.lock_hash[0] = 0;
+        g_prefs.lock_salt[0] = 0;
+        g_pw_editing = false;
+        break;
+    case ACT_LOCK: lock_screen(); break;
+    case ACT_LAYOUT:
+        g_prefs.layout = val;
+        ps2kbd_set_layout(val);
+        break;
+    case ACT_RDELAY:
+        g_prefs.repeat_delay = val;
+        ps2kbd_set_repeat(val, g_prefs.repeat_rate);
+        break;
+    case ACT_RRATE:
+        g_prefs.repeat_rate = val;
+        ps2kbd_set_repeat(g_prefs.repeat_delay, val);
+        break;
     case ACT_TZ: {
         int tz = g_prefs.tz_minutes + val;
         g_prefs.tz_minutes = tz < -12 * 60 ? -12 * 60 : tz > 14 * 60 ? 14 * 60 : tz;
         break;
     }
+    case ACT_FORMAT: {
+        if (g_format_confirm != val) {
+            g_format_confirm = val;         // first press: ask again
+            break;
+        }
+        g_format_confirm = -1;
+        DiskInfo disks[8];
+        u32 count = fs_disks(disks, 8);
+        if (val < 0 || (u32)val >= count) break;
+        Result<void> r = fs_data_format(disks[val].name);
+        if (r.ok()) {
+            notify("Storage", "Settings and reminders are now saved on /data.");
+            prefs_write_now();
+            reminders_write();
+        } else {
+            notify("Storage", "The disk could not be set up.");
+        }
+        break;
+    }
     default: return;
     }
+    if (act != ACT_TAB && act != ACT_FORMAT && act != ACT_PW_FIELD && act != ACT_LOCK) prefs_changed();
+    if (act != ACT_PW_FIELD && act != ACT_PW_SET) g_pw_editing = false;
+    if (act != ACT_FORMAT) g_format_confirm = -1;
     refresh_everything();
 }
+
+void prefs_changed();
+void reminders_write();
 
 // The custom accent colour under x on the hue strip (content coordinates).
 void hue_pick(int x) {
@@ -2306,6 +3095,7 @@ void hue_pick(int x) {
     if (g_prefs.accent == ACCENT_COUNT && g_prefs.custom_hue == hue) return;
     g_prefs.accent = ACCENT_COUNT;
     g_prefs.custom_hue = hue;
+    prefs_changed();
     refresh_everything();
 }
 
@@ -2340,6 +3130,7 @@ void menu_activate(int item) {
 }
 
 void on_press(int button) {
+    if (g_locked) return;
     Hit h = hit_test(g.mx, g.my);
     if (button != 0) {
         if (h.what == Hit::Nothing && g.menu_open) close_menu();
@@ -2353,6 +3144,7 @@ void on_press(int button) {
     }
     if (g.menu_open && h.what != Hit::Menu && h.what != Hit::Launcher) close_menu();
     if (g.cal_open && h.what != Hit::Calendar && h.what != Hit::Clock) close_calendar();
+    if (g.tray_open && h.what != Hit::TrayPopup && h.what != Hit::Tray) close_tray();
     if (g.ctx_open && h.what != Hit::Context) close_context_menu();
     u64 now = refclock_now_us();
     bool double_click = h.what == Hit::Title && h.win == g.last_click_win && now - g.last_click_us < 400000;
@@ -2363,19 +3155,46 @@ void on_press(int button) {
         close_context_menu();
         switch (h.item) {
         case 0: open_kind(Kind::Terminal); break;
-        case 1: open_kind(Kind::Settings); break;
-        case 2:
+        case 1: open_kind(Kind::Files); break;
+        case 2: open_kind(Kind::Notes); break;
+        case 3: open_kind(Kind::Settings); break;
+        case 4:
             g_settings_tab = 1;
             open_kind(Kind::Settings);
             for (int i = 0; i < MAX_WINDOWS; i++)
                 if (g.windows[i].used && g.windows[i].kind == Kind::Settings) g.windows[i].needs_paint = true;
             break;
-        case 3: toggle_show_desktop(); break;
-        case 4: open_kind(Kind::About); break;
+        case 5: toggle_show_desktop(); break;
+        case 6: open_kind(Kind::About); break;
         default: break;
         }
         break;
     case Hit::Toast: dismiss_toast(h.item); break;
+    case Hit::Tray:
+        if (g.tray_open) close_tray();
+        else open_tray();
+        break;
+    case Hit::TrayPopup:
+        for (int i = 0; i < g_tray_ctl_count; i++) {
+            const Ctl& c = g_tray_ctls[i];
+            if (!c.r.contains(g.mx, g.my)) continue;
+            switch (c.act) {
+            case TRAY_NIGHT:
+                g_prefs.night_light = !g_prefs.night_light;
+                prefs_changed();
+                damage_all();
+                break;
+            case TRAY_DESKTOP: close_tray(); toggle_show_desktop(); break;
+            case TRAY_LOCK: close_tray(); lock_screen(); break;
+            case TRAY_SETTINGS: close_tray(); open_kind(Kind::Settings); break;
+            case TRAY_ACCENT: g_prefs.accent = c.val; prefs_changed(); refresh_everything(); break;
+            case TRAY_FPS: g_prefs.fps = c.val; prefs_changed(); break;
+            case TRAY_CLEAR: g_history_count = 0; damage(tray_area()); damage_all(); break;
+            }
+            damage(tray_area());
+            break;
+        }
+        break;
     case Hit::Clock:
         if (g.cal_open) close_calendar();
         else open_calendar();
@@ -2427,6 +3246,31 @@ void on_press(int button) {
         if (g.windows[h.win].kind == Kind::Settings) {
             Rect cr = content_rect(g.windows[h.win]);
             settings_click(g.mx - cr.x, g.my - cr.y);
+        } else if (h.win == g.term_win) {
+            Rect cr = content_rect(g.windows[h.win]);
+            console_lock();
+            g.term.select_begin(g.mx - cr.x, g.my - cr.y);
+            console_unlock();
+            g.term_dirty = true;
+            g.drag = Drag::Select;
+            g.drag_win = h.win;
+        } else {
+            Window& w = g.windows[h.win];
+            Rect cr = content_rect(w);
+            int cx = g.mx - cr.x, cy = g.my - cr.y;
+            bool again = h.win == g.last_content_win && now - g.last_content_us < 400000;
+            g.last_content_us = now;
+            g.last_content_win = h.win;
+            bool repaint = false;
+            if (w.kind == Kind::Calculator) repaint = g_calc.click(cx, cy, 0, app_ctx());
+            else if (w.kind == Kind::Files) repaint = g_files.click(cx, cy, 0, again ? 2 : 1, app_ctx());
+            else if (w.kind == Kind::Notes) {
+                repaint = g_notes.click(cx, cy, 0, false, app_ctx());
+                g.drag = Drag::Select;
+                g.drag_win = h.win;
+            }
+            if (repaint) w.needs_paint = true;
+            serve_open_request();
         }
         break;
     case Hit::Edge:
@@ -2447,6 +3291,14 @@ void on_press(int button) {
 void on_release(int button) {
     if (button != 0) return;
     g.hue_drag = false;
+    if (g.drag == Drag::Select) {
+        // What was swept out is the clipboard's now.
+        char text[sizeof g_clipboard];
+        console_lock();
+        usize len = g.term.selection_text(text, sizeof text);
+        console_unlock();
+        if (len) clipboard_set(text, len);
+    }
     if (g.drag == Drag::Move && g.drag_win >= 0 && g.windows[g.drag_win].used && g.snap_preview) {
         Window& w = g.windows[g.drag_win];
         if (g.snap_preview == 3) { if (!w.maximised) toggle_maximise(w); }
@@ -2479,6 +3331,18 @@ void on_motion() {
     if (g.drag != Drag::None && g.drag_win >= 0 && g.windows[g.drag_win].used) {
         Window& w = g.windows[g.drag_win];
         int dx = g.mx - g.drag_sx, dy = g.my - g.drag_sy;
+        if (g.drag == Drag::Select) {
+            Rect cr = content_rect(w);
+            if (g.drag_win == g.term_win) {
+                console_lock();
+                g.term.select_extend(g.mx - cr.x, g.my - cr.y);
+                console_unlock();
+                g.term_dirty = true;
+            } else if (w.kind == Kind::Notes) {
+                if (g_notes.click(g.mx - cr.x, g.my - cr.y, 0, true, app_ctx())) w.needs_paint = true;
+            }
+            return;
+        }
         if (g.drag == Drag::Move) {
             if (w.maximised || w.snapped) {
                 // Dragging a maximised or snapped window lets go of that:
@@ -2528,8 +3392,9 @@ void on_motion() {
     Hit h = hit_test(g.mx, g.my);
     if (h.what == Hit::Calendar || last_what == Hit::Calendar) damage(cal_rect());
     if (h.what == Hit::Context || last_what == Hit::Context) damage(ctx_rect());
-    bool panel_now = h.what == Hit::Panel || h.what == Hit::Launcher || h.what == Hit::Task;
-    bool panel_before = last_what == Hit::Panel || last_what == Hit::Launcher || last_what == Hit::Task;
+    if (h.what == Hit::TrayPopup || last_what == Hit::TrayPopup) damage(tray_rect());
+    bool panel_now = h.what == Hit::Panel || h.what == Hit::Launcher || h.what == Hit::Task || h.what == Hit::Clock || h.what == Hit::Tray;
+    bool panel_before = last_what == Hit::Panel || last_what == Hit::Launcher || last_what == Hit::Task || last_what == Hit::Clock || last_what == Hit::Tray;
     if (panel_now || panel_before) damage(panel_rect());
     int hb = -1;
     if (h.win >= 0 && (h.what == Hit::Title || h.what == Hit::Button)) hb = h.button;
@@ -2583,9 +3448,39 @@ void process_keyboard() {
             continue;
         }
         if (e.key == key::ALT && !e.pressed) switcher_finish(true);
+        if ((e.key == key::CAPS_LOCK || e.key == key::NUM_LOCK) && e.pressed) {
+            damage(panel_rect());
+            for (int i = 0; i < MAX_WINDOWS; i++)
+                if (g.windows[i].used && g.windows[i].kind == Kind::Settings) g.windows[i].needs_paint = true;
+        }
         if (!e.pressed) continue;
         if (g.super_down) g.super_chord = true;
         bool alt = e.mods & mod::ALT, super_ = e.mods & mod::SUPER, shift = e.mods & mod::SHIFT;
+        if (g_locked) {
+            if (e.key == key::ENTER) {
+                if (refclock_now_us() < g_unlock_retry_us) continue;
+                if (password_matches(g_pw_text, (usize)g_pw_len)) {
+                    g_locked = false;
+                    memset(g_pw_text, 0, sizeof g_pw_text);
+                    g_pw_len = 0;
+                    damage_all();
+                } else {
+                    g_pw_wrong = true;
+                    g_pw_len = 0;
+                    g_pw_text[0] = 0;
+                    g_unlock_retry_us = refclock_now_us() + 1000000;
+                }
+            } else if (e.key == key::BACKSPACE) {
+                if (g_pw_len) g_pw_text[--g_pw_len] = 0;
+            } else if (e.ascii >= 32 && e.ascii < 127 && !alt && !super_ && g_pw_len < (int)sizeof g_pw_text - 1) {
+                g_pw_text[g_pw_len++] = e.ascii;
+                g_pw_text[g_pw_len] = 0;
+                g_pw_wrong = false;
+            }
+            damage({0, g.H / 2 - 200, g.W, 300});
+            continue;
+        }
+        if (super_ && e.ascii == 'l') { lock_screen(); continue; }
         if (g.switcher_open) {
             if (e.key == key::TAB) switcher_step(shift ? -1 : 1);
             else if (e.key == key::ESCAPE) switcher_finish(false);
@@ -2650,6 +3545,66 @@ void process_keyboard() {
             damage(search_rect());
             continue;       // the open menu takes every key
         }
+        if (g_pw_editing && g.focus >= 0 && g.windows[g.focus].kind == Kind::Settings) {
+            if (e.key == key::ENTER) {
+                if (g_pw_len) set_password(g_pw_text, (usize)g_pw_len);
+                g_pw_editing = false;
+                memset(g_pw_text, 0, sizeof g_pw_text);
+                g_pw_len = 0;
+            } else if (e.key == key::ESCAPE) {
+                g_pw_editing = false;
+                g_pw_len = 0;
+                g_pw_text[0] = 0;
+            } else if (e.key == key::BACKSPACE) {
+                if (g_pw_len) g_pw_text[--g_pw_len] = 0;
+            } else if (e.ascii >= 32 && e.ascii < 127 && g_pw_len < (int)sizeof g_pw_text - 1) {
+                g_pw_text[g_pw_len++] = e.ascii;
+                g_pw_text[g_pw_len] = 0;
+            }
+            g.windows[g.focus].needs_paint = true;
+            continue;
+        }
+        if (g.focus >= 0 && g.windows[g.focus].used) {
+            Window& fw = g.windows[g.focus];
+            bool handled = false, repaint = false;
+            if (fw.kind == Kind::Calculator) { handled = true; repaint = g_calc.key(e, app_ctx()); }
+            else if (fw.kind == Kind::Notes) { handled = true; repaint = g_notes.key(e, app_ctx()); }
+            else if (fw.kind == Kind::Files) { handled = true; repaint = g_files.key(e, app_ctx()); }
+            if (handled) {
+                if (repaint) fw.needs_paint = true;
+                serve_open_request();
+                continue;
+            }
+        }
+        bool ctrl = e.mods & mod::CTRL;
+        if (ctrl && (e.ascii == 0x16 || e.ascii == 'v' || e.ascii == 'V')) {
+            // Paste into whatever has the keyboard.
+            if (g.cal_open) {
+                for (usize i = 0; i < g_clip_len && g_rem_len < (int)sizeof g_rem_text - 1; i++)
+                    if (g_clipboard[i] >= 32 && g_clipboard[i] < 127) g_rem_text[g_rem_len++] = g_clipboard[i];
+                g_rem_text[g_rem_len] = 0;
+                damage(cal_rect());
+            } else if (g.menu_open) {
+                for (usize i = 0; i < g_clip_len && g_search_len < (int)sizeof g_search - 1; i++)
+                    if (g_clipboard[i] >= 32 && g_clipboard[i] < 127) g_search[g_search_len++] = g_clipboard[i];
+                g_search[g_search_len] = 0;
+                search_update();
+                damage(menu_rect());
+                damage(search_rect());
+            } else if (g.focus >= 0 && g.focus == g.term_win) {
+                if (g.term.scrolled_back()) terminal_scroll(0, true);
+                for (usize i = 0; i < g_clip_len; i++) term_input_push(g_clipboard[i] == '\n' ? '\r' : g_clipboard[i]);
+            }
+            continue;
+        }
+        if (ctrl && (e.ascii == 0x03 || e.ascii == 'c' || e.ascii == 'C') && g.focus >= 0 && g.focus == g.term_win) {
+            char text[sizeof g_clipboard];
+            console_lock();
+            usize len = g.term.selection_text(text, sizeof text);
+            console_unlock();
+            if (len) clipboard_set(text, len);
+            continue;
+        }
         if (g.focus < 0 || g.focus != g.term_win) continue;
         // Shift+Page Up/Down scroll the terminal's history by a screen.
         if (shift && (e.key == key::PAGE_UP || e.key == key::PAGE_DOWN)) {
@@ -2665,6 +3620,12 @@ void process_keyboard() {
         else if (e.key == key::TAB) c = '\t';
         if (c) {
             if (g.term.scrolled_back()) terminal_scroll(0, true);      // typing returns to the bottom
+            if (g.term.has_selection()) {
+                console_lock();
+                g.term.select_clear();
+                console_unlock();
+                g.term_dirty = true;
+            }
             term_input_push(c);
         }
     }
@@ -2687,6 +3648,11 @@ void process_mouse() {
             Hit h = hit_test(g.mx, g.my);
             if (h.what == Hit::Content && h.win >= 0 && h.win == g.term_win) terminal_scroll(e.dz * 3);
             else if (h.what == Hit::Calendar) calendar_page(e.dz > 0 ? -1 : 1);
+            else if (h.what == Hit::Content && h.win >= 0) {
+                Window& w = g.windows[h.win];
+                if (w.kind == Kind::Notes && g_notes.wheel(e.dz)) w.needs_paint = true;
+                if (w.kind == Kind::Files && g_files.wheel(e.dz)) w.needs_paint = true;
+            }
         }
         u8 changed = e.buttons ^ g.buttons;
         g.buttons = e.buttons;
@@ -2886,6 +3852,8 @@ bool set_resolution(int nw, int nh) {
     g.cursor_drawn = false;
     g.cal_open = false;
     g.cal_anim = ANIM_NONE;
+    g.tray_open = false;
+    g.tray_anim = ANIM_NONE;
     damage_all();
     kprintf("gui: resolution changed to %dx%d\n", nw, nh);
     return true;
@@ -2987,6 +3955,11 @@ bool gui_init() {
     g.term_cells = cells;
     g.term.init(g.term_cells, TERM_COLS, TERM_HISTORY, g.mono);
 
+    prefs_load();
+    reminders_load();
+    ps2kbd_set_layout(g_prefs.layout);
+    if (g_prefs.repeat_delay != 1 || g_prefs.repeat_rate != 2) ps2kbd_set_repeat(g_prefs.repeat_delay, g_prefs.repeat_rate);
+    if (!g_notes.init()) kprintf("gui: no memory for the Notes buffer\n");
     render_wallpaper(g.wall, g_prefs.wallpaper, true);
     for (int i = 0; i < WALLPAPER_COUNT; i++) {
         Surface thumb(g_thumb_px[i], THUMB_W, THUMB_H, THUMB_W);
@@ -3066,12 +4039,18 @@ void gui_pump() {
         g.last_second = now.second;
         damage(clock_rect());
         if (now.second == 0 || g.last_frame_us == 0) fire_reminders(now);
+        if (g_locked && now.second == 0) damage({0, g.H / 2 - 200, g.W, 300});
         if (g.cal_open) damage(cal_rect());         // "today" can change
+        if (g.tray_open) {
+            cpu_sample();
+            damage(tray_rect());
+        }
         for (int i = 0; i < MAX_WINDOWS; i++)
             if (g.windows[i].used && g.windows[i].kind == Kind::SystemMonitor) g.windows[i].needs_paint = true;
     }
 
     u64 now_us = refclock_now_us();
+    if (g_prefs_dirty && now_us - g_prefs_dirty_us > 800000) prefs_write_now();
     // An animated border redraws about 30 times a second; nothing else on
     // an idle desktop moves.
     if (fx_animated() && now_us - g_last_anim_us >= 33000) {
@@ -3109,6 +4088,10 @@ void gui_pump() {
     if (g.cal_anim) {
         damage(cal_area());
         if (now_us - g.cal_anim_start >= ANIM_US) g.cal_anim = ANIM_NONE;
+    }
+    if (g.tray_anim) {
+        damage(tray_area());
+        if (now_us - g.tray_anim_start >= ANIM_US) g.tray_anim = ANIM_NONE;
     }
     for (int i = 0; i < MAX_TOASTS; i++) {
         Toast& t = g_toasts[i];

@@ -14,6 +14,7 @@ int ktest_smp(int argc, char** argv);
 int ktest_terminal(int argc, char** argv);
 int ktest_vfs(int argc, char** argv);
 int ktest_cerfsfuzz(int argc, char** argv);
+int ktest_sha256(int argc, char** argv);
 
 namespace {
 const KernelTest TESTS[] = {
@@ -27,6 +28,7 @@ const KernelTest TESTS[] = {
     {"vfs", "file tree: permissions, mount flags, paths and symlinks, rename/unlink rules, unmount", ktest_vfs, false},
     {"cerfsfuzz", "cerfsfuzz [seconds]: mount damaged cerfs images until the time is up (make fuzz)", ktest_cerfsfuzz, false, true},
     {"timer", "APIC timer advances at 100 Hz", ktest_timer, false},
+    {"sha256", "SHA-256 against the FIPS test vectors", ktest_sha256, false},
     {"idle", "timer ticks keep arriving while the CPU is halted", ktest_idle, false},
     {"exceptions", "exceptions <de|ud|pf|pfw|gp|bp|so|ub|fl|waf|df|lo>: trigger a fatal error (halts)", ktest_exceptions,
      true},

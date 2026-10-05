@@ -16,9 +16,82 @@ constexpr gfx::Color TERM_CURSOR_DIM = gfx::rgb(70, 76, 96);
 constexpr gfx::Color SCROLL_TRACK = gfx::rgba(255, 255, 255, 14);
 constexpr gfx::Color SCROLL_THUMB = gfx::rgba(255, 255, 255, 70);
 constexpr gfx::Color SCROLL_THUMB_BACK = gfx::rgba(96, 165, 250, 170);
+constexpr gfx::Color TERM_SEL = gfx::rgba(96, 165, 250, 110);
 constexpr int PAD = 6;
 constexpr int BAR_W = 4;
 } // namespace
+
+// ------------------------------------------------------------ selection --
+Terminal::Pos Terminal::cell_at(int px, int py) const {
+    int col = (px - PAD) / font_.width, row = (py - PAD) / font_.height;
+    if (col < 0) col = 0;
+    if (col > cols_) col = cols_;
+    if (row < 0) row = 0;
+    if (row >= rows_) row = rows_ - 1;
+    return Pos{top_ - (u64)scroll_ + (u64)row, col};
+}
+
+void Terminal::mark_selection_rows() {
+    u64 first = top_ - (u64)scroll_;
+    for (int row = 0; row < rows_; row++) {
+        u64 n = first + (u64)row;
+        const Pos& lo = sel_a_ < sel_b_ ? sel_a_ : sel_b_;
+        const Pos& hi = sel_a_ < sel_b_ ? sel_b_ : sel_a_;
+        if (n >= lo.line && n <= hi.line) mark(row);
+    }
+}
+
+void Terminal::select_begin(int px, int py) {
+    if (sel_active_) mark_selection_rows();
+    sel_active_ = true;
+    sel_a_ = sel_b_ = cell_at(px, py);
+}
+
+void Terminal::select_extend(int px, int py) {
+    if (!sel_active_) return;
+    mark_selection_rows();
+    sel_b_ = cell_at(px, py);
+    mark_selection_rows();
+}
+
+void Terminal::select_clear() {
+    if (!sel_active_) return;
+    mark_selection_rows();
+    sel_active_ = false;
+}
+
+bool Terminal::selected(u64 n, int col) const {
+    if (!has_selection()) return false;
+    const Pos& lo = sel_a_ < sel_b_ ? sel_a_ : sel_b_;
+    const Pos& hi = sel_a_ < sel_b_ ? sel_b_ : sel_a_;
+    if (n < lo.line || n > hi.line) return false;
+    if (n == lo.line && col < lo.col) return false;
+    if (n == hi.line && col >= hi.col) return false;
+    return true;
+}
+
+usize Terminal::selection_text(char* out, usize max) const {
+    usize len = 0;
+    if (!has_selection() || max == 0) {
+        if (max) out[0] = 0;
+        return 0;
+    }
+    const Pos& lo = sel_a_ < sel_b_ ? sel_a_ : sel_b_;
+    const Pos& hi = sel_a_ < sel_b_ ? sel_b_ : sel_a_;
+    u64 kept = lines_ < (u64)hist_ ? lines_ : (u64)hist_;
+    u64 oldest = lines_ - kept;
+    for (u64 n = lo.line; n <= hi.line && n < lines_; n++) {
+        if (n < oldest) continue;
+        const u8* l = line(n);
+        int from = n == lo.line ? lo.col : 0, to = n == hi.line ? hi.col : cols_;
+        if (to > cols_) to = cols_;
+        while (to > from && l[to - 1] == ' ') to--;        // trailing spaces are padding
+        for (int c = from; c < to && len + 1 < max; c++) out[len++] = (char)l[c];
+        if (n != hi.line && len + 1 < max) out[len++] = '\n';
+    }
+    out[len] = 0;
+    return len;
+}
 
 void Terminal::init(u8* cells, int max_cols, int history_lines, const gfx::Font& font) {
     cells_ = cells;
@@ -142,7 +215,21 @@ gfx::Rect Terminal::paint(gfx::Surface& s, bool focused, bool force) {
         gfx::Rect r{PAD, PAD + row * font_.height, cols_ * font_.width, font_.height};
         if (!all) gfx::fill_rect(s, {0, r.y, text_w, r.h}, TERM_BG);
         u64 n = first + (u64)row;
-        if (n < lines_) gfx::draw_text_n(s, font_, r.x, r.y, (const char*)line(n), (usize)cols_, TERM_FG);
+        if (n < lines_) {
+            // The selected cells get a tinted background under the text.
+            if (has_selection()) {
+                int from = -1;
+                for (int c = 0; c <= cols_; c++) {
+                    bool in = c < cols_ && selected(n, c);
+                    if (in && from < 0) from = c;
+                    if (!in && from >= 0) {
+                        gfx::fill_rect(s, {r.x + from * font_.width, r.y, (c - from) * font_.width, r.h}, TERM_SEL);
+                        from = -1;
+                    }
+                }
+            }
+            gfx::draw_text_n(s, font_, r.x, r.y, (const char*)line(n), (usize)cols_, TERM_FG);
+        }
         damage = damage.unite({0, r.y, text_w, r.h});
     }
     // Cursor: only on the live screen.

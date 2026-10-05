@@ -22,36 +22,34 @@ Last updated: **2026-10-05**.
 
 ## Version
 
-Latest release: **0.0.5g** (2026-10-05, tag `v0.0.5g`): desktop polish
-before phase 12 (calendar with reminders, notifications, animations,
-window snapping, Alt+Tab switcher, Settings as cards with any accent
-colour, six wallpapers, time zone, 18 resolutions up to ultrawide, frame
-rate; VirtualBox absolute mouse; terminal history and completion).
-Before it: 0.0.5f (2026-10-04, phase 11, IPC, plus the Settings window,
-launcher and taskbar), 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
+Latest release: **0.0.5h** (2026-10-05, tag `v0.0.5h`): polish round 2,
+the owner's eight picks: saved settings and reminders on a `/data` disk,
+text selection and a clipboard, Files, Notes, Calculator, keyboard
+layouts and repeat, a lock screen (salted SHA-256), a tray with quick
+settings and a CPU meter. Before it: 0.0.5g (2026-10-05, polish round 1:
+calendar, notifications, animations, snapping, Alt+Tab, Settings cards,
+VirtualBox absolute mouse), 0.0.5f (2026-10-04, phase 11, IPC), 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
 files; the OS renamed **Cerberus**, formerly Lumen), 0.0.5b (desktop
 polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.5h-dev+<commit>`. The source is also on GitHub:
+tree now builds as `0.0.5i-dev+<commit>`. The source is also on GitHub:
 https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
 request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-05):** 0.0.5g is released, in
-`dist/`, pushed, and verified on VirtualBox (4 CPUs). The owner chose
-"more polish until we start phase 12" and set the iteration loop in
-CLAUDE.md ("After every iteration"): ship to VirtualBox, rewrite the HTML
-list on their Windows desktop, end with 8 numbered candidates. The last
-list offered: 1 saved settings/reminders (needs the auto-mount decision),
-2 text selection and copy/paste in the terminal, 3 a Files window, 4 a
-Notes/text editor window, 5 a Calculator, 6 keyboard layouts and key
-repeat settings, 7 a lock screen (Super+L) with a password, 8 a system
-tray with a quick-settings popup (volume-less: night light, accent, Wi-Fi
-placeholder). Wait for the owner's numbers. Nothing is half-written.
-docs/FEATURES.md lists what exists; docs/BUGS.md the open bugs.
+**Where the last session stopped (2026-10-05, late):** 0.0.5h is
+released, in `dist/`, pushed, verified on VirtualBox (4 CPUs). The owner
+asked for all eight candidates (done) and then "re-go through all phases
+1-11 and iterate to make it better each phase" — that is **round 3**,
+described in docs/TO_FINISH.md "Right now", step 2; it is the next job.
+The Desktop HTML list offers eight further polish candidates for after it
+(image viewer and own wallpaper; virtual desktops; taskbar pins and
+previews; terminal colours and a second terminal; a grown-up System
+Monitor; themes and UI scale; auto-lock and a boot splash; repeating
+reminders with snooze). Nothing is half-written.
 
 ---
 
@@ -188,6 +186,14 @@ All on 2026-10-05, on the 0.0.5g code.
   and `>>`, `cd`, `pwd`, `mount`. `test vfs`, `test cerfsfuzz`.
 - VirtualBox guest device (`kernel/drivers/vmmdev.cpp`, 0.0.5g): the
   host's absolute mouse position on every PS/2 packet (B-003).
+- 0.0.5h: `/data` (the first cerfs disk labelled `data`, mounted at boot;
+  `fs_data_format` from Settings → Storage); `desktop.conf` and
+  `reminders.txt` on it; a clipboard and terminal selection; Files, Notes
+  and Calculator (`kernel/gui/files.cpp`, `notes.cpp`, `calc.cpp`);
+  keyboard layouts US/UK/DE/FR and typematic settings (`ps2kbd`); a lock
+  screen with salted SHA-256 (`kernel/lib/sha256.cpp`, `test sha256`);
+  the tray (night light, CPU per core, notification history). The full
+  list is docs/FEATURES.md.
 - Phase 10: drivers. A driver registry (`drivers`); PCI capabilities and MSI;
   AHCI by interrupt where MSI exists; NVMe and virtio-blk (polled); the
   keyboard in scancode set 2 with the full key map, Num Lock and repeat;

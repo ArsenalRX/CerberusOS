@@ -1327,3 +1327,44 @@ kept? Until then nothing persists (B-011).
 Rejected: a true monitor refresh-rate setting (nothing in a VM to set it
 on); reading the host pointer through the VMMDev interrupt (more code for
 the same result); persisting preferences in `/tmp` (not persistence).
+
+---
+
+## 2026-10-05 — Round 2 of polish: the eight additions (owner: "do all 1-8")
+
+- **/data and auto-mount.** "Do all 1-8" answered the OPEN question of the
+  morning: the first disk whose cerfs label is `data` is mounted at `/data`
+  at boot. The label, not "any cerfs disk", so that the test images and
+  disks the user mounts by hand keep working as before; Settings → Storage
+  formats a blank disk with that label (two presses). Preferences are one
+  text file of `key=value` lines, parsed defensively; reminders one line
+  each. Writes are debounced (0.8 s) so dragging the hue strip does not
+  write hundreds of files.
+- **Applications in their own files** (`kernel/gui/calc.cpp`, `notes.cpp`,
+  `files.cpp`, interface in `app.h`): paint + key + click + wheel over a
+  Surface, one instance per window kind, dispatched from `desktop.cpp`.
+  This is the shape Pane's clients will have; moving them out of the
+  kernel in phase 12 is then a transport change.
+- **Calculator arithmetic** is 64-bit fixed point with six decimals and a
+  128-bit intermediate, because the kernel has neither floating point
+  (`-mno-sse`) nor libgcc's 128-bit division; a shift-subtract divider is
+  enough for one operation per key.
+- **Lock screen password**: salted SHA-256 (new `kernel/lib/sha256.cpp`,
+  with the FIPS vectors as `test sha256`), constant-time comparison, one
+  second between attempts; the hash and salt live in `desktop.conf`. This
+  is the honest minimum until phase 15's Argon2id and user accounts; a
+  reboot bypasses it (the root file system is open), which docs/FEATURES.md
+  says.
+- **Keyboard layouts** are overrides on the US map (ASCII only; a key with
+  no ASCII character types nothing; AltGr is the right Alt). The repeat
+  rate goes to the keyboard with interrupts off so its ACKs are not taken
+  by the interrupt handler.
+- **Night light** is applied in the present step (per written pixel),
+  so it costs nothing while the screen is still and needs no second
+  buffer.
+- **Tray** rather than a second panel: one popup with the things one
+  reaches for most, and the notification history the toasts lacked.
+
+Rejected: storing preferences in the cerfs superblock (one disk, one
+owner, no room); a plain-text lock password (never); an interpreter for a
+config format richer than `key=value`.

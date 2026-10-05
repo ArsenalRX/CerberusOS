@@ -1,0 +1,42 @@
+# Lock screen (0.0.5h): a password is set in Settings (Security, the 7th
+# sidebar entry: click the field, type, Enter), Super+L locks the desktop,
+# a wrong password is refused, the right one unlocks, and the terminal
+# then takes input again. Settings window at 290,92 (700x560); the
+# password field is at content (208,58).
+gui: desktop up at 1280x800
+cerberus kernel shell
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key set
+!wait 0.8
+!mouseto 370 393
+!button left down
+!button left up
+!wait 0.4
+!mouseto 600 198
+!button left down
+!button left up
+!wait 0.3
+!key secret1
+!wait 0.5
+!screenshot build/lock-1.png
+!keys meta_l l
+!wait 0.6
+!screenshot build/lock-2.png
+!key wrong
+!wait 1.5
+!screenshot build/lock-3.png
+!key secret1
+!wait 0.6
+!screenshot build/lock-4.png
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=
+!key test sha256
+!wait 2
+sha256: 4 vectors, 0 failed

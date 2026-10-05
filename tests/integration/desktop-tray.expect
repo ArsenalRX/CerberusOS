@@ -1,0 +1,29 @@
+# The tray (0.0.5h): the chevron left of the lock pills on the taskbar
+# opens the quick settings; Night light tints the screen; a notification
+# sent from the shell appears in its history. 1280x800: the tray button is
+# at about x=1044, y=770; the tray's first toggle (Night light) is its
+# top-left button.
+gui: desktop up at 1280x800
+cerberus kernel shell
+!key notify remembered
+!wait 0.5
+!mouseto 1044 770
+!button left down
+!button left up
+!wait 0.6
+!screenshot build/tray-1.png
+!mouseto 960 374
+!button left down
+!button left up
+!wait 0.6
+!screenshot build/tray-2.png
+!mouseto 960 374
+!button left down
+!button left up
+!wait 0.4
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=

@@ -22,6 +22,39 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+### Security
+- A **lock screen**: Super+L (or the tray's Lock) locks the desktop behind
+  a password set in Settings → Security; the password is stored as a
+  salted SHA-256 hash, compared in constant time, and a wrong try waits a
+  second. (Argon2id and real users come with phase 15.)
+
+### Added
+- **Saved settings and reminders** (B-011): the first disk holding a cerfs
+  volume labelled `data` is mounted at `/data` at boot; Settings → Storage
+  sets a blank disk up for it. Everything in Settings, the custom accent,
+  the keyboard choices and reminders survive a restart.
+- **Text selection and a clipboard**: drag over the terminal to select
+  (it copies), Ctrl+C / Ctrl+V in the terminal, the launcher, the calendar
+  and the new applications.
+- **Files**: browse folders and disks, sizes and dates, New folder,
+  Rename, Delete (asks twice), open a text file in Notes with a
+  double-click.
+- **Notes**: a text editor with selection, undo, find, Ctrl+S (to `/data`
+  or `/tmp`), mouse and wheel; 64 KiB per file.
+- **Calculator**: typed or clicked expressions with brackets, ^ and %,
+  six decimals, the result in hex and binary, memory, copy.
+- **Keyboard settings**: US, UK, German and French (AZERTY) layouts with
+  AltGr, repeat delay and rate; CAPS / NUM-off pills on the taskbar.
+- **Tray** (the chevron beside the clock): night light, show desktop,
+  lock, Settings, accent swatches, frame rate, a CPU meter per core, RAM,
+  and the notification history.
+- Settings tabs: Keyboard, Storage, Security.
+- `test sha256` (FIPS vectors).
+
+### Changed
+- Launcher search ranks name matches above keyword matches.
+- The large display fonts include digits (the lock screen's clock).
+
 ## 0.0.5g — 2026-10-05
 
 ### Fixed
