@@ -46,3 +46,32 @@ cerberus> help
 !wait 0.5
 cerberus> ticks
 ticks=
+# The calendar (0.0.5g): click the clock, add a reminder for today, and a
+# notification from the shell. Then close the System Monitor by its close
+# button (its frame is 220,152 520x360) while it fades out.
+!mouseto 1200 770
+!button left down
+!button left up
+!wait 0.5
+!key 14:30 Call home
+!wait 0.5
+!screenshot build/desktop-5.png
+!mouseto 120 470
+!button left down
+!button left up
+!key notify hello from the shell
+!wait 0.6
+!screenshot build/desktop-6.png
+!mouseto 716 168
+!button left down
+!button left up
+!wait 0.1
+!mouseto 120 470
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=
+!key gui
+!wait 0.5
+frames

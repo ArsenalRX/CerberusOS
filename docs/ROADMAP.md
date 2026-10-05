@@ -13,18 +13,18 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-04**, at release **0.0.5f** (phase 11 complete).
+Last updated: **2026-10-05**, at release **0.0.5g** (phase 11 complete; desktop polish).
 
 ---
 
-## What Cerberus can do today (0.0.5f)
+## What Cerberus can do today (0.0.5g)
 
 Cerberus is a 64-bit operating system written from scratch. It boots in
 QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
 
 **Starting up**
-- Boots through the Limine boot menu into its own kernel in about a
-  second; prints a boot log on screen and on the serial port.
+- Boots straight into its own kernel in about a second; prints a boot
+  log on screen and on the serial port.
 - Finds the processor, memory, interrupt controllers, timers and the
   real-time clock on its own.
 - Uses **every processor core** (tested with 4).
@@ -66,6 +66,14 @@ QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
   moved, resized, stacked, minimised, maximised and closed with the mouse.
 - Five windows: Terminal (the kernel shell), Settings, System Monitor,
   Memory Map, About.
+- (0.0.5g) Windows open and close with a fade; they **snap** to half the
+  screen when dropped at an edge (or Super+arrows); double-click a title
+  bar to maximise; **Alt+Tab** shows a switcher; **Super+D** clears the
+  desktop; right-click the desktop for a menu; the taskbar's clock opens a
+  **calendar with reminders**, which pop up as **notifications**; Print
+  Screen saves the screen to a file; the terminal has command history and
+  Tab completion. On VirtualBox the mouse pointer follows the host's
+  exactly.
 - **Settings**: accent colours, three wallpapers, window corner shape,
   RGB window borders (static, breathing, flashing, rainbow, chase), and
   the screen resolution (in VirtualBox and QEMU).

@@ -10,6 +10,11 @@ struct MouseEvent {
     i16 dx, dy;         // relative motion, y positive = down
     i8 dz;              // wheel notches, positive = up
     u8 buttons;         // bit 0 left, 1 right, 2 middle
+    // Where the pointer is, 0..65535 across each axis of the screen, when
+    // the hypervisor reports it (VirtualBox with mouse integration); then
+    // dx and dy are to be ignored.
+    bool absolute;
+    u16 ax, ay;
 };
 
 // Enables the auxiliary device and IRQ 12. Requires ioapic_init. Returns

@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-04 (after release 0.0.5e).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-05 (release 0.0.5g).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,19 +27,42 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: phase 12 (Pane, the window server as a user program)
+## Right now: desktop polish rounds, then phase 12 (Pane)
 
-Version **0.0.5f** (phase 11, IPC) was released on 2026-10-04. The tree
-is on `0.0.5g` development builds. The owner said on 2026-10-04 to "finish
-all phases": do not stop to ask between phases; finish, verify and release
-each, then go on.
+Version **0.0.5g** (desktop polish: calendar, reminders, notifications,
+animations, snapping, Alt+Tab, Settings cards, VirtualBox mouse) is the
+release of 2026-10-05. The owner said on 2026-10-05: "do more polish until
+we start phase 12", with a fixed loop: each iteration ships to VirtualBox,
+updates the HTML list on their Windows desktop, and ends with **8
+numbered candidates**; the owner picks by number (CLAUDE.md, "After every
+iteration"). docs/FEATURES.md lists what exists; docs/BUGS.md the bugs.
 
-**Start here next session.** Phase 12 has not been started. Before writing
-code, check whether the owner answered the question left open on
-2026-10-04: phase 12 next, or more desktop polish first. Their requests
-that day were all about the look of the desktop (docs/DECISIONS.md, the
-last two entries), so expect more of those; do them in the kernel-hosted
-desktop (`kernel/gui/desktop.cpp`) until Pane can show them.
+**The owner's instruction of 2026-10-05 (evening):** "do all 1-8
+additions and re-go through all phases 1-11 and see if you can iterate to
+make it better each phase; i want you to complete it. I mess around with
+it then ask you to iterate." So, in order, each step a verified build in
+`dist/` and an updated Desktop HTML list:
+
+1. **Round 2 (→ 0.0.5h), the 8 additions:** (1) saved settings and
+   reminders — the owner's "do all" is the yes to auto-mounting a cerfs
+   disk at boot (`/data`), with a Settings button that formats an empty
+   disk for it; (2) text selection, copy and paste in the terminal and a
+   desktop clipboard; (3) a Files window; (4) a Notes text editor;
+   (5) a Calculator; (6) keyboard settings (layouts, repeat, lock
+   indicators); (7) a lock screen (Super+L, password in Settings, hashed);
+   (8) a system tray with quick settings, a CPU/RAM meter and the
+   notification history. New windows go in their own files under
+   `kernel/gui/` (an app = paint + key + click + wheel over a Surface),
+   dispatched from `desktop.cpp`.
+2. **Round 3 (→ 0.0.5i…), phases 1–11 revisited:** for each phase, read
+   its SPEC §5/§5A rows and docs/DECISIONS.md deviations, run its tests
+   and benchmarks, and close what is closable: phase 4 the minor-page-fault
+   cost; phase 6 one-shot timer / tickless idle; phase 9 `fsck`-lite and
+   hard links; phase 10 MSI-X (NVMe/virtio interrupts), keyboard LEDs;
+   phase 11 non-blocking `port_send`, signal masks, demand-paged file
+   mmap, passing ports through ports; `make bench` and a new
+   docs/BENCH.md block. Record each in docs/BUGS.md or docs/DECISIONS.md.
+3. Then phase 12 (below) when the owner says so.
 
 First steps of phase 12, in order (SPEC §5, §5A and §9 first):
 
@@ -64,9 +87,10 @@ First steps of phase 12, in order (SPEC §5, §5A and §9 first):
 - Phase 10 left-overs: MSI-X (NVMe and virtio-blk are polled), keyboard
   LEDs, layouts other than US.
 - **Minor page fault is over budget** (docs/BENCH.md). Profile it first.
-- Desktop left-overs: open/close animations, one-shot-timer frame pacing,
-  saving preferences, content that reflows when a window is resized, more
-  wallpapers and a custom accent colour, a real application icon set.
+- Desktop left-overs: one-shot-timer frame pacing, saving preferences and
+  reminders (needs the auto-mount decision, B-011), a Settings window that
+  scrolls (B-012), a real application icon set, text selection and
+  copy/paste in the terminal, a file manager and an editor (phase 13).
 - `make bench` was not re-run for 0.0.5f: run it and add a block to
   docs/BENCH.md (port round trip, futex, thread create/join are new).
 - Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md;
@@ -149,6 +173,15 @@ First steps of phase 12, in order (SPEC §5, §5A and §9 first):
   MSI, AHCI by interrupt, NVMe, virtio transport + virtio-blk, PS/2
   keyboard in set 2 with the full map, `/dev/input`, `/dev/fb0`, device
   access rule, ACPI power off and restart, `runas`, sticky `/tmp`.
+- **Phase 11 — IPC. Release 0.0.5f (2026-10-04).** Plus the Settings
+  window, launcher with search, floating taskbar, resolution switching.
+- **Release 0.0.5g (2026-10-05): desktop polish.** Calendar with
+  reminders, notifications, animations, window snapping, Alt+Tab
+  switcher, Super+D, double-click maximise, right-click menu, Print
+  Screen, terminal history and completion, Settings as cards with a hue
+  strip, six wallpapers, time zone, 18 resolutions (ultrawide), frame
+  rate; VirtualBox absolute mouse (`vmmdev`); Limine without a menu wait;
+  docs/BUGS.md and docs/FEATURES.md.
 
 ---
 

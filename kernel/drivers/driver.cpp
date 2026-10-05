@@ -39,7 +39,7 @@ void drivers_probe_all() {
     for (u32 i = 0; i < pci_count(); i++) {
         const PciDevice* dev = pci_get(i);
         for (Driver* d = g_drivers; d; d = d->next) {
-            if (d->bus != DriverBus::Pci || !matches(*d, *dev)) continue;
+            if (d->bus != DriverBus::Pci || !d->attach || !matches(*d, *dev)) continue;
             if (d->probe && !d->probe(dev)) continue;
             Result<void> r = d->attach(dev);
             if (r.ok()) {

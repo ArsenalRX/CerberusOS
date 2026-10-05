@@ -1,9 +1,11 @@
 # The launcher's search and the Settings window (0.0.5g): typing in the
-# search box finds an application; Settings changes the accent colour, the
-# wallpaper and the window-border effect; the screen resolution changes and
-# changes back, with the desktop and the shell still working at each size.
+# search box finds an application; Settings changes the accent colour (a
+# swatch, then any hue from the strip), the wallpaper and the window-border
+# effect; the screen resolution changes and changes back, with the desktop
+# and the shell still working at each size.
 # Coordinates assume the 1280x800 test display and the Settings window
-# opening centred (frame at 290,92, 700x560).
+# opening centred (frame at 290,92, 700x560; content origin 291,125; the
+# sidebar is 172 wide, cards start at content x=192, their chips at x=208).
 bga: display adapter
 gui: desktop up at 1280x800
 cerberus kernel shell
@@ -15,30 +17,40 @@ cerberus kernel shell
 !key set
 !wait 1
 !screenshot build/settings-1.png
-# Appearance: the Aurora wallpaper and the teal accent.
-!mouseto 680 292
+# Appearance: a custom hue from the strip, then the teal swatch.
+!mouseto 720 233
+!button left down
+!mouse 40 0
+!button left up
+!wait 0.5
+!screenshot build/settings-1b.png
+!mouseto 793 199
 !button left down
 !button left up
-!mouseto 769 185
-!button left down
-!button left up
-# Window borders: the Chase effect, 3 pixels wide.
+# Wallpaper tab: Aurora.
 !mouseto 370 193
 !button left down
 !button left up
-!mouseto 510 223
+!mouseto 690 220
 !button left down
 !button left up
-!mouseto 636 395
+# Window borders: the Chase effect, 3 pixels wide.
+!mouseto 370 233
+!button left down
+!button left up
+!mouseto 535 236
+!button left down
+!button left up
+!mouseto 660 420
 !button left down
 !button left up
 !wait 0.7
 !screenshot build/settings-2.png
 # Display: down to 1024x768.
-!mouseto 340 233
+!mouseto 340 273
 !button left down
 !button left up
-!mouseto 634 215
+!mouseto 658 198
 !button left down
 !button left up
 !wait 1.5
@@ -51,11 +63,11 @@ gui: resolution changed to 1024x768
 !key ticks
 !wait 1
 ticks=
-# And back up to 1280x800.
+# And back up to 1280x800 (the Settings window kept its place).
 !mouseto 600 107
 !button left down
 !button left up
-!mouseto 864 215
+!mouseto 888 198
 !button left down
 !button left up
 !wait 1.5

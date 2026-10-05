@@ -43,6 +43,9 @@ extern "C" const u8 _binary_fonts_aa_end[];
 
 using namespace gfx;
 
+// Wakes the compositor thread (defined with it, below).
+void g_compositor_wake_hint();
+
 namespace {
 
 // ---------------------------------------------------------------- theme --
@@ -108,12 +111,13 @@ const AccentChoice ACCENTS[] = {
     {"Green", rgb(74, 222, 128)},  {"Teal", rgb(45, 212, 191)},    {"Silver", rgb(226, 232, 240)},
 };
 constexpr int ACCENT_COUNT = sizeof ACCENTS / sizeof ACCENTS[0];
-constexpr int WALLPAPER_COUNT = 3;
-const char* const WALLPAPER_NAMES[WALLPAPER_COUNT] = {"Nebula", "Aurora", "Ember"};
+constexpr int WALLPAPER_COUNT = 6;
+const char* const WALLPAPER_NAMES[WALLPAPER_COUNT] = {"Nebula", "Aurora", "Ember", "Ocean", "Sunset", "Graphite"};
 constexpr int MAX_RADIUS = 16;
 
 struct Prefs {
-    int accent = 0;
+    int accent = 0;                 // an index into ACCENTS, or ACCENT_COUNT: the custom hue
+    int custom_hue = 1000;          // 0..1535 round the colour wheel
     int wallpaper = 0;
     int radius = 12;                // window corners: 0 square, 6 soft, 12 round
     bool panel_glass = true;        // the taskbar lets the wallpaper through
@@ -126,10 +130,27 @@ struct Prefs {
     int speed = 1;                  // 0 slow, 1 normal, 2 fast
     bool border_all = false;        // every window, or only the focused one
     bool glow = true;
+    int fps = 144;                  // most frames per second the compositor presents
+    int tz_minutes = 0;             // local time = the clock's time plus this
 };
 Prefs g_prefs;
 
-inline Color accent() { return ACCENTS[g_prefs.accent].c; }
+// h in 0..1535: once round the colour wheel at full brightness.
+Color hue_color(u32 h) {
+    h %= 1536;
+    u8 f = (u8)(h & 255), q = (u8)(255 - f);
+    switch (h >> 8) {
+    case 0: return rgb(255, f, 0);
+    case 1: return rgb(q, 255, 0);
+    case 2: return rgb(0, 255, f);
+    case 3: return rgb(0, q, 255);
+    case 4: return rgb(f, 0, 255);
+    default: return rgb(255, 0, q);
+    }
+}
+// A hue as an accent colour: lightened to sit with the fixed ones.
+inline Color hue_accent(int hue) { return mix(hue_color((u32)hue), rgb(255, 255, 255), 80); }
+inline Color accent() { return g_prefs.accent < ACCENT_COUNT ? ACCENTS[g_prefs.accent].c : hue_accent(g_prefs.custom_hue); }
 inline Color accent_dark() {
     Color c = accent();
     return rgb((u8)(red_of(c) * 5 / 9), (u8)(green_of(c) * 5 / 9), (u8)(blue_of(c) * 5 / 9));
@@ -140,15 +161,23 @@ inline bool fx_animated() { return g_prefs.fx >= BorderFx::Breathing; }
 struct Mode {
     int w, h;
 };
-const Mode MODES[] = {{800, 600},  {1024, 768}, {1280, 720},  {1280, 800}, {1366, 768},
-                      {1440, 900}, {1600, 900}, {1680, 1050}, {1920, 1080}};
+// Common screens, 4:3 to 32:9 ultrawide. Only those the adapter can hold are offered.
+const Mode MODES[] = {{800, 600},   {1024, 768},  {1280, 720},  {1280, 800},  {1280, 1024}, {1366, 768},
+                      {1440, 900},  {1600, 900},  {1680, 1050}, {1920, 1080}, {1920, 1200}, {2560, 1080},
+                      {2560, 1440}, {2560, 1600}, {3440, 1440}, {3840, 1600}, {3840, 2160}, {5120, 1440}};
 constexpr int MODE_COUNT = sizeof MODES / sizeof MODES[0];
+const int FPS_CHOICES[] = {30, 60, 75, 90, 120, 144};
+constexpr int FPS_COUNT = sizeof FPS_CHOICES / sizeof FPS_CHOICES[0];
 
 // Minimum time between frames. Input wakes the compositor at once, so a drag
-// is drawn as soon as the mouse reports (at most ~160 frames per second).
-constexpr u64 FRAME_US = 6000;
+// is drawn as soon as the mouse reports, up to the chosen frame rate.
+inline u64 frame_us() { return 1000000 / (u64)g_prefs.fps; }
 constexpr int MAX_WINDOWS = 12;
 constexpr int MAX_DAMAGE = 24;
+// Windows and the launcher fade and slide into place over this long.
+constexpr u64 ANIM_US = 160000;
+constexpr int SLIDE_OPEN = 12, SLIDE_MINIMISE = 30, SLIDE_MENU = 10;
+enum : u8 { ANIM_NONE, ANIM_IN, ANIM_OUT };
 
 enum class Kind { Terminal, About, SystemMonitor, MemoryMap, Settings };
 
@@ -160,13 +189,26 @@ struct Window {
     Rect frame{0, 0, 0, 0};
     Rect restore{0, 0, 0, 0};
     bool maximised = false, minimised = false;
+    u8 snapped = 0;             // 1 left half, 2 right half (restore holds the old frame)
     u32* pixels = nullptr;
     Surface content;            // full screen-sized buffer; view via content_view()
     u32* shadow = nullptr;
     int shadow_w = 0, shadow_h = 0;
     bool needs_paint = true;
     int min_w = 240, min_h = 140;
+    u8 anim = ANIM_NONE;        // appearing, or (minimised) on its way out
+    u64 anim_start = 0;
 };
+
+// A closed window, kept only until it has faded away. It owns the buffers
+// the window had.
+struct Ghost {
+    Window w;
+    u64 start;
+};
+constexpr int MAX_GHOSTS = 4;
+Ghost g_ghosts[MAX_GHOSTS];
+int g_ghost_count = 0;
 
 // The applications the launcher offers. The search box matches what is
 // typed against the name and the keywords.
@@ -226,6 +268,24 @@ struct State {
     u8 drag_edges = 0;          // 1 left, 2 right, 4 top, 8 bottom
 
     bool menu_open = false;
+    u8 menu_anim = ANIM_NONE;
+    u64 menu_anim_start = 0;
+    bool hue_drag = false;      // the mouse is held on the Settings hue strip
+    int snap_preview = 0;       // while dragging at an edge: 1 left, 2 right, 3 top (maximise)
+    u64 last_click_us = 0;      // for double-clicks on a title bar
+    int last_click_win = -1;
+    bool switcher_open = false; // Alt+Tab
+    int switcher_sel = 0;
+    int switcher_wins[MAX_WINDOWS];
+    int switcher_count = 0;
+    bool ctx_open = false;      // the right-click menu on the desktop
+    int ctx_x = 0, ctx_y = 0;
+    u32 shown_before = 0;       // Super+D: the windows it hid, to bring back
+    bool cal_open = false;      // the calendar above the clock
+    u8 cal_anim = ANIM_NONE;
+    u64 cal_anim_start = 0;
+    int cal_year = 2026, cal_month = 1;     // the month shown
+    int sel_year = 2026, sel_month = 1, sel_day = 1;    // the day picked
     bool super_down = false;    // Super is held...
     bool super_chord = false;   // ...and another key was pressed with it
     int menu_hover = -1;
@@ -234,6 +294,8 @@ struct State {
     Rect task_rects[MAX_WINDOWS];
     int task_win[MAX_WINDOWS];
     int task_count = 0;
+
+    u32 screenshot_count = 0;
 
     Terminal term;
     u8* term_cells = nullptr;
@@ -283,14 +345,14 @@ inline int cursor_hot() { return g_cursor_shape == CUR_ARROW ? 0 : CURSOR_W / 2;
 // White with anti-aliased coverage in the alpha channel; built once.
 constexpr int LOGO = 28;
 u32 g_logo_px[LOGO * LOGO];
-constexpr int THUMB_W = 128, THUMB_H = 80;
+constexpr int THUMB_W = 120, THUMB_H = 75;
 u32 g_thumb_px[WALLPAPER_COUNT][THUMB_W * THUMB_H];
 
 // Controls of the Settings window, recorded as it is painted so a click can
 // be matched to what it hit.
 enum : u8 {
     ACT_TAB, ACT_ACCENT, ACT_WALL, ACT_RADIUS, ACT_GLASS, ACT_FLOAT, ACT_CLOCK12, ACT_SECONDS,
-    ACT_FX, ACT_BCOLOR, ACT_BWIDTH, ACT_SPEED, ACT_BALL, ACT_GLOW, ACT_MODE,
+    ACT_FX, ACT_BCOLOR, ACT_BWIDTH, ACT_SPEED, ACT_BALL, ACT_GLOW, ACT_MODE, ACT_HUE, ACT_FPS, ACT_TZ,
 };
 struct Ctl {
     Rect r;
@@ -301,6 +363,75 @@ constexpr int MAX_CTLS = 96;
 Ctl g_ctls[MAX_CTLS];
 int g_ctl_count = 0;
 int g_settings_tab = 0;
+bool g_measuring = false;           // painting only to find out how tall a card is
+int g_wrap_right = 0;               // where a row of chips wraps
+
+// ------------------------------------------------------------- calendar --
+// Reminders live in memory until there is somewhere per-user to keep them
+// (phase 15), like the preferences.
+struct Reminder {
+    bool used;
+    u16 year;
+    u8 month, day, hour, minute;
+    char text[40];
+};
+constexpr int MAX_REMINDERS = 32;
+Reminder g_reminders[MAX_REMINDERS];
+char g_rem_text[40];                // what is being typed into the calendar
+int g_rem_len = 0;
+// The calendar's controls, recorded as it is painted like the Settings ones.
+enum : u8 { CAL_PREV, CAL_NEXT, CAL_TODAY, CAL_DAY, CAL_DELETE };
+Ctl g_cal_ctls[64];
+int g_cal_ctl_count = 0;
+constexpr int CAL_W = 324;
+
+// Notifications: a card in the top-right corner for a few seconds, or until
+// it is clicked.
+struct Toast {
+    bool used;
+    char title[32];
+    char text[64];
+    u64 start, until;
+};
+constexpr int MAX_TOASTS = 4;
+Toast g_toasts[MAX_TOASTS];
+constexpr int TOAST_W = 320, TOAST_H = 66, TOAST_GAP = 10;
+constexpr u64 TOAST_US = 8000000;
+// Posted from other threads (the shell's `notify`), taken by the compositor.
+Toast g_pending[MAX_TOASTS];
+volatile u32 g_pending_head = 0, g_pending_tail = 0;
+
+const char* const MONTH_NAMES[] = {"January", "February", "March",     "April",   "May",      "June",
+                                   "July",    "August",   "September", "October", "November", "December"};
+const char* const DAY_NAMES[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
+const char* const DAY_LONG[] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+
+int days_in_month(int y, int m) {
+    static const u8 D[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    bool leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    return m == 2 && leap ? 29 : D[m - 1];
+}
+
+// 0 = Monday.
+int weekday(int y, int m, int d) {
+    static const int T[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    y -= m < 3;
+    int sunday0 = (y + y / 4 - y / 100 + y / 400 + T[m - 1] + d) % 7;
+    return (sunday0 + 6) % 7;
+}
+
+// The clock's time shifted into the chosen time zone.
+DateTime local_now() {
+    i64 t = (i64)datetime_to_unix(rtc_now()) + (i64)g_prefs.tz_minutes * 60;
+    return unix_to_datetime(t < 0 ? 0 : (u64)t);
+}
+
+bool has_reminder(int y, int m, int d) {
+    for (const Reminder& r : g_reminders)
+        if (r.used && r.year == y && r.month == m && r.day == d) return true;
+    return false;
+}
+Rect g_hue_rect{0, 0, 0, 0};        // the hue strip, in the Settings window's content
 u64 g_last_anim_us = 0;
 volatile u32 g_wanted_mode = 0;     // width << 16 | height, asked for by another thread; 0 = nothing
 
@@ -348,6 +479,28 @@ Rect visual_bounds(const Window& w) {
             w.frame.h + 2 * theme::SHADOW_PAD + theme::SHADOW_OFF};
 }
 
+// Everything a window can cover while it slides in or out.
+Rect anim_bounds(const Window& w) {
+    Rect b = visual_bounds(w);
+    b.h += SLIDE_MINIMISE;
+    return b;
+}
+
+// How far an animation started at `start` has come, 0..255, slowing down
+// towards the end.
+u32 anim_eased(u64 start) {
+    u64 elapsed = refclock_now_us() - start;
+    if (elapsed >= ANIM_US) return 255;
+    u32 left = 255 - (u32)(elapsed * 255 / ANIM_US);
+    return 255 - left * left * left / (255 * 255);
+}
+
+void start_anim(Window& w, u8 anim) {
+    w.anim = anim;
+    w.anim_start = refclock_now_us();
+    damage(anim_bounds(w));
+}
+
 Rect shadow_rect(const Window& w) {
     return {w.frame.x - theme::SHADOW_PAD, w.frame.y - theme::SHADOW_PAD + theme::SHADOW_OFF,
             w.frame.w + 2 * theme::SHADOW_PAD, w.frame.h + 2 * theme::SHADOW_PAD};
@@ -372,6 +525,47 @@ Rect menu_rect() {
     int h = theme::MENU_TOP + APP_COUNT * theme::MENU_ITEM_H + 8 + theme::MENU_FOOT;
     return {8, g.H - theme::PANEL_H - h - 8, theme::MENU_W, h};
 }
+// What the launcher covers on the screen, shadow and slide included.
+Rect menu_area() {
+    Rect a = menu_rect().inset(-8);
+    a.h += 4 + SLIDE_MENU;
+    return a;
+}
+Rect cal_rect() {
+    int h = 48 + 22 + 6 * 32 + 10 + 150;
+    Rect b = bar_rect();
+    return {b.right() - 8 - CAL_W, g.H - theme::PANEL_H - h - 8, CAL_W, h};
+}
+Rect cal_area() {
+    Rect a = cal_rect().inset(-8);
+    a.h += 4 + SLIDE_MENU;
+    return a;
+}
+// The right-click menu's items and its place (kept on the screen).
+const char* const CTX_ITEMS[] = {"Terminal", "Settings", "Change wallpaper", "Show desktop", "About Cerberus"};
+constexpr int CTX_COUNT = sizeof CTX_ITEMS / sizeof CTX_ITEMS[0];
+constexpr int CTX_W = 200, CTX_ITEM_H = 32;
+Rect ctx_rect() {
+    int h = CTX_COUNT * CTX_ITEM_H + 12;
+    int x = g.ctx_x, y = g.ctx_y;
+    if (x + CTX_W > g.W - 4) x = g.W - 4 - CTX_W;
+    if (y + h > g.H - theme::PANEL_H) y = g.H - theme::PANEL_H - h;
+    return {x, y, CTX_W, h};
+}
+Rect ctx_area() { return ctx_rect().inset(-8).translated(0, 2); }
+// The Alt+Tab switcher: a row of tiles in the middle of the screen.
+constexpr int SW_TILE = 128, SW_TILE_H = 104;
+Rect switcher_rect() {
+    int w = g.switcher_count * (SW_TILE + 8) + 16;
+    return {(g.W - w) / 2, (g.H - theme::PANEL_H - SW_TILE_H - 24) / 2, w, SW_TILE_H + 24};
+}
+Rect snap_target(int side) {
+    Rect wa = work_area();
+    if (side == 1) return {wa.x + 6, wa.y + 6, wa.w / 2 - 9, wa.h - 12};
+    if (side == 2) return {wa.x + wa.w / 2 + 3, wa.y + 6, wa.w - wa.w / 2 - 9, wa.h - 12};
+    return {wa.x + 6, wa.y + 6, wa.w - 12, wa.h - 12};
+}
+Rect toast_rect(int i) { return {g.W - TOAST_W - 16, 16 + i * (TOAST_H + TOAST_GAP), TOAST_W, TOAST_H}; }
 Rect menu_search_rect() {
     Rect mr = menu_rect();
     return {mr.x + 12, mr.y + 12, mr.w - 24, 34};
@@ -487,6 +681,10 @@ int create_window(Kind kind, const char* title, Rect frame) {
     strlcpy(w.title, title, sizeof w.title);
     w.frame = frame;
     w.needs_paint = true;
+    if (kind == Kind::About) {
+        w.min_w = 430;
+        w.min_h = 340;
+    }
     g.order[g.order_count++] = idx;
     if (kind == Kind::Terminal) {
         g.term_win = idx;
@@ -498,13 +696,22 @@ int create_window(Kind kind, const char* title, Rect frame) {
     return idx;
 }
 
+void switcher_finish(bool pick);
+
 void destroy_window(int idx) {
     Window& w = g.windows[idx];
     if (!w.used) return;
-    damage(visual_bounds(w));
+    damage(anim_bounds(w));
     damage(panel_rect());
-    free_pixels(w.pixels);
-    free_pixels(w.shadow);
+    if (!w.minimised && g_ghost_count < MAX_GHOSTS) {
+        // Leave its picture behind to fade out.
+        Ghost& gh = g_ghosts[g_ghost_count++];
+        gh.w = w;
+        gh.start = refclock_now_us();
+    } else {
+        free_pixels(w.pixels);
+        free_pixels(w.shadow);
+    }
     w.used = false;
     for (int i = 0; i < g.order_count; i++) {
         if (g.order[i] == idx) {
@@ -514,6 +721,8 @@ void destroy_window(int idx) {
         }
     }
     if (g.term_win == idx) g.term_win = -1;
+    if (g.switcher_open) switcher_finish(false);
+    g.shown_before &= ~(1u << idx);
     if (g.focus == idx) {
         g.focus = -1;
         set_focus(top_visible_window());
@@ -544,16 +753,32 @@ void toggle_maximise(Window& w) {
         w.maximised = false;
         set_window_frame(w, w.restore);
     } else {
-        w.restore = w.frame;
+        if (!w.snapped) w.restore = w.frame;
+        w.snapped = 0;
         w.maximised = true;
-        Rect wa = work_area();
-        set_window_frame(w, {wa.x + 6, wa.y + 6, wa.w - 12, wa.h - 12});
+        set_window_frame(w, snap_target(3));
     }
+}
+
+// Puts a window on the left or right half of the screen (Windows-style snap).
+void snap_window(Window& w, int side) {
+    if (!w.maximised && !w.snapped) w.restore = w.frame;
+    w.maximised = false;
+    w.snapped = (u8)side;
+    set_window_frame(w, snap_target(side));
+}
+
+// Back to the size it had before it was maximised or snapped.
+void unsnap(Window& w) {
+    if (!w.maximised && !w.snapped) return;
+    w.maximised = false;
+    w.snapped = 0;
+    set_window_frame(w, w.restore);
 }
 
 void minimise(Window& w) {
     w.minimised = true;
-    damage(visual_bounds(w));
+    start_anim(w, ANIM_OUT);
     damage(panel_rect());
     if (g.focus == window_index(&w)) {
         g.focus = -1;
@@ -562,6 +787,7 @@ void minimise(Window& w) {
 }
 
 void restore(Window& w) {
+    if (w.minimised) start_anim(w, ANIM_IN);
     w.minimised = false;
     int idx = window_index(&w);
     raise_window(idx);
@@ -581,14 +807,15 @@ void open_kind(Kind kind) {
     }
     int n = g.order_count;
     int x = 80 + (n % 5) * 40, y = 60 + (n % 5) * 36;
+    int idx = -1;
     switch (kind) {
-    case Kind::Terminal: create_window(kind, "Terminal", {x, y, 720, 460}); break;
-    case Kind::About: create_window(kind, "About Cerberus", {x + 120, y + 40, 460, 400}); break;
-    case Kind::SystemMonitor: create_window(kind, "System Monitor", {x + 60, y + 20, 520, 360}); break;
-    case Kind::MemoryMap: create_window(kind, "Memory Map", {x + 30, y + 10, 700, 480}); break;
+    case Kind::Terminal: idx = create_window(kind, "Terminal", {x, y, 720, 460}); break;
+    case Kind::About: idx = create_window(kind, "About Cerberus", {x + 120, y + 40, 460, 400}); break;
+    case Kind::SystemMonitor: idx = create_window(kind, "System Monitor", {x + 60, y + 20, 520, 360}); break;
+    case Kind::MemoryMap: idx = create_window(kind, "Memory Map", {x + 30, y + 10, 700, 480}); break;
     case Kind::Settings: {
         int ww = g.W - 60 < 700 ? g.W - 60 : 700, wh = g.H - theme::PANEL_H - 60 < 560 ? g.H - theme::PANEL_H - 60 : 560;
-        int idx = create_window(kind, "Settings", {(g.W - ww) / 2, (g.H - theme::PANEL_H - wh) / 2, ww, wh});
+        idx = create_window(kind, "Settings", {(g.W - ww) / 2, (g.H - theme::PANEL_H - wh) / 2, ww, wh});
         if (idx >= 0) {
             g.windows[idx].min_w = 620;
             g.windows[idx].min_h = 440;
@@ -596,6 +823,7 @@ void open_kind(Kind kind) {
         break;
     }
     }
+    if (idx >= 0) start_anim(g.windows[idx], ANIM_IN);
 }
 
 // ---------------------------------------------------------------- shadow --
@@ -637,7 +865,8 @@ void paint_about(Surface& s) {
     fill_gradient_radial(s, s.bounds(), s.width - 60, 40, 260, with_alpha(accent(), 60), rgba(0, 0, 0, 0));
     int x = 22 + draw_text(s, g.display, 22, 12, "Cerberus", theme::TEXT);
     fill_circle_aa(s, x + 16, 12 + g.display.height * 5 / 8, 8, accent());
-    draw_text(s, g.font, 26, 96, "A hybrid-kernel operating system, built from scratch.", theme::TEXT_MUTED);
+    draw_text_ellipsis(s, g.font, 26, 96, "A hybrid-kernel operating system, built from scratch.", s.width - 42,
+                       theme::TEXT_MUTED);
     char line[96];
     int y = 130;
     ksnprintf(line, sizeof line, "%s (x86-64)", cerberus_version());
@@ -653,7 +882,7 @@ void paint_about(Surface& s) {
     ksnprintf(line, sizeof line, "%dx%d, 32 bpp", g.W, g.H);
     y = paint_kv(s, y, "Display", line);
     y = paint_kv(s, y, "Language", "Spec (planned; compiler not started)");
-    draw_text_ellipsis(s, g.font, 16, s.height - 30, "Alt+Tab switch, Alt+F4 close, Super menu, Super+T terminal",
+    draw_text_ellipsis(s, g.font, 16, s.height - 30, "Alt+Tab switch, Super+arrows snap, Super+D desktop, Print Screen",
                        s.width - 32, theme::TEXT_MUTED);
 }
 
@@ -724,14 +953,14 @@ void paint_memmap(Surface& s) {
 
 // ------------------------------------------------------------- settings UI --
 void ctl_add(const Rect& r, u8 act, int val) {
-    if (g_ctl_count < MAX_CTLS) g_ctls[g_ctl_count++] = Ctl{r, act, (i16)val};
+    if (!g_measuring && g_ctl_count < MAX_CTLS) g_ctls[g_ctl_count++] = Ctl{r, act, (i16)val};
 }
 
 // A pill-shaped choice; lit when it is the current one. Wraps to the next
 // row at the right edge. Advances x.
 void chip(Surface& s, int& x, int& y, int left, const char* label, bool on, u8 act, int val) {
     int w = measure_text(g.font, label) + 28;
-    if (x + w > s.width - 16 && x > left) {
+    if (x + w > g_wrap_right && x > left) {
         x = left;
         y += 38;
     }
@@ -742,9 +971,50 @@ void chip(Surface& s, int& x, int& y, int left, const char* label, bool on, u8 a
     x += w + 8;
 }
 
-int section(Surface& s, int x, int y, const char* title) {
-    draw_text(s, g.bold, x, y, title, theme::TEXT);
-    return y + 28;
+constexpr int SIDE = 172;           // the Settings sidebar
+
+// A titled card. `body(x, y)` paints the controls from (x, y) and returns
+// the y below them; it runs twice, first with everything clipped away to
+// learn the card's height, then for real. Returns the y for the next card.
+template <typename F> int card(Surface& s, int y, const char* title, F body) {
+    const int CX = SIDE + 20, CW = s.width - CX - 20, PAD = 16;
+    Rect clip = s.clip;
+    s.clip = {0, 0, 0, 0};
+    g_measuring = true;
+    g_wrap_right = CX + CW - PAD;
+    int bottom = body(CX + PAD, y + 40);
+    g_measuring = false;
+    s.clip = clip;
+    Rect r{CX, y, CW, bottom - y + 12};
+    fill_rect_rounded(s, r, 12, rgba(255, 255, 255, 7));
+    stroke_rect_rounded(s, r, 12, rgba(255, 255, 255, 14));
+    draw_text(s, g.bold, CX + PAD, y + 12, title, theme::TEXT);
+    body(CX + PAD, y + 40);
+    return r.bottom() + 10;
+}
+
+// The little pictures beside the sidebar entries.
+void tab_icon(Surface& s, int x, int y, int tab, bool on) {
+    Color c = on ? accent() : theme::TEXT_MUTED;
+    switch (tab) {
+    case 0:     // a paint drop
+        fill_circle_aa(s, x + 7, y + 8, 6, c);
+        fill_circle_aa(s, x + 7, y + 8, 2, theme::CONTENT_BG);
+        break;
+    case 1:     // a picture
+        fill_rect_rounded(s, {x, y + 1, 15, 12}, 3, c);
+        fill_circle_aa(s, x + 5, y + 5, 2, theme::CONTENT_BG);
+        break;
+    case 2:     // a window outline
+        stroke_rect_rounded(s, {x, y + 1, 15, 13}, 4, c);
+        stroke_rect_rounded(s, {x + 1, y + 2, 13, 11}, 3, c);
+        break;
+    default:    // a screen on a stand
+        fill_rect_rounded(s, {x, y, 15, 10}, 2, c);
+        fill_rect(s, {x + 5, y + 11, 5, 2}, c);
+        fill_rect(s, {x + 3, y + 13, 9, 1}, c);
+        break;
+    }
 }
 
 // A round colour sample; ringed when chosen.
@@ -757,128 +1027,167 @@ void swatch(Surface& s, int cx, int cy, Color c, bool on, u8 act, int val) {
     ctl_add({cx - 16, cy - 16, 32, 32}, act, val);
 }
 
+u8 rounded_coverage(const Rect& r, int R, int x, int y);
+
+// The strip every hue can be picked from, with a knob on the chosen one.
+void hue_strip(Surface& s, const Rect& r) {
+    Rect c = r.intersect(s.clip);
+    for (int y = c.y; y < c.bottom(); y++) {
+        u32* row = s.row(y);
+        for (int x = c.x; x < c.right(); x++)
+            row[x] = mix(row[x], hue_accent((x - r.x) * 1535 / (r.w - 1)), rounded_coverage(r, r.h / 2, x, y));
+    }
+    if (g_prefs.accent == ACCENT_COUNT) {
+        int kx = r.x + g_prefs.custom_hue * (r.w - 1) / 1535, ky = r.y + r.h / 2;
+        fill_circle_aa(s, kx, ky, 10, rgb(255, 255, 255));
+        fill_circle_aa(s, kx, ky, 7, accent());
+    }
+    g_hue_rect = r;
+    ctl_add({r.x, r.y - 9, r.w, r.h + 18}, ACT_HUE, 0);
+}
+
 void paint_settings(Surface& s) {
     g_ctl_count = 0;
+    g_hue_rect = {0, 0, 0, 0};
     fill_rect(s, s.bounds(), theme::CONTENT_BG);
     // Sidebar.
-    constexpr int SIDE = 160;
     fill_rect(s, {0, 0, SIDE, s.height}, rgb(17, 19, 27));
     draw_vline(s, SIDE, 0, s.height - 1, rgba(255, 255, 255, 18));
-    static const char* const TABS[] = {"Appearance", "Window borders", "Display"};
-    for (int i = 0; i < 3; i++) {
+    static const char* const TABS[] = {"Appearance", "Wallpaper", "Window borders", "Display"};
+    for (int i = 0; i < 4; i++) {
         Rect r{8, 12 + i * 40, SIDE - 16, 34};
-        if (i == g_settings_tab) {
+        bool on = i == g_settings_tab;
+        if (on) {
             fill_rect_rounded(s, r, 8, rgba(255, 255, 255, 22));
             fill_rect_rounded(s, {r.x, r.y + 8, 3, r.h - 16}, 1, accent());
         }
-        draw_text(s, g.font, r.x + 14, r.y + (r.h - g.font.height) / 2, TABS[i],
-                  i == g_settings_tab ? theme::TEXT : theme::TEXT_MUTED);
+        tab_icon(s, r.x + 14, r.y + 10, i, on);
+        draw_text(s, g.font, r.x + 38, r.y + (r.h - g.font.height) / 2, TABS[i], on ? theme::TEXT : theme::TEXT_MUTED);
         ctl_add(r, ACT_TAB, i);
     }
-    draw_text(s, g.font, 16, s.height - 28, "Applies at once", theme::TEXT_MUTED);
 
-    const int L = SIDE + 24;
-    int x = L, y = 18;
+    int y = 18;
     if (g_settings_tab == 0) {
-        y = section(s, L, y, "Accent colour");
-        for (int i = 0; i < ACCENT_COUNT; i++) swatch(s, L + 14 + i * 40, y + 14, ACCENTS[i].c, g_prefs.accent == i, ACT_ACCENT, i);
-        y += 48;
-
-        y = section(s, L, y, "Wallpaper");
-        for (int i = 0; i < WALLPAPER_COUNT; i++) {
-            Rect r{L + i * (THUMB_W + 14), y, THUMB_W, THUMB_H};
-            Surface thumb(g_thumb_px[i], THUMB_W, THUMB_H, THUMB_W);
-            blit(s, r.x, r.y, thumb);
-            if (g_prefs.wallpaper == i) {
-                stroke_rect(s, r.inset(-2), accent());
-                stroke_rect(s, r.inset(-3), accent());
-            } else {
-                stroke_rect(s, r.inset(-1), rgba(255, 255, 255, 40));
-            }
-            draw_text(s, g.font, r.x + 2, r.bottom() + 6, WALLPAPER_NAMES[i],
-                      g_prefs.wallpaper == i ? theme::TEXT : theme::TEXT_MUTED);
-            ctl_add(r, ACT_WALL, i);
-        }
-        y += THUMB_H + 38;
-
-        y = section(s, L, y, "Window corners");
-        x = L;
-        chip(s, x, y, L, "Square", g_prefs.radius == 0, ACT_RADIUS, 0);
-        chip(s, x, y, L, "Soft", g_prefs.radius == 6, ACT_RADIUS, 6);
-        chip(s, x, y, L, "Round", g_prefs.radius == 12, ACT_RADIUS, 12);
-        y += 46;
-
-        y = section(s, L, y, "Taskbar");
-        x = L;
-        chip(s, x, y, L, "Floating", g_prefs.panel_floating, ACT_FLOAT, 1);
-        chip(s, x, y, L, "Docked", !g_prefs.panel_floating, ACT_FLOAT, 0);
-        x += 16;
-        chip(s, x, y, L, "Glass", g_prefs.panel_glass, ACT_GLASS, 1);
-        chip(s, x, y, L, "Solid", !g_prefs.panel_glass, ACT_GLASS, 0);
-        y += 46;
-
-        y = section(s, L, y, "Clock");
-        x = L;
-        chip(s, x, y, L, "24-hour", !g_prefs.clock_12h, ACT_CLOCK12, 0);
-        chip(s, x, y, L, "12-hour", g_prefs.clock_12h, ACT_CLOCK12, 1);
-        x += 16;
-        chip(s, x, y, L, "Seconds", g_prefs.clock_seconds, ACT_SECONDS, !g_prefs.clock_seconds);
+        y = card(s, y, "Accent colour", [&](int x, int y) {
+            for (int i = 0; i < ACCENT_COUNT; i++) swatch(s, x + 14 + i * 40, y + 16, ACCENTS[i].c, g_prefs.accent == i, ACT_ACCENT, i);
+            // Or any colour at all: click or drag along the strip.
+            hue_strip(s, {x + 2, y + 44, 340, 12});
+            return y + 60;
+        });
+        y = card(s, y, "Window corners", [&](int x, int y) {
+            int left = x;
+            chip(s, x, y, left, "Square", g_prefs.radius == 0, ACT_RADIUS, 0);
+            chip(s, x, y, left, "Soft", g_prefs.radius == 6, ACT_RADIUS, 6);
+            chip(s, x, y, left, "Round", g_prefs.radius == 12, ACT_RADIUS, 12);
+            return y + 30;
+        });
+        y = card(s, y, "Taskbar", [&](int x, int y) {
+            int left = x;
+            chip(s, x, y, left, "Floating", g_prefs.panel_floating, ACT_FLOAT, 1);
+            chip(s, x, y, left, "Docked", !g_prefs.panel_floating, ACT_FLOAT, 0);
+            x += 16;
+            chip(s, x, y, left, "Glass", g_prefs.panel_glass, ACT_GLASS, 1);
+            chip(s, x, y, left, "Solid", !g_prefs.panel_glass, ACT_GLASS, 0);
+            return y + 30;
+        });
+        y = card(s, y, "Clock", [&](int x, int y) {
+            int left = x;
+            chip(s, x, y, left, "24-hour", !g_prefs.clock_12h, ACT_CLOCK12, 0);
+            chip(s, x, y, left, "12-hour", g_prefs.clock_12h, ACT_CLOCK12, 1);
+            x += 16;
+            chip(s, x, y, left, "Seconds", g_prefs.clock_seconds, ACT_SECONDS, !g_prefs.clock_seconds);
+            // Time zone: a stepper in half hours.
+            y += 42;
+            x = left;
+            draw_text(s, g.font, x, y + (30 - g.font.height) / 2, "Time zone", theme::TEXT_MUTED);
+            x += measure_text(g.font, "Time zone") + 16;
+            chip(s, x, y, left, "-", false, ACT_TZ, -30);
+            int tz = g_prefs.tz_minutes, a = tz < 0 ? -tz : tz;
+            char line[24];
+            ksnprintf(line, sizeof line, "UTC%c%02d:%02d", tz < 0 ? '-' : '+', a / 60, a % 60);
+            int w = measure_text(g.font, line) + 20;
+            fill_rect_rounded(s, {x, y, w, 30}, 8, rgba(255, 255, 255, 10));
+            draw_text(s, g.font, x + 10, y + (30 - g.font.height) / 2, line, theme::TEXT);
+            x += w + 8;
+            chip(s, x, y, left, "+", false, ACT_TZ, 30);
+            return y + 30;
+        });
     } else if (g_settings_tab == 1) {
-        y = section(s, L, y, "Effect");
-        for (int i = 0; i < (int)BorderFx::COUNT; i++) chip(s, x, y, L, FX_NAMES[i], (int)g_prefs.fx == i, ACT_FX, i);
-        y += 46;
-
-        y = section(s, L, y, "Colour");
-        x = L;
-        int row = y;
-        chip(s, x, row, L, "Accent", g_prefs.border_color < 0, ACT_BCOLOR, -1);
-        for (int i = 0; i < ACCENT_COUNT; i++)
-            swatch(s, x + 18 + i * 38, y + 15, ACCENTS[i].c, g_prefs.border_color == i, ACT_BCOLOR, i);
-        y += 40;
-        draw_text(s, g.font, L, y, "Rainbow and Chase run through every colour.", theme::TEXT_MUTED);
-        y += 30;
-
-        y = section(s, L, y, "Thickness");
-        x = L;
-        static const char* const WIDTHS[] = {"1 px", "2 px", "3 px", "4 px"};
-        for (int i = 1; i <= 4; i++) chip(s, x, y, L, WIDTHS[i - 1], g_prefs.border_w == i, ACT_BWIDTH, i);
-        y += 46;
-
-        y = section(s, L, y, "Speed");
-        x = L;
-        static const char* const SPEEDS[] = {"Slow", "Normal", "Fast"};
-        for (int i = 0; i < 3; i++) chip(s, x, y, L, SPEEDS[i], g_prefs.speed == i, ACT_SPEED, i);
-        y += 46;
-
-        y = section(s, L, y, "Show on");
-        x = L;
-        chip(s, x, y, L, "Focused window", !g_prefs.border_all, ACT_BALL, 0);
-        chip(s, x, y, L, "All windows", g_prefs.border_all, ACT_BALL, 1);
-        x += 16;
-        chip(s, x, y, L, "Glow", g_prefs.glow, ACT_GLOW, !g_prefs.glow);
-        y += 46;
-        draw_text(s, g.font, L, y, "The effect is shown live around this window.", theme::TEXT_MUTED);
+        y = card(s, y, "Wallpaper", [&](int x, int y) {
+            for (int i = 0; i < WALLPAPER_COUNT; i++) {
+                Rect r{x + i % 3 * (THUMB_W + 12), y + i / 3 * (THUMB_H + 40), THUMB_W, THUMB_H};
+                Surface thumb(g_thumb_px[i], THUMB_W, THUMB_H, THUMB_W);
+                blit(s, r.x, r.y, thumb);
+                if (g_prefs.wallpaper == i) {
+                    stroke_rect(s, r.inset(-2), accent());
+                    stroke_rect(s, r.inset(-3), accent());
+                } else {
+                    stroke_rect(s, r.inset(-1), rgba(255, 255, 255, 40));
+                }
+                draw_text(s, g.font, r.x + 2, r.bottom() + 6, WALLPAPER_NAMES[i],
+                          g_prefs.wallpaper == i ? theme::TEXT : theme::TEXT_MUTED);
+                ctl_add(r, ACT_WALL, i);
+            }
+            return y + 2 * (THUMB_H + 40) - 10;
+        });
+    } else if (g_settings_tab == 2) {
+        y = card(s, y, "Effect", [&](int x, int y) {
+            int left = x;
+            for (int i = 0; i < (int)BorderFx::COUNT; i++) chip(s, x, y, left, FX_NAMES[i], (int)g_prefs.fx == i, ACT_FX, i);
+            return y + 30;
+        });
+        y = card(s, y, "Colour", [&](int x, int y) {
+            int left = x;
+            chip(s, x, y, left, "Accent", g_prefs.border_color < 0, ACT_BCOLOR, -1);
+            for (int i = 0; i < ACCENT_COUNT; i++)
+                swatch(s, x + 18 + i * 38, y + 15, ACCENTS[i].c, g_prefs.border_color == i, ACT_BCOLOR, i);
+            return y + 30;
+        });
+        y = card(s, y, "Thickness", [&](int x, int y) {
+            int left = x;
+            static const char* const WIDTHS[] = {"1 px", "2 px", "3 px", "4 px"};
+            for (int i = 1; i <= 4; i++) chip(s, x, y, left, WIDTHS[i - 1], g_prefs.border_w == i, ACT_BWIDTH, i);
+            return y + 30;
+        });
+        y = card(s, y, "Speed", [&](int x, int y) {
+            int left = x;
+            static const char* const SPEEDS[] = {"Slow", "Normal", "Fast"};
+            for (int i = 0; i < 3; i++) chip(s, x, y, left, SPEEDS[i], g_prefs.speed == i, ACT_SPEED, i);
+            return y + 30;
+        });
+        y = card(s, y, "Show on", [&](int x, int y) {
+            int left = x;
+            chip(s, x, y, left, "Focused window", !g_prefs.border_all, ACT_BALL, 0);
+            chip(s, x, y, left, "All windows", g_prefs.border_all, ACT_BALL, 1);
+            x += 16;
+            chip(s, x, y, left, "Glow", g_prefs.glow, ACT_GLOW, !g_prefs.glow);
+            return y + 30;
+        });
     } else {
-        y = section(s, L, y, "Screen resolution");
-        char line[96];
-        ksnprintf(line, sizeof line, "Now: %d x %d", g.W, g.H);
-        draw_text(s, g.font, L, y, line, theme::TEXT_MUTED);
-        y += 30;
-        if (bga_available()) {
+        y = card(s, y, "Screen resolution", [&](int x, int y) {
+            int left = x;
+            char line[32];
+            if (!bga_available()) {
+                ksnprintf(line, sizeof line, "%d x %d", g.W, g.H);
+                chip(s, x, y, left, line, true, ACT_MODE, -1);
+                return y + 30;
+            }
             for (int i = 0; i < MODE_COUNT; i++) {
                 if (!bga_mode_fits((u32)MODES[i].w, (u32)MODES[i].h)) continue;
                 ksnprintf(line, sizeof line, "%d x %d", MODES[i].w, MODES[i].h);
-                chip(s, x, y, L, line, MODES[i].w == g.W && MODES[i].h == g.H, ACT_MODE, i);
+                chip(s, x, y, left, line, MODES[i].w == g.W && MODES[i].h == g.H, ACT_MODE, i);
             }
-            y += 46;
-            draw_text(s, g.font, L, y, "Windows are moved back onto the screen if they no longer fit.", theme::TEXT_MUTED);
-        } else {
-            draw_text(s, g.font, L, y, "This display keeps the resolution it started with.", theme::TEXT);
-            y += 24;
-            draw_text(s, g.font, L, y, "It can be changed here on the standard graphics adapter", theme::TEXT_MUTED);
-            y += 20;
-            draw_text(s, g.font, L, y, "of VirtualBox (VBoxVGA, VBoxSVGA) and QEMU.", theme::TEXT_MUTED);
-        }
+            return y + 30;
+        });
+        y = card(s, y, "Frame rate", [&](int x, int y) {
+            int left = x;
+            char line[16];
+            for (int i = 0; i < FPS_COUNT; i++) {
+                ksnprintf(line, sizeof line, "%d Hz", FPS_CHOICES[i]);
+                chip(s, x, y, left, line, g_prefs.fps == FPS_CHOICES[i], ACT_FPS, FPS_CHOICES[i]);
+            }
+            return y + 30;
+        });
     }
 }
 
@@ -948,20 +1257,6 @@ void draw_button(Surface& s, const Window& w, int index, bool hover, bool focuse
 }
 
 // ------------------------------------------------------------ border effects --
-// h in 0..1535: once round the colour wheel at full brightness.
-Color hue_color(u32 h) {
-    h %= 1536;
-    u8 f = (u8)(h & 255), q = (u8)(255 - f);
-    switch (h >> 8) {
-    case 0: return rgb(255, f, 0);
-    case 1: return rgb(q, 255, 0);
-    case 2: return rgb(0, 255, f);
-    case 3: return rgb(0, q, 255);
-    case 4: return rgb(f, 0, 255);
-    default: return rgb(255, 0, q);
-    }
-}
-
 // Anti-aliased coverage of pixel (x, y) by a rounded rectangle.
 u8 rounded_coverage(const Rect& r, int R, int x, int y) {
     if (x < r.x || y < r.y || x >= r.right() || y >= r.bottom()) return 0;
@@ -1040,12 +1335,17 @@ void draw_fx_border(Surface& back, const Window& w, int R, bool focused) {
     draw_ring(back, f, R, g_prefs.border_w, [&](int x, int y) { return with_alpha(colour_at(x, y), (u8)strength); });
 }
 
-void draw_window(Surface& back, Window& w) {
-    bool focused = g.focus == window_index(&w);
-    // Shadow (cached; scaled while resizing to stay responsive).
-    Rect sr = shadow_rect(w);
+// The shadow is cached; while a window is being resized the old one is
+// scaled instead, to stay responsive.
+void ensure_shadow(Window& w) {
     int sw = w.frame.w + 2 * theme::SHADOW_PAD, sh = w.frame.h + 2 * theme::SHADOW_PAD;
     if (!w.shadow || ((w.shadow_w != sw || w.shadow_h != sh) && g.drag != Drag::Resize)) build_shadow(w);
+}
+
+void draw_window(Surface& back, Window& w, bool focused) {
+    Rect sr = shadow_rect(w);
+    int sw = w.frame.w + 2 * theme::SHADOW_PAD, sh = w.frame.h + 2 * theme::SHADOW_PAD;
+    ensure_shadow(w);
     if (w.shadow) {
         Surface ss(w.shadow, w.shadow_w, w.shadow_h, w.shadow_w);
         if (w.shadow_w == sw && w.shadow_h == sh) blit_alpha(back, sr.x, sr.y, ss, focused ? 255 : 170);
@@ -1091,6 +1391,31 @@ void draw_window(Surface& back, Window& w) {
     for (int i = 0; i < 3; i++) draw_button(back, w, i, hb == i, focused);
     if (g_prefs.fx != BorderFx::None && (focused || g_prefs.border_all)) draw_fx_border(back, w, R, focused);
     else stroke_rect_rounded(back, w.frame, R, focused ? with_alpha(accent(), 210) : theme::BORDER);
+}
+
+// Runs `draw`, then leaves only `shown`/255 of what it drew inside `bounds`:
+// the rest stays as it was. This is how windows and the launcher fade.
+template <typename F> void draw_faded(Surface& back, const Rect& bounds, u32 shown, F draw) {
+    Rect a = bounds.intersect(back.clip);
+    if (a.empty()) return;
+    u32* saved = g.scratch.pixels;      // at least a screen in size
+    for (int y = 0; y < a.h; y++) memcpy(saved + (isize)y * a.w, back.row(a.y + y) + a.x, (usize)a.w * 4);
+    draw();
+    for (int y = 0; y < a.h; y++) {
+        u32* row = back.row(a.y + y) + a.x;
+        const u32* was = saved + (isize)y * a.w;
+        for (int x = 0; x < a.w; x++) row[x] = mix(was[x], row[x], (u8)shown);
+    }
+}
+
+// A window `shown`/255 visible and `dy` pixels below its place.
+void draw_window_faded(Surface& back, Window& w, bool focused, u32 shown, int dy) {
+    ensure_shadow(w);       // now: building one uses the scratch buffer too
+    draw_faded(back, visual_bounds(w).translated(0, dy), shown, [&] {
+        w.frame.y += dy;
+        draw_window(back, w, focused);
+        w.frame.y -= dy;
+    });
 }
 
 // An application's icon: a rounded tile in its colour with its initial.
@@ -1186,9 +1511,16 @@ void draw_panel(Surface& back) {
         x += tr.w + 6;
     }
 
-    // Right-hand side: memory meter, then the clock over the date.
-    DateTime now = rtc_now();
+    // Right-hand side: memory meter, then the clock over the date. The clock
+    // is a button: it opens the calendar.
+    DateTime now = local_now();
     char buf[64];
+    {
+        Rect ck = clock_rect();
+        Rect hl{ck.right() - 118, mid - 20, 112, 40};
+        bool hover = ck.contains(g.mx, g.my) && g.mx >= hl.x;
+        if (hover || g.cal_open) fill_rect_rounded(back, hl, 10, hover && !g.cal_open ? rgba(255, 255, 255, 22) : with_alpha(accent(), 54));
+    }
     u32 hour = now.hour;
     const char* suffix = "";
     if (g_prefs.clock_12h) {
@@ -1219,14 +1551,14 @@ void draw_panel(Surface& back) {
     fill_rect_rounded(back, {meter.x, meter.y, fill, meter.h}, 2, pct > 85 ? rgb(248, 113, 113) : accent());
 }
 
-void draw_menu(Surface& back) {
-    Rect mr = menu_rect();
+void draw_menu(Surface& back, int dy = 0) {
+    Rect mr = menu_rect().translated(0, dy);
     fill_rect_rounded(back, mr.translated(0, 4), 14, rgba(0, 0, 0, 90));
     fill_rect_rounded(back, mr, 14, theme::MENU_BG);
     stroke_rect_rounded(back, mr, 14, theme::BORDER);
 
     // Search field.
-    Rect sr = menu_search_rect();
+    Rect sr = menu_search_rect().translated(0, dy);
     fill_rect_rounded(back, sr, 10, rgba(255, 255, 255, 18));
     stroke_rect_rounded(back, sr, 10, with_alpha(accent(), 150));
     int gx = sr.x + 17, gy = sr.y + sr.h / 2 - 1;
@@ -1254,12 +1586,163 @@ void draw_menu(Surface& back) {
     draw_hline(back, mr.x + 12, mr.right() - 13, mr.bottom() - theme::MENU_FOOT, rgba(255, 255, 255, 22));
     draw_text(back, g.font, mr.x + 18, mr.bottom() - 34, "Cerberus", theme::TEXT_MUTED);
     for (int restart = 0; restart < 2; restart++) {
-        Rect r = menu_power_rect(restart);
+        Rect r = menu_power_rect(restart).translated(0, dy);
         bool hover = g.menu_hover == (restart ? ITEM_RESTART : ITEM_POWER);
         fill_rect_rounded(back, r, 8, hover ? (restart ? rgba(255, 255, 255, 40) : rgb(196, 43, 28)) : rgba(255, 255, 255, 18));
         const char* label = restart ? "Restart" : "Power off";
         draw_text(back, g.font, r.x + (r.w - measure_text(g.font, label)) / 2, r.y + (r.h - g.font.height) / 2, label,
                   theme::TEXT);
+    }
+}
+
+void cal_ctl(const Rect& r, u8 act, int val) {
+    if (g_cal_ctl_count < (int)(sizeof g_cal_ctls / sizeof g_cal_ctls[0])) g_cal_ctls[g_cal_ctl_count++] = Ctl{r, act, (i16)val};
+}
+
+// The calendar above the clock: a month to page through, today marked, and
+// the reminders of the day picked, with a line to add one.
+void draw_calendar(Surface& back, int dy = 0) {
+    g_cal_ctl_count = 0;
+    Rect cr = cal_rect().translated(0, dy);
+    fill_rect_rounded(back, cr.translated(0, 4), 14, rgba(0, 0, 0, 90));
+    fill_rect_rounded(back, cr, 14, theme::MENU_BG);
+    stroke_rect_rounded(back, cr, 14, theme::BORDER);
+    DateTime now = local_now();
+
+    // Month and year, with the paging buttons.
+    char line[64];
+    ksnprintf(line, sizeof line, "%s %d", MONTH_NAMES[g.cal_month - 1], g.cal_year);
+    draw_text(back, g.bold, cr.x + 20, cr.y + 16, line, theme::TEXT);
+    for (int i = 0; i < 2; i++) {
+        Rect b{cr.right() - 20 - (2 - i) * 32 + 4, cr.y + 12, 28, 28};
+        bool hover = b.contains(g.mx, g.my);
+        fill_rect_rounded(back, b, 8, rgba(255, 255, 255, hover ? 40 : 16));
+        int cx = b.x + 14, cy = b.y + 14, d = i ? 1 : -1;      // the chevron points the way it pages
+        draw_line_aa(back, cx + d * 2, cy, cx - d * 3, cy - 5, 24, theme::TEXT);
+        draw_line_aa(back, cx + d * 2, cy, cx - d * 3, cy + 5, 24, theme::TEXT);
+        cal_ctl(b, i ? CAL_NEXT : CAL_PREV, 0);
+    }
+
+    // Weekday headings and the grid of days.
+    const int cell = 40, gx = cr.x + (CAL_W - 7 * cell) / 2;
+    int y = cr.y + 50;
+    for (int i = 0; i < 7; i++) {
+        int tw = measure_text(g.font, DAY_NAMES[i]);
+        draw_text(back, g.font, gx + i * cell + (cell - tw) / 2, y, DAY_NAMES[i], theme::TEXT_MUTED);
+    }
+    y += 24;
+    int first = weekday(g.cal_year, g.cal_month, 1), days = days_in_month(g.cal_year, g.cal_month);
+    for (int d = 1; d <= days; d++) {
+        int slot = first + d - 1;
+        Rect c{gx + slot % 7 * cell, y + slot / 7 * 32, cell, 32};
+        int cx = c.x + cell / 2, cy = c.y + 16;
+        bool today = now.year == g.cal_year && now.month == g.cal_month && now.day == d;
+        bool picked = g.sel_year == g.cal_year && g.sel_month == g.cal_month && g.sel_day == d;
+        bool hover = c.contains(g.mx, g.my);
+        if (today) fill_circle_aa(back, cx, cy, 14, accent());
+        else if (picked) fill_circle_aa(back, cx, cy, 14, with_alpha(accent(), 70));
+        else if (hover) fill_circle_aa(back, cx, cy, 14, rgba(255, 255, 255, 24));
+        ksnprintf(line, sizeof line, "%d", d);
+        int tw = measure_text(g.font, line);
+        draw_text(back, g.font, cx - tw / 2, cy - g.font.height / 2, line, today ? rgb(15, 23, 42) : theme::TEXT);
+        if (has_reminder(g.cal_year, g.cal_month, d)) fill_circle_aa(back, cx, cy + 11, 2, today ? rgb(15, 23, 42) : accent());
+        cal_ctl(c, CAL_DAY, d);
+    }
+    y += 6 * 32 + 6;
+    draw_hline(back, cr.x + 16, cr.right() - 17, y, rgba(255, 255, 255, 22));
+    y += 12;
+
+    // Reminders for the picked day.
+    ksnprintf(line, sizeof line, "%s %d %s", DAY_LONG[weekday(g.sel_year, g.sel_month, g.sel_day)], g.sel_day,
+              MONTH_NAMES[g.sel_month - 1]);
+    draw_text(back, g.bold, cr.x + 20, y, line, theme::TEXT);
+    {
+        Rect t{cr.right() - 20 - 64, y - 4, 64, 24};
+        bool hover = t.contains(g.mx, g.my);
+        fill_rect_rounded(back, t, 8, rgba(255, 255, 255, hover ? 40 : 16));
+        draw_text(back, g.font, t.x + (t.w - measure_text(g.font, "Today")) / 2, t.y + (t.h - g.font.height) / 2, "Today",
+                  theme::TEXT);
+        cal_ctl(t, CAL_TODAY, 0);
+    }
+    y += 28;
+    Rect in{cr.x + 16, y, CAL_W - 32, 30};
+    fill_rect_rounded(back, in, 8, rgba(255, 255, 255, 14));
+    stroke_rect_rounded(back, in, 8, with_alpha(accent(), 150));
+    int tx = in.x + 10, ty = in.y + (in.h - g.font.height) / 2;
+    if (g_rem_len) tx = draw_text_ellipsis(back, g.font, tx, ty, g_rem_text, in.w - 20, theme::TEXT);
+    else draw_text(back, g.font, tx, ty, "New reminder, e.g. 14:30 Call home", theme::TEXT_MUTED);
+    fill_rect(back, {tx + 1, in.y + 7, 2, in.h - 14}, accent());
+    y += 38;
+    int shown = 0;
+    for (int i = 0; i < MAX_REMINDERS && shown < 3; i++) {
+        const Reminder& r = g_reminders[i];
+        if (!r.used || r.year != g.sel_year || r.month != g.sel_month || r.day != g.sel_day) continue;
+        ksnprintf(line, sizeof line, "%02u:%02u", r.hour, r.minute);
+        draw_text(back, g.mono, cr.x + 22, y, line, accent());
+        draw_text_ellipsis(back, g.font, cr.x + 80, y, r.text, CAL_W - 80 - 50, theme::TEXT);
+        Rect xr{cr.right() - 40, y - 3, 22, 22};
+        bool hover = xr.contains(g.mx, g.my);
+        if (hover) fill_rect_rounded(back, xr, 6, rgba(255, 255, 255, 30));
+        int cx = xr.x + 11, cy = xr.y + 11;
+        draw_line_aa(back, cx - 4, cy - 4, cx + 4, cy + 4, 20, hover ? theme::TEXT : theme::TEXT_MUTED);
+        draw_line_aa(back, cx + 4, cy - 4, cx - 4, cy + 4, 20, hover ? theme::TEXT : theme::TEXT_MUTED);
+        cal_ctl(xr, CAL_DELETE, i);
+        y += 24;
+        shown++;
+    }
+}
+
+void draw_context_menu(Surface& back) {
+    Rect mr = ctx_rect();
+    fill_rect_rounded(back, mr.translated(0, 3), 10, rgba(0, 0, 0, 90));
+    fill_rect_rounded(back, mr, 10, theme::MENU_BG);
+    stroke_rect_rounded(back, mr, 10, theme::BORDER);
+    for (int i = 0; i < CTX_COUNT; i++) {
+        Rect ir{mr.x + 6, mr.y + 6 + i * CTX_ITEM_H, mr.w - 12, CTX_ITEM_H};
+        if (ir.contains(g.mx, g.my)) fill_rect_rounded(back, ir, 6, with_alpha(accent(), 70));
+        draw_text(back, g.font, ir.x + 12, ir.y + (ir.h - g.font.height) / 2, CTX_ITEMS[i], theme::TEXT);
+    }
+}
+
+// Alt+Tab: every window as a tile, the one that Alt's release will pick lit.
+void draw_switcher(Surface& back) {
+    Rect sr = switcher_rect();
+    fill_rect_rounded(back, sr.translated(0, 4), 16, rgba(0, 0, 0, 110));
+    fill_rect_rounded(back, sr, 16, theme::MENU_BG);
+    stroke_rect_rounded(back, sr, 16, theme::BORDER);
+    for (int i = 0; i < g.switcher_count; i++) {
+        const Window& w = g.windows[g.switcher_wins[i]];
+        Rect t{sr.x + 12 + i * (SW_TILE + 8), sr.y + 12, SW_TILE, SW_TILE_H};
+        if (i == g.switcher_sel) {
+            fill_rect_rounded(back, t, 12, with_alpha(accent(), 60));
+            stroke_rect_rounded(back, t, 12, with_alpha(accent(), 200));
+        }
+        draw_app_icon(back, t.x + (t.w - 44) / 2, t.y + 14, 44, w.kind);
+        int tw = measure_text(g.font, w.title);
+        if (tw > t.w - 16) draw_text_ellipsis(back, g.font, t.x + 8, t.bottom() - 30, w.title, t.w - 16, theme::TEXT);
+        else draw_text(back, g.font, t.x + (t.w - tw) / 2, t.bottom() - 30, w.title, w.minimised ? theme::TEXT_MUTED : theme::TEXT);
+    }
+}
+
+void draw_toasts(Surface& back) {
+    for (int i = 0; i < MAX_TOASTS; i++) {
+        const Toast& t = g_toasts[i];
+        if (!t.used) continue;
+        Rect r = toast_rect(i);
+        if (!r.inset(-8).overlaps(back.clip)) continue;
+        u32 shown = anim_eased(t.start);
+        draw_faded(back, r.inset(-8).translated(0, -SLIDE_MENU), shown, [&] {
+            Rect tr = r.translated(0, -SLIDE_MENU * (int)(255 - shown) / 255);
+            fill_rect_rounded(back, tr.translated(0, 3), 12, rgba(0, 0, 0, 80));
+            fill_rect_rounded(back, tr, 12, theme::MENU_BG);
+            stroke_rect_rounded(back, tr, 12, theme::BORDER);
+            fill_rect_rounded(back, {tr.x + 10, tr.y + 14, 4, tr.h - 28}, 2, accent());
+            draw_text_ellipsis(back, g.bold, tr.x + 24, tr.y + 12, t.title, tr.w - 60, theme::TEXT);
+            draw_text_ellipsis(back, g.font, tr.x + 24, tr.y + 36, t.text, tr.w - 40, theme::TEXT_MUTED);
+            int cx = tr.right() - 20, cy = tr.y + 20;
+            draw_line_aa(back, cx - 4, cy - 4, cx + 4, cy + 4, 20, theme::TEXT_MUTED);
+            draw_line_aa(back, cx + 4, cy - 4, cx - 4, cy + 4, 20, theme::TEXT_MUTED);
+        });
     }
 }
 
@@ -1322,11 +1805,49 @@ void compose(const Rect& r) {
     blit(g.back, c.x, c.y, wv);
     for (int i = 0; i < g.order_count; i++) {
         Window& w = g.windows[g.order[i]];
-        if (!w.used || w.minimised) continue;
-        if (!visual_bounds(w).overlaps(c)) continue;
-        draw_window(g.back, w);
+        if (!w.used || (w.minimised && w.anim != ANIM_OUT)) continue;
+        if (!anim_bounds(w).overlaps(c)) continue;
+        bool focused = g.focus == g.order[i];
+        u32 e = w.anim ? anim_eased(w.anim_start) : 255;
+        if (w.anim == ANIM_IN) draw_window_faded(g.back, w, focused, e, SLIDE_OPEN * (int)(255 - e) / 255);
+        else if (w.anim == ANIM_OUT) draw_window_faded(g.back, w, focused, 255 - e, SLIDE_MINIMISE * (int)e / 255);
+        else draw_window(g.back, w, focused);
     }
-    if (g.menu_open && menu_rect().translated(0, 4).overlaps(c)) draw_menu(g.back);
+    if (g.snap_preview) {
+        Rect t = snap_target(g.snap_preview);
+        fill_rect_rounded(g.back, t, radius(), with_alpha(accent(), 40));
+        stroke_rect_rounded(g.back, t, radius(), with_alpha(accent(), 160));
+    }
+    for (int i = 0; i < g_ghost_count; i++) {
+        Window& w = g_ghosts[i].w;
+        if (!anim_bounds(w).overlaps(c)) continue;
+        u32 e = anim_eased(g_ghosts[i].start);
+        draw_window_faded(g.back, w, false, 255 - e, SLIDE_OPEN * (int)e / 255);
+    }
+    if ((g.menu_open || g.menu_anim == ANIM_OUT) && menu_area().overlaps(c)) {
+        u32 e = g.menu_anim ? anim_eased(g.menu_anim_start) : 255;
+        u32 shown = g.menu_anim == ANIM_OUT ? 255 - e : e;
+        if (shown == 255) {
+            draw_menu(g.back);
+        } else {
+            // It rises out of the taskbar and sinks back into it.
+            int dy = SLIDE_MENU * (int)(255 - shown) / 255;
+            draw_faded(g.back, menu_area(), shown, [&] { draw_menu(g.back, dy); });
+        }
+    }
+    if ((g.cal_open || g.cal_anim == ANIM_OUT) && cal_area().overlaps(c)) {
+        u32 e = g.cal_anim ? anim_eased(g.cal_anim_start) : 255;
+        u32 shown = g.cal_anim == ANIM_OUT ? 255 - e : e;
+        if (shown == 255) {
+            draw_calendar(g.back);
+        } else {
+            int dy = SLIDE_MENU * (int)(255 - shown) / 255;
+            draw_faded(g.back, cal_area(), shown, [&] { draw_calendar(g.back, dy); });
+        }
+    }
+    if (g.ctx_open && ctx_area().overlaps(c)) draw_context_menu(g.back);
+    if (g.switcher_open && switcher_rect().inset(-8).overlaps(c)) draw_switcher(g.back);
+    draw_toasts(g.back);
     if (panel_rect().overlaps(c)) draw_panel(g.back);
     g.back.clip = g.back.bounds();
     present(c);
@@ -1384,7 +1905,7 @@ int resize_shape(u8 edges) {
 }
 
 struct Hit {
-    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu } what = Nothing;
+    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu, Clock, Calendar, Toast, Context } what = Nothing;
     int win = -1;
     int button = -1;
     u8 edges = 0;
@@ -1393,6 +1914,24 @@ struct Hit {
 
 Hit hit_test(int x, int y) {
     Hit h;
+    for (int i = 0; i < MAX_TOASTS; i++) {
+        if (g_toasts[i].used && toast_rect(i).contains(x, y)) {
+            h.what = Hit::Toast;
+            h.item = i;
+            return h;
+        }
+    }
+    if (g.cal_open && cal_rect().contains(x, y)) {
+        h.what = Hit::Calendar;
+        return h;
+    }
+    if (g.ctx_open && ctx_rect().contains(x, y)) {
+        Rect mr = ctx_rect();
+        h.what = Hit::Context;
+        int i = (y - mr.y - 6) / CTX_ITEM_H;
+        h.item = y >= mr.y + 6 && i < CTX_COUNT ? i : -1;
+        return h;
+    }
     if (g.menu_open) {
         Rect mr = menu_rect();
         if (mr.contains(x, y)) {
@@ -1408,6 +1947,8 @@ Hit hit_test(int x, int y) {
             h.what = Hit::Launcher;
             h.item = 1;             // the search box: always opens, never closes
         }
+        Rect ck = clock_rect();
+        if (ck.contains(x, y) && x >= ck.right() - 118) h.what = Hit::Clock;
         for (int i = 0; i < g.task_count; i++) {
             if (g.task_rects[i].contains(x, y)) {
                 h.what = Hit::Task;
@@ -1462,20 +2003,248 @@ Hit hit_test(int x, int y) {
 void close_menu() {
     if (!g.menu_open) return;
     g.menu_open = false;
+    g.menu_anim = ANIM_OUT;
+    g.menu_anim_start = refclock_now_us();
     damage(search_rect());
-    damage(menu_rect().inset(-8).translated(0, 4));
+    damage(menu_area());
     damage(launcher_rect());
 }
 
 void open_menu() {
     g.menu_open = true;
+    g.menu_anim = ANIM_IN;
+    g.menu_anim_start = refclock_now_us();
     g.menu_hover = -1;
     g_search_len = 0;
     g_search[0] = 0;
     search_update();
     damage(search_rect());
-    damage(menu_rect().inset(-8).translated(0, 4));
+    damage(menu_area());
     damage(launcher_rect());
+}
+
+void close_calendar() {
+    if (!g.cal_open) return;
+    g.cal_open = false;
+    g.cal_anim = ANIM_OUT;
+    g.cal_anim_start = refclock_now_us();
+    damage(cal_area());
+    damage(clock_rect());
+}
+
+void open_calendar() {
+    close_menu();
+    DateTime now = local_now();
+    g.cal_open = true;
+    g.cal_anim = ANIM_IN;
+    g.cal_anim_start = refclock_now_us();
+    g.cal_year = g.sel_year = now.year;
+    g.cal_month = g.sel_month = now.month;
+    g.sel_day = now.day;
+    g_rem_len = 0;
+    g_rem_text[0] = 0;
+    damage(cal_area());
+    damage(clock_rect());
+}
+
+void calendar_page(int months) {
+    g.cal_month += months;
+    while (g.cal_month < 1) { g.cal_month += 12; g.cal_year--; }
+    while (g.cal_month > 12) { g.cal_month -= 12; g.cal_year++; }
+    damage(cal_rect());
+}
+
+void notify(const char* title, const char* text) {
+    int slot = -1;
+    for (int i = 0; i < MAX_TOASTS && slot < 0; i++)
+        if (!g_toasts[i].used) slot = i;
+    if (slot < 0) {
+        // Full: the oldest makes room.
+        for (int i = 1; i < MAX_TOASTS; i++) g_toasts[i - 1] = g_toasts[i];
+        slot = MAX_TOASTS - 1;
+        damage({toast_rect(0).x - 8, 0, TOAST_W + 24, toast_rect(MAX_TOASTS).y});
+    }
+    Toast& t = g_toasts[slot];
+    t.used = true;
+    strlcpy(t.title, title, sizeof t.title);
+    strlcpy(t.text, text, sizeof t.text);
+    t.start = refclock_now_us();
+    t.until = t.start + TOAST_US;
+    damage(toast_rect(slot).inset(-8).translated(0, -SLIDE_MENU));
+}
+
+void dismiss_toast(int i) {
+    if (i < 0 || i >= MAX_TOASTS || !g_toasts[i].used) return;
+    damage({toast_rect(0).x - 8, 0, TOAST_W + 24, toast_rect(MAX_TOASTS).y});
+    for (int k = i + 1; k < MAX_TOASTS; k++) g_toasts[k - 1] = g_toasts[k];
+    g_toasts[MAX_TOASTS - 1].used = false;
+}
+
+// Enter in the calendar's line: "14:30 Dentist" or just "Dentist" (at 09:00).
+void add_reminder() {
+    if (!g_rem_len) return;
+    const char* t = g_rem_text;
+    int hour = 9, minute = 0;
+    if (g_rem_len >= 5 && t[0] >= '0' && t[0] <= '9' && t[1] >= '0' && t[1] <= '9' && t[2] == ':' && t[3] >= '0' &&
+        t[3] <= '9' && t[4] >= '0' && t[4] <= '9') {
+        hour = (t[0] - '0') * 10 + t[1] - '0';
+        minute = (t[3] - '0') * 10 + t[4] - '0';
+        t += 5;
+        while (*t == ' ') t++;
+    }
+    if (hour > 23 || minute > 59) return;
+    for (Reminder& r : g_reminders) {
+        if (r.used) continue;
+        r.used = true;
+        r.year = (u16)g.sel_year;
+        r.month = (u8)g.sel_month;
+        r.day = (u8)g.sel_day;
+        r.hour = (u8)hour;
+        r.minute = (u8)minute;
+        strlcpy(r.text, *t ? t : "Reminder", sizeof r.text);
+        break;
+    }
+    g_rem_len = 0;
+    g_rem_text[0] = 0;
+    damage(cal_rect());
+}
+
+void calendar_click(int x, int y) {
+    for (int i = 0; i < g_cal_ctl_count; i++) {
+        const Ctl& c = g_cal_ctls[i];
+        if (!c.r.contains(x, y)) continue;
+        switch (c.act) {
+        case CAL_PREV: calendar_page(-1); break;
+        case CAL_NEXT: calendar_page(1); break;
+        case CAL_TODAY: {
+            DateTime now = local_now();
+            g.cal_year = g.sel_year = now.year;
+            g.cal_month = g.sel_month = now.month;
+            g.sel_day = now.day;
+            break;
+        }
+        case CAL_DAY:
+            g.sel_year = g.cal_year;
+            g.sel_month = g.cal_month;
+            g.sel_day = c.val;
+            break;
+        case CAL_DELETE: g_reminders[c.val].used = false; break;
+        }
+        damage(cal_rect());
+        return;
+    }
+}
+
+// Once a second: reminders whose minute has come become notifications.
+void fire_reminders(const DateTime& now) {
+    for (Reminder& r : g_reminders) {
+        if (!r.used || r.year != now.year || r.month != now.month || r.day != now.day || r.hour != now.hour ||
+            r.minute != now.minute)
+            continue;
+        r.used = false;
+        notify("Reminder", r.text);
+        if (g.cal_open) damage(cal_rect());
+    }
+}
+
+void close_context_menu() {
+    if (!g.ctx_open) return;
+    g.ctx_open = false;
+    damage(ctx_area());
+}
+
+void open_context_menu(int x, int y) {
+    close_menu();
+    close_calendar();
+    g.ctx_open = true;
+    g.ctx_x = x;
+    g.ctx_y = y;
+    damage(ctx_area());
+}
+
+// Super+D: hide every window, or bring back the ones it hid.
+void toggle_show_desktop() {
+    bool any = false;
+    for (int i = 0; i < MAX_WINDOWS; i++) any |= g.windows[i].used && !g.windows[i].minimised;
+    if (any) {
+        g.shown_before = 0;
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            Window& w = g.windows[i];
+            if (!w.used || w.minimised) continue;
+            g.shown_before |= 1u << i;
+            minimise(w);
+        }
+    } else {
+        // Bottom to top, so they stack as they did.
+        int order[MAX_WINDOWS];
+        int count = g.order_count;
+        for (int i = 0; i < count; i++) order[i] = g.order[i];
+        for (int i = 0; i < count; i++) {
+            int idx = order[i];
+            if ((g.shown_before & (1u << idx)) && g.windows[idx].used && g.windows[idx].minimised) restore(g.windows[idx]);
+        }
+        g.shown_before = 0;
+    }
+}
+
+// Alt+Tab: opens the switcher (next window chosen), or moves on through it.
+void switcher_step(int dir) {
+    if (!g.switcher_open) {
+        g.switcher_count = 0;
+        for (int i = g.order_count - 1; i >= 0; i--)
+            if (g.windows[g.order[i]].used) g.switcher_wins[g.switcher_count++] = g.order[i];
+        if (g.switcher_count < 2) {
+            g.switcher_count = 0;
+            return;
+        }
+        g.switcher_open = true;
+        g.switcher_sel = 0;
+        close_menu();
+        close_calendar();
+        close_context_menu();
+    }
+    g.switcher_sel = (g.switcher_sel + dir + g.switcher_count) % g.switcher_count;
+    damage(switcher_rect().inset(-8).translated(0, 2));
+}
+
+void switcher_finish(bool pick) {
+    if (!g.switcher_open) return;
+    g.switcher_open = false;
+    damage(switcher_rect().inset(-8).translated(0, 2));
+    if (pick) restore(g.windows[g.switcher_wins[g.switcher_sel]]);
+}
+
+// Print Screen: the screen as a BMP file in /tmp.
+void save_screenshot() {
+    char path[48];
+    ksnprintf(path, sizeof path, "/tmp/screenshot-%u.bmp", ++g.screenshot_count);
+    const Credentials root = {0, 0};
+    Result<Vnode*> v = vfs_create(nullptr, path, root, VType::File, 0644, true);
+    if (!v.ok()) {
+        notify("Screenshot", "Could not create the file in /tmp.");
+        return;
+    }
+    // BITMAPFILEHEADER + BITMAPINFOHEADER, 32 bits per pixel, rows bottom-up.
+    u32 row_bytes = (u32)g.W * 4, image = row_bytes * (u32)g.H;
+    u8 hdr[54] = {};
+    auto put32 = [&](int at, u32 x) { hdr[at] = (u8)x; hdr[at + 1] = (u8)(x >> 8); hdr[at + 2] = (u8)(x >> 16); hdr[at + 3] = (u8)(x >> 24); };
+    hdr[0] = 'B';
+    hdr[1] = 'M';
+    put32(2, 54 + image);
+    put32(10, 54);
+    put32(14, 40);
+    put32(18, (u32)g.W);
+    put32(22, (u32)g.H);
+    hdr[26] = 1;
+    hdr[28] = 32;
+    put32(34, image);
+    bool ok = vfs_write(v.value(), 0, hdr, sizeof hdr).ok();
+    for (int y = g.H - 1; y >= 0 && ok; y--)
+        ok = vfs_write(v.value(), 54 + (u64)(g.H - 1 - y) * row_bytes, g.back.row(y), row_bytes).ok();
+    vnode_unref(v.value());
+    char msg[64];
+    ksnprintf(msg, sizeof msg, ok ? "Saved as %s" : "Writing %s failed", path);
+    notify("Screenshot", msg);
 }
 
 void refresh_everything() {
@@ -1515,10 +2284,28 @@ void settings_apply(u8 act, int val) {
     case ACT_BALL: g_prefs.border_all = val; break;
     case ACT_GLOW: g_prefs.glow = val; break;
     case ACT_MODE:
+        if (val < 0) return;
         if (!set_resolution(MODES[val].w, MODES[val].h)) kprintf("gui: could not switch to %dx%d\n", MODES[val].w, MODES[val].h);
         break;
+    case ACT_FPS: g_prefs.fps = val; break;
+    case ACT_TZ: {
+        int tz = g_prefs.tz_minutes + val;
+        g_prefs.tz_minutes = tz < -12 * 60 ? -12 * 60 : tz > 14 * 60 ? 14 * 60 : tz;
+        break;
+    }
     default: return;
     }
+    refresh_everything();
+}
+
+// The custom accent colour under x on the hue strip (content coordinates).
+void hue_pick(int x) {
+    if (g_hue_rect.w < 2) return;
+    int hue = (x - g_hue_rect.x) * 1535 / (g_hue_rect.w - 1);
+    hue = hue < 0 ? 0 : hue > 1535 ? 1535 : hue;
+    if (g_prefs.accent == ACCENT_COUNT && g_prefs.custom_hue == hue) return;
+    g_prefs.accent = ACCENT_COUNT;
+    g_prefs.custom_hue = hue;
     refresh_everything();
 }
 
@@ -1526,6 +2313,11 @@ void settings_apply(u8 act, int val) {
 void settings_click(int x, int y) {
     for (int i = 0; i < g_ctl_count; i++) {
         if (!g_ctls[i].r.contains(x, y)) continue;
+        if (g_ctls[i].act == ACT_HUE) {
+            g.hue_drag = true;
+            hue_pick(x);
+            return;
+        }
         settings_apply(g_ctls[i].act, g_ctls[i].val);
         return;
     }
@@ -1551,10 +2343,44 @@ void on_press(int button) {
     Hit h = hit_test(g.mx, g.my);
     if (button != 0) {
         if (h.what == Hit::Nothing && g.menu_open) close_menu();
+        if (h.what == Hit::Nothing && g.cal_open) close_calendar();
+        if (h.what != Hit::Context) close_context_menu();
+        // Middle-click on a taskbar button closes its window; right-click
+        // on the desktop opens the menu.
+        if (button == 2 && h.what == Hit::Task) destroy_window(h.win);
+        else if (button == 1 && h.what == Hit::Nothing && !g.menu_open && !g.cal_open) open_context_menu(g.mx, g.my);
         return;
     }
     if (g.menu_open && h.what != Hit::Menu && h.what != Hit::Launcher) close_menu();
+    if (g.cal_open && h.what != Hit::Calendar && h.what != Hit::Clock) close_calendar();
+    if (g.ctx_open && h.what != Hit::Context) close_context_menu();
+    u64 now = refclock_now_us();
+    bool double_click = h.what == Hit::Title && h.win == g.last_click_win && now - g.last_click_us < 400000;
+    g.last_click_us = now;
+    g.last_click_win = h.what == Hit::Title ? h.win : -1;
     switch (h.what) {
+    case Hit::Context:
+        close_context_menu();
+        switch (h.item) {
+        case 0: open_kind(Kind::Terminal); break;
+        case 1: open_kind(Kind::Settings); break;
+        case 2:
+            g_settings_tab = 1;
+            open_kind(Kind::Settings);
+            for (int i = 0; i < MAX_WINDOWS; i++)
+                if (g.windows[i].used && g.windows[i].kind == Kind::Settings) g.windows[i].needs_paint = true;
+            break;
+        case 3: toggle_show_desktop(); break;
+        case 4: open_kind(Kind::About); break;
+        default: break;
+        }
+        break;
+    case Hit::Toast: dismiss_toast(h.item); break;
+    case Hit::Clock:
+        if (g.cal_open) close_calendar();
+        else open_calendar();
+        break;
+    case Hit::Calendar: calendar_click(g.mx, g.my); break;
     case Hit::Menu:
         menu_activate(h.item);
         break;
@@ -1572,6 +2398,11 @@ void on_press(int button) {
         raise_window(h.win);
         set_focus(h.win);
         damage(visual_bounds(g.windows[h.win]));
+        if (double_click) {
+            toggle_maximise(g.windows[h.win]);
+            g.last_click_win = -1;
+            break;
+        }
         g.drag = Drag::Move;
         g.drag_win = h.win;
         g.drag_sx = g.mx;
@@ -1615,6 +2446,16 @@ void on_press(int button) {
 
 void on_release(int button) {
     if (button != 0) return;
+    g.hue_drag = false;
+    if (g.drag == Drag::Move && g.drag_win >= 0 && g.windows[g.drag_win].used && g.snap_preview) {
+        Window& w = g.windows[g.drag_win];
+        if (g.snap_preview == 3) { if (!w.maximised) toggle_maximise(w); }
+        else snap_window(w, g.snap_preview);
+    }
+    if (g.snap_preview) {
+        damage(snap_target(g.snap_preview).inset(-2));
+        g.snap_preview = 0;
+    }
     if (g.drag == Drag::Resize && g.drag_win >= 0 && g.windows[g.drag_win].used) {
         build_shadow(g.windows[g.drag_win]);
         damage(visual_bounds(g.windows[g.drag_win]));
@@ -1626,6 +2467,11 @@ void on_release(int button) {
 }
 
 void on_motion() {
+    if (g.hue_drag) {
+        // Dragging along the hue strip of the Settings window.
+        if (g.focus >= 0 && g.windows[g.focus].kind == Kind::Settings) hue_pick(g.mx - content_rect(g.windows[g.focus]).x);
+        return;
+    }
     if (g.drag == Drag::None) {
         Hit over = hit_test(g.mx, g.my);
         set_cursor_shape(over.what == Hit::Edge ? resize_shape(over.edges) : CUR_ARROW);
@@ -1634,8 +2480,26 @@ void on_motion() {
         Window& w = g.windows[g.drag_win];
         int dx = g.mx - g.drag_sx, dy = g.my - g.drag_sy;
         if (g.drag == Drag::Move) {
-            if (w.maximised) return;
+            if (w.maximised || w.snapped) {
+                // Dragging a maximised or snapped window lets go of that:
+                // it takes its old size under the pointer.
+                if (dx * dx + dy * dy < 16) return;
+                Rect r = w.restore;
+                r.x = g.mx - r.w * (g.drag_sx - w.frame.x) / (w.frame.w > 0 ? w.frame.w : 1);
+                r.y = g.my - (g.drag_sy - w.frame.y);
+                w.maximised = false;
+                w.snapped = 0;
+                set_window_frame(w, r);
+                g.drag_start = w.frame.translated(-dx, -dy);
+            }
             set_window_frame(w, g.drag_start.translated(dx, dy));
+            // At an edge of the screen: show where a drop would put it.
+            int preview = g.mx <= 0 ? 1 : g.mx >= g.W - 1 ? 2 : g.my <= 0 ? 3 : 0;
+            if (preview != g.snap_preview) {
+                if (g.snap_preview) damage(snap_target(g.snap_preview).inset(-2));
+                g.snap_preview = preview;
+                if (preview) damage(snap_target(preview).inset(-2));
+            }
         } else {
             Rect nf = g.drag_start;
             if (g.drag_edges & 1) { nf.x += dx; nf.w -= dx; }
@@ -1662,6 +2526,8 @@ void on_motion() {
     static Hit::What last_what = Hit::Nothing;
     static int last_win = -1, last_button = -1;
     Hit h = hit_test(g.mx, g.my);
+    if (h.what == Hit::Calendar || last_what == Hit::Calendar) damage(cal_rect());
+    if (h.what == Hit::Context || last_what == Hit::Context) damage(ctx_rect());
     bool panel_now = h.what == Hit::Panel || h.what == Hit::Launcher || h.what == Hit::Task;
     bool panel_before = last_what == Hit::Panel || last_what == Hit::Launcher || last_what == Hit::Task;
     if (panel_now || panel_before) damage(panel_rect());
@@ -1698,18 +2564,6 @@ void terminal_scroll(int lines, bool to_bottom = false) {
     g.term_dirty = true;
 }
 
-void cycle_focus() {
-    if (g.order_count < 2) return;
-    // Raise the bottom-most visible window (classic Alt+Tab rotation).
-    for (int i = 0; i < g.order_count; i++) {
-        Window& w = g.windows[g.order[i]];
-        if (w.used && !w.minimised && g.order[i] != g.focus) {
-            restore(w);
-            return;
-        }
-    }
-}
-
 void process_keyboard() {
     KeyEvent e;
     while (ps2kbd_poll_event(&e)) {
@@ -1728,17 +2582,49 @@ void process_keyboard() {
             }
             continue;
         }
+        if (e.key == key::ALT && !e.pressed) switcher_finish(true);
         if (!e.pressed) continue;
         if (g.super_down) g.super_chord = true;
         bool alt = e.mods & mod::ALT, super_ = e.mods & mod::SUPER, shift = e.mods & mod::SHIFT;
+        if (g.switcher_open) {
+            if (e.key == key::TAB) switcher_step(shift ? -1 : 1);
+            else if (e.key == key::ESCAPE) switcher_finish(false);
+            continue;
+        }
         if (alt && e.key == key::F1 + 3) {                 // Alt+F4
             if (g.focus >= 0) destroy_window(g.focus);
             continue;
         }
-        if (alt && e.key == key::TAB) { cycle_focus(); continue; }
-        if (super_ && e.ascii == 't') { close_menu(); open_kind(Kind::Terminal); continue; }
+        if (alt && e.key == key::TAB) { switcher_step(shift ? -1 : 1); continue; }
+        if (e.key == key::PRINT) { save_screenshot(); continue; }
+        if (super_ && e.ascii == 't') { close_menu(); close_calendar(); open_kind(Kind::Terminal); continue; }
         if (super_ && e.ascii == 'm') { if (g.focus >= 0) toggle_maximise(g.windows[g.focus]); continue; }
+        if (super_ && e.ascii == 'd') { close_menu(); close_calendar(); toggle_show_desktop(); continue; }
+        if (super_ && (e.key == key::LEFT || e.key == key::RIGHT || e.key == key::UP || e.key == key::DOWN)) {
+            if (g.focus >= 0) {
+                Window& w = g.windows[g.focus];
+                if (e.key == key::LEFT) snap_window(w, 1);
+                else if (e.key == key::RIGHT) snap_window(w, 2);
+                else if (e.key == key::UP) { if (!w.maximised) toggle_maximise(w); }
+                else if (w.maximised || w.snapped) unsnap(w);
+                else minimise(w);
+            }
+            continue;
+        }
         if (e.key == key::ESCAPE && g.menu_open) { close_menu(); continue; }
+        if (g.cal_open) {
+            if (e.key == key::ESCAPE) close_calendar();
+            else if (e.key == key::ENTER) add_reminder();
+            else if (e.key == key::LEFT || e.key == key::PAGE_UP) calendar_page(-1);
+            else if (e.key == key::RIGHT || e.key == key::PAGE_DOWN) calendar_page(1);
+            else if (e.key == key::BACKSPACE) { if (g_rem_len) g_rem_text[--g_rem_len] = 0; }
+            else if (e.ascii >= 32 && e.ascii < 127 && !alt && !super_ && g_rem_len < (int)sizeof g_rem_text - 1) {
+                g_rem_text[g_rem_len++] = e.ascii;
+                g_rem_text[g_rem_len] = 0;
+            }
+            damage(cal_rect());
+            continue;
+        }
         if (g.menu_open) {
             int sel = g.menu_hover >= 0 ? g.menu_hover : -1;
             if (e.key == key::DOWN && g_found_count) sel = (sel + 1) % g_found_count;
@@ -1771,9 +2657,15 @@ void process_keyboard() {
             terminal_scroll(e.key == key::PAGE_UP ? page : -page);
             continue;
         }
-        if (e.ascii) {
+        // Up/Down walk the shell's history (Ctrl-P/Ctrl-N on the serial
+        // line); Tab completes a command.
+        char c = e.ascii;
+        if (e.key == key::UP) c = 0x10;
+        else if (e.key == key::DOWN) c = 0x0E;
+        else if (e.key == key::TAB) c = '\t';
+        if (c) {
             if (g.term.scrolled_back()) terminal_scroll(0, true);      // typing returns to the bottom
-            term_input_push(e.ascii);
+            term_input_push(c);
         }
     }
 }
@@ -1781,13 +2673,20 @@ void process_keyboard() {
 void process_mouse() {
     MouseEvent e;
     while (ps2mouse_poll(&e)) {
-        if (e.dx || e.dy) {
+        if (e.absolute) {
+            int nx = (int)((u32)e.ax * (u32)(g.W - 1) / 65535), ny = (int)((u32)e.ay * (u32)(g.H - 1) / 65535);
+            if (nx != g.mx || ny != g.my) {
+                move_cursor(nx, ny);
+                on_motion();
+            }
+        } else if (e.dx || e.dy) {
             move_cursor(g.mx + e.dx, g.my + e.dy);
             on_motion();
         }
         if (e.dz) {
             Hit h = hit_test(g.mx, g.my);
             if (h.what == Hit::Content && h.win >= 0 && h.win == g.term_win) terminal_scroll(e.dz * 3);
+            else if (h.what == Hit::Calendar) calendar_page(e.dz > 0 ? -1 : 1);
         }
         u8 changed = e.buttons ^ g.buttons;
         g.buttons = e.buttons;
@@ -1827,6 +2726,15 @@ void render_wallpaper(Surface& s, int style, bool decorate) {
         // Ember: dusk with orange and rose.
         {rgb(24, 10, 16), rgb(40, 14, 34),
          {{12, 48, 30, rgba(249, 115, 22, 120)}, {48, 44, 24, rgba(236, 72, 153, 95)}, {30, 8, 20, rgba(250, 204, 21, 45)}}},
+        // Ocean: deep water, lit from above.
+        {rgb(4, 16, 36), rgb(6, 36, 58),
+         {{44, 10, 32, rgba(14, 165, 233, 110)}, {12, 44, 26, rgba(45, 212, 191, 80)}, {34, 60, 22, rgba(59, 130, 246, 70)}}},
+        // Sunset: the last orange under a violet sky.
+        {rgb(30, 14, 48), rgb(58, 20, 30),
+         {{30, 58, 34, rgba(251, 146, 60, 125)}, {8, 20, 24, rgba(168, 85, 247, 90)}, {52, 26, 22, rgba(244, 63, 94, 80)}}},
+        // Graphite: almost no colour, for those who want the windows to carry it.
+        {rgb(14, 15, 18), rgb(24, 26, 31),
+         {{46, 10, 30, rgba(148, 163, 184, 50)}, {10, 52, 26, rgba(100, 116, 139, 45)}, {0, 0, 0, 0}}},
     };
     const Style& st = STYLES[style >= 0 && style < WALLPAPER_COUNT ? style : 0];
     const int W = s.width, H = s.height;
@@ -1932,6 +2840,11 @@ bool set_resolution(int nw, int nh) {
     free_pixels(g.wall.pixels);
     free_pixels(g.scratch.pixels);
     free_pixels(g.front);
+    for (int i = 0; i < g_ghost_count; i++) {
+        free_pixels(g_ghosts[i].w.pixels);
+        free_pixels(g_ghosts[i].w.shadow);
+    }
+    g_ghost_count = 0;
     const FramebufferInfo& fb = g_boot_info.framebuffer;
     g.W = nw;
     g.H = nh;
@@ -1964,12 +2877,15 @@ bool set_resolution(int nw, int nh) {
         }
         w.frame = f;
         w.needs_paint = true;
+        w.anim = ANIM_NONE;
         if (i == g.term_win) terminal_fit(w);
     }
     render_wallpaper(g.wall, g_prefs.wallpaper, true);
     if (g.mx >= nw) g.mx = nw - 1;
     if (g.my >= nh) g.my = nh - 1;
     g.cursor_drawn = false;
+    g.cal_open = false;
+    g.cal_anim = ANIM_NONE;
     damage_all();
     kprintf("gui: resolution changed to %dx%d\n", nw, nh);
     return true;
@@ -2108,6 +3024,18 @@ int gui_terminal_getc() {
     return (unsigned char)c;
 }
 
+bool gui_notify(const char* title, const char* text) {
+    if (!g.active) return false;
+    u32 head = g_pending_head;
+    if (head - g_pending_tail >= MAX_TOASTS) return false;
+    Toast& t = g_pending[head % MAX_TOASTS];
+    strlcpy(t.title, title, sizeof t.title);
+    strlcpy(t.text, text, sizeof t.text);
+    __atomic_store_n(&g_pending_head, head + 1, __ATOMIC_RELEASE);
+    g_compositor_wake_hint();
+    return true;
+}
+
 bool gui_request_resolution(u32 width, u32 height) {
     if (!g.active || !bga_mode_fits(width, height) || width > 0xFFFF || height > 0xFFFF) return false;
     __atomic_store_n(&g_wanted_mode, width << 16 | height, __ATOMIC_RELEASE);
@@ -2128,10 +3056,17 @@ void gui_pump() {
     process_keyboard();
     process_mouse();
 
-    DateTime now = rtc_now();
+    while (__atomic_load_n(&g_pending_head, __ATOMIC_ACQUIRE) != g_pending_tail) {
+        const Toast& t = g_pending[g_pending_tail % MAX_TOASTS];
+        notify(t.title, t.text);
+        __atomic_store_n(&g_pending_tail, g_pending_tail + 1, __ATOMIC_RELEASE);
+    }
+    DateTime now = local_now();
     if (now.second != g.last_second) {
         g.last_second = now.second;
         damage(clock_rect());
+        if (now.second == 0 || g.last_frame_us == 0) fire_reminders(now);
+        if (g.cal_open) damage(cal_rect());         // "today" can change
         for (int i = 0; i < MAX_WINDOWS; i++)
             if (g.windows[i].used && g.windows[i].kind == Kind::SystemMonitor) g.windows[i].needs_paint = true;
     }
@@ -2146,7 +3081,41 @@ void gui_pump() {
             if (w.used && !w.minimised && (g_prefs.border_all || i == g.focus)) damage(w.frame.inset(-6));
         }
     }
-    if (now_us - g.last_frame_us < FRAME_US) return;
+    if (now_us - g.last_frame_us < frame_us()) return;
+
+    // Windows and the launcher part-way through fading: another frame each,
+    // and one last frame when they are done.
+    for (int i = 0; i < MAX_WINDOWS; i++) {
+        Window& w = g.windows[i];
+        if (!w.used || !w.anim) continue;
+        damage(anim_bounds(w));
+        if (now_us - w.anim_start >= ANIM_US) w.anim = ANIM_NONE;
+    }
+    for (int i = 0; i < g_ghost_count;) {
+        Ghost& gh = g_ghosts[i];
+        damage(anim_bounds(gh.w));
+        if (now_us - gh.start < ANIM_US) {
+            i++;
+            continue;
+        }
+        free_pixels(gh.w.pixels);
+        free_pixels(gh.w.shadow);
+        gh = g_ghosts[--g_ghost_count];
+    }
+    if (g.menu_anim) {
+        damage(menu_area());
+        if (now_us - g.menu_anim_start >= ANIM_US) g.menu_anim = ANIM_NONE;
+    }
+    if (g.cal_anim) {
+        damage(cal_area());
+        if (now_us - g.cal_anim_start >= ANIM_US) g.cal_anim = ANIM_NONE;
+    }
+    for (int i = 0; i < MAX_TOASTS; i++) {
+        Toast& t = g_toasts[i];
+        if (!t.used) continue;
+        if (now_us - t.start < ANIM_US) damage(toast_rect(i).inset(-8).translated(0, -SLIDE_MENU));
+        if (now_us >= t.until) dismiss_toast(i--);
+    }
 
     for (int i = 0; i < g.order_count; i++) {
         Window& w = g.windows[g.order[i]];
@@ -2174,6 +3143,8 @@ void compositor_main(void*) {
 }
 
 } // namespace
+
+void g_compositor_wake_hint() { g_compositor_wake.wake_one(); }
 
 bool gui_start_compositor() {
     Result<Thread*> t = kthread_create(compositor_main, nullptr, "compositor", prio::INTERACTIVE, nullptr, true);

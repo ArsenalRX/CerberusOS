@@ -39,6 +39,7 @@
 #include <drivers/virtio_blk.h>
 #include <drivers/ata.h>
 #include <drivers/pci.h>
+#include <drivers/vmmdev.h>
 #include <fs/fs.h>
 #include <lib/string.h>
 #include <mm/vmm.h>
@@ -96,6 +97,7 @@ void init_thread(void*) {
     input_init();
     fbdev_init();
     pci_init();
+    vmmdev_init();
     ahci_register();
     nvme_register();
     virtio_blk_register();

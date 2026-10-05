@@ -13,7 +13,7 @@ re-ordered or re-scoped, so that "What it can do today" and "Where it's
 going" stay true. Keep the language names from docs/DECISIONS.md (Spec,
 `specc`, `.spec`), never the older name used in SPEC.md.
 
-Last updated: **2026-10-04**, at release **0.0.5f**. (The system was called Lumen until that day.)
+Last updated: **2026-10-05**, at release **0.0.5g**. (The system was called Lumen until 2026-10-04.)
 
 ---
 
@@ -41,7 +41,7 @@ everyday computer.
 - **Who makes it.** A personal project by one developer, the project owner,
   built with an AI coding assistant (Claude Code) working from a written
   design document.
-- **Where it stands.** The current release is **0.0.5f** (2026-10-04). It
+- **Where it stands.** The current release is **0.0.5g** (2026-10-05). It
   runs in the VirtualBox and QEMU virtual machines from a single ISO file,
   on old BIOS or modern UEFI, and can keep files on a virtual hard disk. It
   cannot yet connect to the internet or be installed on a real PC.
@@ -317,7 +317,7 @@ instructions, and finally writes an ELF program file Cerberus can run.
 Phase 16 is done when `specc hello.spec -o hello` makes a program that runs
 on Cerberus and a Spec application with windows runs on the desktop.
 
-## What it can do today (0.0.5f)
+## What it can do today (0.0.5g)
 
 - Boots in VirtualBox and QEMU from one ISO, with BIOS or UEFI, in about a
   second, and uses every processor core.
@@ -325,8 +325,12 @@ on Cerberus and a Spec application with windows runs on the desktop.
   copy-on-write.
 - Runs many threads and programs at once; runs real user programs in a
   protected mode and survives their crashes.
-- Shows a desktop preview: wallpaper, taskbar, launcher menu, movable and
-  resizable windows, keyboard shortcuts (Alt+Tab, Alt+F4, Super).
+- Shows a desktop preview: wallpaper, taskbar, launcher menu with search,
+  movable and resizable windows that snap to the screen's edges, an
+  Alt+Tab switcher, a calendar with reminders and notifications, a
+  Settings window (any accent colour, six wallpapers, RGB window borders,
+  resolutions up to ultrawide, time zone), and keyboard shortcuts
+  (Alt+Tab, Alt+F4, Super, Super+D, Super+arrows, Print Screen).
 - Keeps files and folders, in memory and on disks formatted with cerfs
   (which survives a power cut), with permissions and the usual tools
   (`ls`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `mount`, `mkfs.cerfs` ...).
@@ -336,7 +340,7 @@ on Cerberus and a Spec application with windows runs on the desktop.
 - Has a built-in terminal shell that runs programs by name, with output
   redirection, system information and self-tests; the terminal scrolls back
   1,000 lines.
-- Has the security protections listed above, checked by 41 automated tests
+- Has the security protections listed above, checked by 42 automated tests
   and fuzzing.
 
 It cannot yet use the network, play sound, use USB, have user accounts,

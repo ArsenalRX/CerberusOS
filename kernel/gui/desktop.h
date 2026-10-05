@@ -45,4 +45,8 @@ GuiStats gui_stats();
 bool gui_request_resolution(u32 width, u32 height);
 // The size of the desktop now.
 void gui_screen_size(u32* width, u32* height);
+// Shows a notification card in the corner of the desktop (the shell's
+// `notify`). Safe from any thread. False if the desktop is not running or
+// four are already waiting.
+bool gui_notify(const char* title, const char* text);
 void gui_reset_worst();

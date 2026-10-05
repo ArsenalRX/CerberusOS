@@ -1266,3 +1266,64 @@ with it to Pane and the Settings application (phases 12 and 13).
 Rejected: saving preferences to `/tmp` (lost at reboot anyway, and would
 look like persistence); VBE BIOS calls for mode setting (need real mode or
 an emulator).
+
+---
+
+## 2026-10-05 — Desktop polish before phase 12 (owner request)
+
+The owner chose "more polish until we start phase 12" and, during the day,
+asked for a calendar with reminders, all common resolutions and refresh
+rates, ultrawide support, a cleaner Settings window without hint text, and
+a fix for the mouse at 1920x1080 on VirtualBox. All of it lives in the
+kernel-hosted desktop and moves with it to Pane (phase 12).
+
+- **Animations** are done without an off-screen window buffer: the back
+  buffer region is saved, the window is drawn normally (shifted), and the
+  result is mixed back with the saved pixels by the window's opacity
+  (`draw_faded`). A closed window leaves a "ghost" that owns its buffers
+  until it has faded. 160 ms, eased. The same helper fades the launcher,
+  the calendar and notifications.
+- **Frame rate** in Settings is a cap on how often the compositor presents
+  (30–144 Hz). A virtual machine has no monitor and no vertical refresh,
+  so there is nothing else to set; the chip row is labelled "Frame rate",
+  not "Refresh rate", to be honest about it. On real hardware the monitor's
+  EDID will give the real modes (phase 19).
+- **Resolutions** are a fixed table of 18 common sizes (4:3 to 32:9
+  ultrawide, up to 5120x1440) filtered by what the adapter's video memory
+  holds; there is no EDID in a VM to read.
+- **VirtualBox guest device** (`kernel/drivers/vmmdev.cpp`): the host's
+  absolute pointer position is read on every PS/2 packet (as the VirtualBox
+  Linux driver does) rather than through the device's own interrupt, which
+  keeps the driver to one request block and no IRQ. Our own cursor is kept
+  (NEW_PROTOCOL flag, no host cursor). This fixes B-003 (docs/BUGS.md).
+- **Calendar and reminders** are in the compositor's memory (32 reminders,
+  40 characters each); the clock, the calendar and reminders use a UTC
+  offset from Settings. They are lost at restart like the preferences
+  (B-011) until there is a place to save them.
+- **Notifications** are a four-slot list drawn last; other threads post
+  through a lock-free ring (`gui_notify`), which the shell's `notify` uses.
+- **Print Screen** writes an uncompressed 32-bit BMP to `/tmp` from the
+  back buffer (the composed scene without the cursor).
+- **Limine** boots with `timeout: 0`: the menu never showed its countdown
+  on VirtualBox (B-002).
+- **Settings layout**: titled cards, measured by painting the card's body
+  once with an empty clip (every primitive honours the clip), then painted
+  for real; no hint sentences. Tabs: Appearance, Wallpaper, Window borders,
+  Display.
+- **Docs**: two new files the owner asked for. docs/BUGS.md is the bug
+  ledger (every bug: symptom, cause, fix, guard, with ids `B-nnn`);
+  docs/FEATURES.md is the inventory of what exists and how it is used.
+  Both are read at the start of a session (CLAUDE.md).
+- **Owner's working style** (recorded so it is kept): after each iteration
+  update the HTML list on their Windows desktop with what was fixed or
+  added, and end it with 8 numbered QoL candidates for them to choose
+  from; put every build into VirtualBox (`dist/cerberus.iso`) and make the
+  VM say which version it is; the owner has an ultrawide monitor.
+
+**OPEN (owner):** should Cerberus mount the first cerfs disk it finds at
+boot (e.g. at `/data`) so that Settings, reminders and screenshots can be
+kept? Until then nothing persists (B-011).
+
+Rejected: a true monitor refresh-rate setting (nothing in a VM to set it
+on); reading the host pointer through the VMMDev interrupt (more code for
+the same result); persisting preferences in `/tmp` (not persistence).

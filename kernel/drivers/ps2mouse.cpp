@@ -10,6 +10,7 @@
 #include <drivers/lapic.h>
 #include <drivers/ps2.h>
 #include <drivers/ps2mouse.h>
+#include <drivers/vmmdev.h>
 #include <lib/kprintf.h>
 
 namespace {
@@ -96,6 +97,12 @@ void handle_byte(u8 b) {
         e.dz = (i8)-z;
     }
     e.buttons = flags & 0x07;
+    // Under VirtualBox every packet is also a cue to ask where the host's
+    // pointer really is.
+    u32 ax, ay;
+    e.absolute = vmmdev_mouse_position(&ax, &ay);
+    e.ax = (u16)ax;
+    e.ay = (u16)ay;
     push(e);
     // The same packet as events for /dev/input/mouse0.
     if (e.dx) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_X, e.dx);

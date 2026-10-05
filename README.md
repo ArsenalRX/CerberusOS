@@ -9,14 +9,18 @@ x86-64 hardware (today: QEMU and VirtualBox), brings up every CPU core, runs
 protected user programs, stores files on a journaled disk format of its own,
 and draws a desktop with windows you can move, resize and close.
 
-> **Status: early.** Version `0.0.5f`. Build phases 0 to 11 of 19 are done.
+> **Status: early.** Version `0.0.5g`. Build phases 0 to 11 of 19 are done.
 > It runs in a virtual machine, not yet on your laptop, and it is not
 > ready for real data. See [What works today](#what-works-today) and
 > [Where it is going](#where-it-is-going).
 
 ![The Cerberus desktop: terminal, launcher with app search, floating taskbar](docs/screenshots/launcher.png)
 
-![Settings: accent colours, wallpapers and an animated rainbow window border](docs/screenshots/settings.png)
+![Settings: a custom accent colour from the hue strip, the Aurora wallpaper and the Chase window border](docs/screenshots/settings.png)
+
+![The calendar with a reminder, opened from the taskbar clock](docs/screenshots/calendar.png)
+
+![Dragging a window to the screen edge: the snap outline](docs/screenshots/snap.png)
 
 ---
 
@@ -47,8 +51,8 @@ Three goals, in this order:
 | **User programs** | Ring-3 processes loaded from position-independent ELF files; ASLR; `fork`/`execve`/`waitpid`; 74 system calls ([docs/SYSCALLS.md](docs/SYSCALLS.md)); a small C library. |
 | **Threads & IPC** | Threads inside a program (pthread-style API, thread-local storage); futex-based locks; **ports** (named message channels that can carry open files and shared memory, with access control and unforgeable sender identity); shared memory; signals; event queues so servers sleep instead of polling. |
 | **Files** | A virtual file system with mounts, symbolic links and permissions; an in-memory file system; **cerfs**, a journaled, checksummed on-disk file system that survives power cuts; a page cache with read-ahead. |
-| **Drivers** | AHCI (SATA), NVMe, virtio-blk, IDE; PCI with MSI; PS/2 keyboard and mouse; framebuffer; ACPI power off and restart. |
-| **Desktop** | A compositor with anti-aliased text, rounded windows with shadows, a taskbar with a launcher and app search, a terminal with scrollback, a system monitor. Windows move, resize, minimise and maximise. A Settings window changes accent colours, wallpapers, animated RGB window borders and the screen resolution. |
+| **Drivers** | AHCI (SATA), NVMe, virtio-blk, IDE; PCI with MSI; PS/2 keyboard and mouse; VirtualBox guest device (absolute mouse); framebuffer with resolution switching; ACPI power off and restart. |
+| **Desktop** | A compositor with anti-aliased text, rounded windows with shadows and open/close animations, a taskbar with a launcher and app search, a calendar with reminders and notifications, a terminal with scrollback, history and Tab completion, a system monitor. Windows move, resize, snap to the screen's edges, minimise and maximise; Alt+Tab switcher, Super+D, right-click menu, Print Screen. A Settings window changes the accent colour (any hue), six wallpapers, animated RGB window borders, the time zone, the screen resolution (up to 32:9 ultrawide) and the frame rate. |
 | **Hardening** | W^X everywhere, SMEP/SMAP/UMIP, stack protectors, a ChaCha20 kernel random generator, validated user-memory access, fuzzers for the ELF loader, the archive reader, the file system and the system-call interface. |
 
 Measured on the current build (QEMU/KVM, 4 cores): 100,000 messages through

@@ -12,6 +12,7 @@ Usage: qemu-probe.py <iso> [--uefi OVMF_CODE.fd] [--wait SECONDS] [--smp N]
 --expect FILE   every non-empty, non-# line of FILE must appear (as a substring,
                 in order) in the serial output. Two directives are allowed:
                   !send <text>   type <text> + Enter into the serial console
+                  !keys <qcode>... press keys together (QEMU names: alt tab, meta_l d, print)
                   !wait <secs>   pause before continuing
                   !kill          SIGKILL QEMU at once (a power cut)
                   !poweredoff    the guest must have powered itself off
@@ -92,6 +93,8 @@ def load_expect(path):
             steps.append(("send", line[6:]))
         elif line.startswith("!key "):
             steps.append(("key", line[5:]))
+        elif line.startswith("!keys "):             # !keys <qcode>...  pressed together (alt tab, meta_l d, print)
+            steps.append(("keys", line[6:].split()))
         elif line.startswith("!wait "):
             steps.append(("wait", float(line[6:])))
         elif line.startswith("!mouseto "):          # !mouseto <x> <y>  absolute (guest clamps at 0,0)
@@ -103,6 +106,8 @@ def load_expect(path):
         elif line.startswith("!button "):           # !button <left|right|middle> <down|up>
             btn, state = line[8:].split()
             steps.append(("button", (btn, state == "down")))
+        elif line.strip() == "!dblclick":            # two quick left clicks
+            steps.append(("dblclick", None))
         elif line.startswith("!wheel "):            # !wheel <notches>  positive = up
             steps.append(("wheel", int(line[7:])))
         elif line.startswith("!screenshot "):
@@ -132,10 +137,17 @@ def mouse_button(q, button, down):
 QCODE = {" ": "spc", "-": "minus", "=": "equal", ".": "dot", ",": "comma", "/": "slash",
          ";": "semicolon", "'": "apostrophe", "[": "bracket_left", "]": "bracket_right",
          "\\": "backslash", "`": "grave_accent"}
+# Characters typed with Shift held: the key they live on.
+SHIFTED = {":": ";", "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8",
+           "(": "9", ")": "0", "_": "-", "+": "=", "<": ",", ">": ".", "?": "/", '"': "'", "{": "[",
+           "}": "]", "|": "\\", "~": "`"}
 
 def type_keys(q, text):
     """Types text through the emulated PS/2 keyboard, then presses Enter."""
     for ch in text:
+        shift = ch.isupper() or ch in SHIFTED
+        if ch in SHIFTED:
+            ch = SHIFTED[ch]
         if ch.isalnum():
             name = ch.lower()
         elif ch in QCODE:
@@ -143,7 +155,7 @@ def type_keys(q, text):
         else:
             continue
         keys = [{"type": "qcode", "data": name}]
-        if ch.isupper():
+        if shift:
             keys.insert(0, {"type": "qcode", "data": "shift"})
         q.cmd("send-key", keys=keys)
         time.sleep(0.05)
@@ -298,6 +310,9 @@ def main():
         elif kind == "key":
             type_keys(q, arg)
             time.sleep(0.3)
+        elif kind == "keys":
+            q.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in arg])
+            time.sleep(0.3)
         elif kind == "mouse":
             mouse_move(q, *arg)
             time.sleep(0.2)
@@ -307,6 +322,13 @@ def main():
             time.sleep(0.2)
         elif kind == "button":
             mouse_button(q, *arg)
+            time.sleep(0.2)
+        elif kind == "dblclick":
+            for _ in range(2):
+                mouse_button(q, "left", True)
+                time.sleep(0.05)
+                mouse_button(q, "left", False)
+                time.sleep(0.08)
             time.sleep(0.2)
         elif kind == "wheel":
             for _ in range(abs(arg)):

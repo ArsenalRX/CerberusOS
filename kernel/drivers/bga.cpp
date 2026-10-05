@@ -19,7 +19,7 @@ constexpr u16 REG_ID = 0, REG_XRES = 1, REG_YRES = 2, REG_BPP = 3, REG_ENABLE = 
 constexpr u16 ID_MIN = 0xB0C0, ID_MAX = 0xB0C5;
 constexpr u16 ENABLED = 0x01, LINEAR_FRAMEBUFFER = 0x40;
 constexpr u64 MAP_LIMIT = 64 * MIB;         // more video memory than this is not mapped
-constexpr u32 MIN_W = 640, MIN_H = 480, MAX_W = 4096, MAX_H = 2160;
+constexpr u32 MIN_W = 640, MIN_H = 480, MAX_W = 5120, MAX_H = 2160;     // up to 32:9 ultrawide
 
 bool g_available = false;
 u8* g_vram = nullptr;           // the whole frame-buffer region

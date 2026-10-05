@@ -14,9 +14,30 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
    now" names the next job). `docs/SPEC.md` is the full plan and wins over
    every other doc; `docs/DECISIONS.md` records why things are the way they
    are (read the newest entries).
-2. Stop after each phase or distinct piece of work: report, list what the
+2. Read `docs/FEATURES.md` (what exists and how it is used: check it before
+   proposing or building anything, update it with every user-visible
+   change) and the OPEN entries of `docs/BUGS.md` (the bug ledger: every
+   bug gets an entry with symptom, cause, fix and guard, id `B-nnn`; search
+   it first when something strange happens).
+3. Stop after each phase or distinct piece of work: report, list what the
    next phase adds, and wait for the owner's go-ahead — unless the owner has
    said to keep going for the session.
+
+## After every iteration (owner, 2026-10-05)
+
+- Put the build into VirtualBox: `make dist` (or copy `build/cerberus.iso`
+  to `dist/cerberus.iso` while `make test` is running), and tell the owner
+  the version (bottom-right of the wallpaper and in About). If the owner's
+  VM is powered off, rename it `Cerberus <version>` so they know what they
+  are running; a saved VM cannot be changed.
+- Rewrite the list on the owner's Windows desktop,
+  `C:\Users\devot\Desktop\Cerberus <version> - what changed.html`
+  (replace the old file; one file): what was fixed, added and what is
+  open, in plain words, plus a table of from-scratch programs still to
+  write, and always end with **8 numbered QoL / addition candidates** for
+  the owner to pick from.
+- The owner has an ultrawide monitor (32:9 modes matter) and tests in
+  VirtualBox with the Hyper-V backend.
 
 ## Build, test, run (all inside WSL Ubuntu-24.04)
 

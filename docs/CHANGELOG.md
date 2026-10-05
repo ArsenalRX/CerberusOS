@@ -22,6 +22,55 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5g — 2026-10-05
+
+### Fixed
+- VirtualBox at 1920x1080 (and any scaled window): the mouse pointer no
+  longer stops short of the screen's edges. A driver for VirtualBox's guest
+  device takes the host's pointer position, so the pointer sits exactly
+  under the host's and the mouse need not be captured (B-003).
+- The boot menu no longer waits (it did not count down on VirtualBox and
+  needed Enter): the ISO boots straight into Cerberus (B-002).
+- The About window has a minimum size and shortens its subtitle instead of
+  clipping it (B-004).
+
+### Added
+- **Calendar**: click the clock. A month view with today marked; page with
+  the arrows, the wheel or Left/Right; "Today".
+- **Reminders**: type `14:30 Call home` (or just the text, for 09:00) into
+  the calendar and press Enter; a notification appears at that minute.
+  Days with reminders show a dot. Kept in memory until a restart.
+- **Notifications**: cards in the top-right corner, gone after 8 s or when
+  clicked; `notify <text>` in the terminal shows one.
+- **Animations**: windows fade and slide when opened, closed, minimised or
+  restored; the launcher and the calendar rise out of the taskbar.
+- **Window snapping**: drop a window at the left or right edge for half
+  the screen, at the top to maximise (an outline previews it); Super+Left,
+  Super+Right, Super+Up; Super+Down restores, then minimises. Dragging a
+  maximised or snapped window gives it its old size back.
+- **Double-click** a title bar to maximise or restore.
+- **Alt+Tab switcher**: tiles of every window; Tab moves on, Shift+Tab
+  back, releasing Alt picks, Escape cancels.
+- **Super+D** hides every window and brings them back in the same order.
+- **Middle-click** a taskbar button to close its window.
+- **Right-click the desktop**: Terminal, Settings, Change wallpaper, Show
+  desktop, About.
+- **Print Screen** saves the screen as `/tmp/screenshot-N.bmp`.
+- Terminal: **command history** with Up/Down and **Tab completion** of
+  command names.
+- Settings: **any accent colour** from a hue strip (click or drag);
+  three more wallpapers (**Ocean, Sunset, Graphite**) on their own tab;
+  **time zone** (UTC offset); **18 resolutions** from 800x600 to 5120x1440
+  including ultrawide (2560x1080, 3440x1440, 3840x1600); a **frame rate**
+  cap of 30–144 Hz.
+
+### Changed
+- Settings is laid out as titled cards with icons in the sidebar, and the
+  hint sentences are gone. Tabs: Appearance, Wallpaper, Window borders,
+  Display.
+- The test probe can type shifted punctuation (`!key 14:30`), press key
+  combinations (`!keys alt tab`) and double-click (`!dblclick`).
+
 ## 0.0.5f — 2026-10-04 (security release)
 
 Spec phase 11, programs talking to each other, is complete, and the desktop

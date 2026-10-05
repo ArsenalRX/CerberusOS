@@ -1,0 +1,69 @@
+# Desktop conveniences (0.0.5g): the right-click menu on the desktop, a
+# double-click on a title bar maximising the window, dragging a maximised
+# window off the top restoring it, dropping a window at the left edge
+# snapping it to half the screen, the Alt+Tab switcher, Super+D (show the
+# desktop) twice, Print Screen saving a BMP file, and the shell's history
+# (Up) and Tab completion. Coordinates assume the 1280x800 test display and
+# the Settings window opening centred (frame 290,92, 700x560).
+gui: desktop up at 1280x800
+cerberus kernel shell
+# Right-click the desktop; the menu's second item is Settings.
+!mouseto 600 650
+!button right down
+!button right up
+!wait 0.4
+!screenshot build/qol-1.png
+!mouseto 640 627
+!button left down
+!button left up
+!wait 0.6
+# Double-click its title bar: maximised (caption buttons move to x=1250).
+!mouseto 500 107
+!dblclick
+!wait 0.5
+!screenshot build/qol-2.png
+# Drag it off the top (it takes its old size again), on to the left edge,
+# and drop it: snapped to the left half.
+!mouseto 500 20
+!button left down
+!mouse 0 200
+!mouse -600 0
+!wait 0.3
+!screenshot build/qol-3.png
+!button left up
+!wait 0.5
+!screenshot build/qol-4.png
+# Alt+Tab goes to the next window (the terminal); Super+D hides everything,
+# Print Screen saves the screen, Super+D brings the windows back.
+!keys alt tab
+!wait 0.5
+!keys meta_l d
+!wait 0.5
+!screenshot build/qol-5.png
+!keys print
+!wait 1
+!keys meta_l d
+!wait 0.5
+!screenshot build/qol-6.png
+# The terminal: a command, Up + Enter repeats it; "hel" + Tab completes.
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=
+!keys up
+!wait 0.3
+!keys ret
+!wait 0.5
+ticks=
+!keys h
+!keys e
+!keys l
+!keys tab
+!keys ret
+!wait 1
+help [command|tests]
+!key ls /tmp
+!wait 1
+screenshot-1.bmp

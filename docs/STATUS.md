@@ -18,31 +18,40 @@ matching docs/TO_FINISH.md.
 something works that does not, the next session builds on a broken base; if
 it omits half-done work, that work is lost or done twice.
 
-Last updated: **2026-10-04**.
+Last updated: **2026-10-05**.
 
 ## Version
 
-Latest release: **0.0.5f** (2026-10-04, tag `v0.0.5f`): phase 11, IPC, plus
-the desktop's Settings window, new launcher and taskbar, and resolution
-switching (owner requests of the same day).
-Before it on the same day: 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
+Latest release: **0.0.5g** (2026-10-05, tag `v0.0.5g`): desktop polish
+before phase 12 (calendar with reminders, notifications, animations,
+window snapping, Alt+Tab switcher, Settings as cards with any accent
+colour, six wallpapers, time zone, 18 resolutions up to ultrawide, frame
+rate; VirtualBox absolute mouse; terminal history and completion).
+Before it: 0.0.5f (2026-10-04, phase 11, IPC, plus the Settings window,
+launcher and taskbar), 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
 files; the OS renamed **Cerberus**, formerly Lumen), 0.0.5b (desktop
 polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.5g-dev+<commit>`. The source is also on GitHub:
+tree now builds as `0.0.5h-dev+<commit>`. The source is also on GitHub:
 https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
 request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-04, evening):** 0.0.5f is
-released, in `dist/`, pushed, and booted once in the owner's VM. Nothing is
-half-written: the working tree is clean apart from the untracked `dist/`.
-Phase 12 has not been started. The owner was told that phase 12 is next
-unless they would rather have more desktop polish first; they had not
-answered. Read docs/TO_FINISH.md "Right now" for the first steps.
+**Where the last session stopped (2026-10-05):** 0.0.5g is released, in
+`dist/`, pushed, and verified on VirtualBox (4 CPUs). The owner chose
+"more polish until we start phase 12" and set the iteration loop in
+CLAUDE.md ("After every iteration"): ship to VirtualBox, rewrite the HTML
+list on their Windows desktop, end with 8 numbered candidates. The last
+list offered: 1 saved settings/reminders (needs the auto-mount decision),
+2 text selection and copy/paste in the terminal, 3 a Files window, 4 a
+Notes/text editor window, 5 a Calculator, 6 keyboard layouts and key
+repeat settings, 7 a lock screen (Super+L) with a password, 8 a system
+tray with a quick-settings popup (volume-less: night light, accent, Wi-Fi
+placeholder). Wait for the owner's numbers. Nothing is half-written.
+docs/FEATURES.md lists what exists; docs/BUGS.md the open bugs.
 
 ---
 
@@ -51,12 +60,12 @@ answered. Read docs/TO_FINISH.md "Right now" for the first steps.
 **Phase 11 — IPC: COMPLETE (2026-10-04).** Phases 0–3 complete
 2026-09-14; phases 4–7 complete 2026-10-03; phases 8 to 11 complete
 2026-10-04. Desktop preview (owner-requested, brought forward from phases
-12-13) runs in its own thread.
+12-13) runs in its own thread; 0.0.5g (2026-10-05) is a polish release of
+it.
 
-Next up: **Phase 12 — Pane, the window server as a user program** (SPEC §5
-and §5A). The owner said on 2026-10-04 to "finish all phases": phases follow
-one another without waiting for a go-ahead, each ending in a verified
-release.
+Next up: more desktop polish rounds chosen by the owner by number, then
+**Phase 12 — Pane, the window server as a user program** (SPEC §5 and
+§5A) when the owner says so.
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
 performance are requirements; our own web browser is phase 15B (owner,
@@ -64,31 +73,22 @@ performance are requirements; our own web browser is phase 15B (owner,
 
 ## Last verified
 
-All on 2026-10-04, on the 0.0.5f code.
+All on 2026-10-05, on the 0.0.5g code.
 
-- `make test` in QEMU/KVM, 4 CPUs: all **41** integration tests passed (the
-  35 of 0.0.5e plus `user-ipc`, `user-threads`, `user-signals`,
-  `user-events`, `user-mmap`, `desktop-settings`). After that run only the
-  shell's `help` text changed; `keyboard`, `desktop`, `shell-tests` and
-  `user-ipc` were run again on the final build.
-- `user-ipc` was looped 16 times to chase one failure in a full run: it was
-  the test's own 50 ms timing check being 1 ms too strict (now 45 ms), not
-  the kernel.
-- `make fuzz` (60 s per harness): ELF loader 4.3 million mutated inputs, tar
-  reader 26 thousand, no crash; random system calls (now including the
-  phase 11 calls): 600 processes, up to 1.2 million calls; the kernel still
-  running after each.
-- `make bench`: not re-run for 0.0.5f; docs/BENCH.md is from 0.0.5c. New
-  figures from the tests: 100,000 port messages in 68-88 ms; event wake-up
-  53 us (median) after a send; 0 busy ticks during a 1 s `event_wait`.
-- **VirtualBox 7.2.6 (Hyper-V backend), the VM "cerberus-check" with 4
-  CPUs, 2 GiB, VBoxVGA**: booted; `ipctest` (4 runs), `threadtest`,
-  `sigtest`, `mmaptest` passed; `eventtest` fails its 1 ms wake-up limit
-  there (1.6 ms median; interrupts between CPUs are slow on that backend);
-  the display adapter was found (32 MiB) and `resolution 1280 720`
-  switched the screen; the launcher opened with Super and found Settings by
-  typing. Mouse-driven parts of Settings were tested in QEMU only
-  (VBoxManage cannot move the mouse).
+- `make test` in QEMU/KVM, 4 CPUs: all **42** integration tests passed (the
+  41 of 0.0.5f plus `desktop-qol`; `desktop` and `desktop-settings` were
+  rewritten for the new layout: calendar, notification, closing a window,
+  the hue strip, the Wallpaper tab). The run was on the final kernel; the
+  release ISO differs only in its version string.
+- `make fuzz` and `make bench`: not re-run for 0.0.5g (nothing below the
+  desktop changed except the driver registry's null check and the new
+  `vmmdev` driver); docs/BENCH.md is from 0.0.5c.
+- **VirtualBox 7.2.6 (Hyper-V backend), a temporary VM "cerberus-check"
+  with 4 CPUs, 2 GiB, VBoxVGA**: the first build faulted at boot (B-013,
+  fixed); the final build booted to the desktop, `vmmdev` reported that
+  the host sends absolute mouse positions, Super opened the launcher,
+  Alt+Tab switched windows. The pointer itself cannot be driven by
+  VBoxManage: the owner checks it on their ultrawide.
 - Not run this session: UEFI boot, software emulation (TCG), a `DEBUG=0`
   build (last checked on 0.5.0), the fatal-error tests on VirtualBox, a
   power cut on VirtualBox (done in QEMU only), mouse dragging on VirtualBox
@@ -100,7 +100,15 @@ All on 2026-10-04, on the 0.0.5f code.
   inside WSL2, window on the desktop via WSLg, serial log in
   `logs/qemu-serial.log`. `run-cerberus.cmd uefi` boots through OVMF;
   `run-cerberus.cmd build` rebuilds first. This is the fast, accurate path.
-- VirtualBox: as of 2026-10-04 (late evening) one VM is registered:
+- VirtualBox, 2026-10-05: the "Cerberus" VM described below is no longer
+  registered. The only VM is the owner's wizard-made **"6"** (2 CPUs,
+  2.7 GiB, IDE, DVD = `dist/cerberus.iso`); it was 32-bit and was switched
+  to 64-bit that day (B-001). It was left in a *saved* state, so it could
+  not be renamed; when powered off, rename it `Cerberus <version>`
+  (CLAUDE.md). The boot menu no longer waits (B-002). Automated checks use
+  a temporary "cerberus-check" VM in the session scratchpad (4 CPUs,
+  2 GiB, VBoxVGA, serial to a file), deleted afterwards. Earlier, as of
+  2026-10-04 (late evening), one VM was registered:
   **"Cerberus"** in `C:\Users\<owner>\VirtualBox VMs\Cerberus` (64-bit,
   4 CPUs, 2 GiB, VBoxVGA with 32 MiB, DVD = `dist/cerberus.iso`, a 1 GiB
   SATA disk, serial log in `logs/vbox-serial.log`). It was recreated that
@@ -120,7 +128,7 @@ All on 2026-10-04, on the 0.0.5f code.
   `make RELEASE=1 dist` overwrites it and re-points
   the VirtualBox VM.
 
-## What works (verified 2026-10-04 by `make test` in QEMU/KVM)
+## What works (verified 2026-10-05 by `make test` in QEMU/KVM)
 
 - Host environment: WSL2 Ubuntu 24.04 with the cross toolchain
   (`toolchain/out/`, binutils 2.42 + GCC 13.3.0), QEMU 8.2 with KVM, OVMF.
@@ -178,6 +186,8 @@ All on 2026-10-04, on the 0.0.5f code.
   file API. Programs: `ls cat echo mkdir rm rmdir mv cp touch stat ln sync
   mount umount pwd write fstest mkfs.cerfs`. Shell: programs by name, `>`
   and `>>`, `cd`, `pwd`, `mount`. `test vfs`, `test cerfsfuzz`.
+- VirtualBox guest device (`kernel/drivers/vmmdev.cpp`, 0.0.5g): the
+  host's absolute mouse position on every PS/2 packet (B-003).
 - Phase 10: drivers. A driver registry (`drivers`); PCI capabilities and MSI;
   AHCI by interrupt where MSI exists; NVMe and virtio-blk (polled); the
   keyboard in scancode set 2 with the full key map, Num Lock and repeat;
@@ -217,7 +227,15 @@ All on 2026-10-04, on the 0.0.5f code.
     flashing, rainbow, chase; colour, width, speed, glow); screen
     resolution through `kernel/drivers/bga.cpp` where the adapter has the
     Bochs interface. Preferences are not saved across a restart.
-  - Hotkeys: Alt+Tab, Alt+F4, Super (on release, alone), Super+T, Super+M.
+  - Hotkeys: Alt+Tab (switcher), Alt+F4, Super (on release, alone),
+    Super+T, Super+M, Super+D, Super+arrows (snap), Print Screen.
+  - 0.0.5g: open/close/minimise animations; snapping at the screen edges;
+    double-click to maximise; middle-click a task button to close;
+    right-click menu on the desktop; the clock opens a calendar with
+    reminders; notifications (`notify`); Settings as cards (any accent
+    hue, six wallpapers, time zone, 18 resolutions to 5120x1440, frame
+    rate 30–144); terminal history and Tab completion; the full list is
+    docs/FEATURES.md.
   - Windows-style caption buttons; anti-aliased rounded corners (0.0.5b).
   - Terminal scrollback of 1,000 lines: mouse wheel, Shift+Page Up/Down,
     scrollbar; resizing keeps the text (0.0.5b, `test terminal`).
@@ -379,14 +397,10 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Known bugs
 
-- `eventtest` fails on VirtualBox (Hyper-V backend): waking a waiting
-  server takes about 1.6 ms there against the 1 ms limit; 53 us under KVM.
-  The test is right for KVM; nothing has been done for VirtualBox.
-- Desktop: window contents do not reflow when a window is made narrower
-  than its text (the About window clips "Cerberus"); the Settings window's
-  controls are laid out for its minimum size and do not scroll.
-- Desktop preferences (Settings) are lost at restart: nowhere to save them
-  yet.
+The ledger is docs/BUGS.md (open: B-010 `eventtest` on VirtualBox, B-011
+nothing is saved across a restart, B-012 Settings does not scroll below
+its minimum size). Other oddities:
+
 - `help` is now longer than the terminal window is tall; it relies on the
   scrollback.
 - `make` on the Windows-mounted tree occasionally prints

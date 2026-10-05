@@ -39,6 +39,7 @@ int cmd_idle(int argc, char** argv);
 int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
 int cmd_resolution(int argc, char** argv);
+int cmd_notify(int argc, char** argv);
 int cmd_irqs(int argc, char** argv);
 int cmd_heapstat(int, char**);
 int cmd_ps(int, char**);
@@ -78,6 +79,7 @@ const ShellCommandEntry COMMANDS[] = {
     {"Desktop", nullptr, nullptr, nullptr},
     {"resolution", "[<width> <height>]", "show or change the screen resolution", cmd_resolution},
     {"gui", "", "compositor statistics", cmd_gui},
+    {"notify", "<text...>", "show a notification on the desktop", cmd_notify},
 
     {"Power", nullptr, nullptr, nullptr},
     {"poweroff", "", "save everything and switch off", cmd_poweroff},
@@ -92,6 +94,26 @@ const ShellCommandEntry COMMANDS[] = {
     {"timermode", "periodic|oneshot", "APIC timer mode", cmd_timermode},
     {"panic", "", "trigger a kernel panic (halts)", cmd_panic},
 };
+
+int cmd_notify(int argc, char** argv) {
+    if (argc < 2) {
+        kprintf("usage: notify <text...>\n");
+        return 1;
+    }
+    // The words joined with single spaces, cut to what a card can show.
+    char text[64];
+    usize len = 0;
+    for (int i = 1; i < argc && len < sizeof text - 1; i++) {
+        if (i > 1) text[len++] = ' ';
+        for (const char* p = argv[i]; *p && len < sizeof text - 1; p++) text[len++] = *p;
+    }
+    text[len] = 0;
+    if (!gui_notify("Terminal", text)) {
+        kprintf("notify: the desktop is not running\n");
+        return 1;
+    }
+    return 0;
+}
 
 int cmd_resolution(int argc, char** argv) {
     if (!gui_active()) {
@@ -459,8 +481,54 @@ int cmd_reboot(int, char**) {
     power_reboot();
 }
 
+// The last lines entered, for Up/Down (Ctrl-P/Ctrl-N on a serial line).
+constexpr int HISTORY = 16;
+char g_history[HISTORY][LINE_MAX];
+int g_history_count = 0, g_history_next = 0;
+
+void history_add(const char* line) {
+    if (!*line) return;
+    int last = (g_history_next + HISTORY - 1) % HISTORY;
+    if (g_history_count && strcmp(g_history[last], line) == 0) return;
+    strlcpy(g_history[g_history_next], line, LINE_MAX);
+    g_history_next = (g_history_next + 1) % HISTORY;
+    if (g_history_count < HISTORY) g_history_count++;
+}
+
+// Tab: completes the command at the start of the line from the table; with
+// several candidates, lists them.
+void complete(char* buf, usize& n, usize cap) {
+    if (n == 0 || n >= cap - 1) return;
+    for (usize i = 0; i < n; i++)
+        if (buf[i] == ' ') return;
+    const char* only = nullptr;
+    int matches = 0;
+    for (const auto& c : COMMANDS) {
+        if (!c.fn || strncmp(c.name, buf, n) != 0) continue;
+        matches++;
+        only = c.name;
+    }
+    if (matches == 1) {
+        usize len = strlen(only);
+        for (usize i = n; i < len && i + 1 < cap; i++) kprintf("%c", (buf[i] = only[i]));
+        n = len < cap - 1 ? len : cap - 1;
+        if (n + 1 < cap) {
+            buf[n++] = ' ';
+            kprintf(" ");
+        }
+        return;
+    }
+    if (matches < 2) return;
+    kprintf("\n");
+    for (const auto& c : COMMANDS)
+        if (c.fn && strncmp(c.name, buf, n) == 0) kprintf("  %s", c.name);
+    buf[n] = 0;
+    kprintf("\ncerberus> %s", buf);
+}
+
 int read_line(char* buf, usize cap) {
     usize n = 0;
+    int browse = g_history_count;       // where Up/Down are in the history
     for (;;) {
         int c = console_getc();
         if (c < 0) {
@@ -470,6 +538,7 @@ int read_line(char* buf, usize cap) {
         if (c == '\r' || c == '\n') {
             kprintf("\n");
             buf[n] = 0;
+            history_add(buf);
             return (int)n;
         }
         if (c == 0x7F || c == 0x08) {
@@ -481,6 +550,24 @@ int read_line(char* buf, usize cap) {
         }
         if (c == 0x15) {        // Ctrl-U clears the line
             while (n) { n--; kprintf("\b \b"); }
+            continue;
+        }
+        if (c == 0x10 || c == 0x0E) {
+            // Up and Down: replace the line with an older or newer one.
+            int next = browse + (c == 0x10 ? -1 : 1);
+            if (next < 0 || next > g_history_count) continue;
+            browse = next;
+            while (n) { n--; kprintf("\b \b"); }
+            if (browse < g_history_count) {
+                int slot = (g_history_next + HISTORY - g_history_count + browse) % HISTORY;
+                strlcpy(buf, g_history[slot], cap);
+                n = strlen(buf);
+                kprintf("%s", buf);
+            }
+            continue;
+        }
+        if (c == '\t') {
+            complete(buf, n, cap);
             continue;
         }
         if (c < 0x20 || c >= 0x7F) continue;
