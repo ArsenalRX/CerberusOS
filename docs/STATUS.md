@@ -22,7 +22,9 @@ Last updated: **2026-10-04**.
 
 ## Version
 
-Latest release: **0.0.5f** (2026-10-04, tag `v0.0.5f`): phase 11, IPC.
+Latest release: **0.0.5f** (2026-10-04, tag `v0.0.5f`): phase 11, IPC, plus
+the desktop's Settings window, new launcher and taskbar, and resolution
+switching (owner requests of the same day).
 Before it on the same day: 0.0.5e (phase 10, drivers), 0.0.5d (anti-aliased text), 0.0.5c (phase 9,
 files; the OS renamed **Cerberus**, formerly Lumen), 0.0.5b (desktop
 polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
@@ -30,8 +32,17 @@ polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
 tree now builds as `0.0.5g-dev+<commit>`. The source is also on GitHub:
-https://github.com/ArsenalRX/CerberusOS (pushed on the owner's request,
-2026-10-04). History: docs/CHANGELOG.md.
+https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
+request, 2026-10-04: push `main` and the tags after every verified release,
+and keep README.md and `docs/screenshots/` current). History:
+docs/CHANGELOG.md.
+
+**Where the last session stopped (2026-10-04, evening):** 0.0.5f is
+released, in `dist/`, pushed, and booted once in the owner's VM. Nothing is
+half-written: the working tree is clean apart from the untracked `dist/`.
+Phase 12 has not been started. The owner was told that phase 12 is next
+unless they would rather have more desktop polish first; they had not
+answered. Read docs/TO_FINISH.md "Right now" for the first steps.
 
 ---
 
@@ -89,10 +100,13 @@ All on 2026-10-04, on the 0.0.5f code.
   inside WSL2, window on the desktop via WSLg, serial log in
   `logs/qemu-serial.log`. `run-cerberus.cmd uefi` boots through OVMF;
   `run-cerberus.cmd build` rebuilds first. This is the fast, accurate path.
-- VirtualBox: the owner creates VMs in the VirtualBox window. As of
-  2026-10-04 (evening) one VM is registered: **"Cerberus"** (created for the
-  owner on request: 64-bit, 4 CPUs, 2 GiB, DVD = `dist/cerberus.iso`, a
-  1 GiB SATA disk, serial log in `logs/vbox-serial.log`). In Cerberus,
+- VirtualBox: as of 2026-10-04 (late evening) one VM is registered:
+  **"Cerberus"** in `C:\Users\<owner>\VirtualBox VMs\Cerberus` (64-bit,
+  4 CPUs, 2 GiB, VBoxVGA with 32 MiB, DVD = `dist/cerberus.iso`, a 1 GiB
+  SATA disk, serial log in `logs/vbox-serial.log`). It was recreated that
+  evening: the earlier "Cerberus" VM and the temporary "cerberus-check" VM
+  (which the owner had been using; it lived in a temp folder that was
+  cleaned) were both gone. Never keep a VM the owner uses in a temp folder. In Cerberus,
   format the disk once with `mkfs.cerfs -y /dev/disk/sda`, then
   `mount -t cerfs /dev/disk/sda /mnt`. For a VM made with the wizard, point its DVD drive at
   `dist/cerberus.iso`. The wizard creates such VMs as OS type "Other/Unknown", which is 32-bit and
@@ -365,6 +379,16 @@ Recorded in docs/DECISIONS.md (2026-10-03).
 
 ## Known bugs
 
+- `eventtest` fails on VirtualBox (Hyper-V backend): waking a waiting
+  server takes about 1.6 ms there against the 1 ms limit; 53 us under KVM.
+  The test is right for KVM; nothing has been done for VirtualBox.
+- Desktop: window contents do not reflow when a window is made narrower
+  than its text (the About window clips "Cerberus"); the Settings window's
+  controls are laid out for its minimum size and do not scroll.
+- Desktop preferences (Settings) are lost at restart: nowhere to save them
+  yet.
+- `help` is now longer than the terminal window is tall; it relies on the
+  scrollback.
 - `make` on the Windows-mounted tree occasionally prints
   "Clock skew detected" (drvfs timestamp rounding). Harmless so far.
 - Backtraces cannot name a function that faults inside its own prologue

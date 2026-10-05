@@ -34,12 +34,41 @@ is on `0.0.5g` development builds. The owner said on 2026-10-04 to "finish
 all phases": do not stop to ask between phases; finish, verify and release
 each, then go on.
 
+**Start here next session.** Phase 12 has not been started. Before writing
+code, check whether the owner answered the question left open on
+2026-10-04: phase 12 next, or more desktop polish first. Their requests
+that day were all about the look of the desktop (docs/DECISIONS.md, the
+last two entries), so expect more of those; do them in the kernel-hosted
+desktop (`kernel/gui/desktop.cpp`) until Pane can show them.
+
+First steps of phase 12, in order (SPEC §5, §5A and §9 first):
+
+1. Write the Pane protocol (docs/SPEC.md §9) as a header shared by server
+   and clients: messages over a port, window buffers as shared memory,
+   input events back to the focused client only.
+2. `pane`, a user program: opens `/dev/fb0` and `/dev/input/*`, creates the
+   port `pane`, waits in `event_wait`. It needs an `mmap` of `/dev/fb0`
+   (not there yet: `/dev/fb0` is read/write only) and a way to change the
+   resolution from user mode (an ioctl over `kernel/drivers/bga.cpp`).
+3. Move libgfx (`kernel/gfx/`) into a library both the kernel and user
+   programs build (it is freestanding already; user programs have SSE).
+4. `libpane` and one client (a terminal needs ptys, which are phase 17: start
+   with a clock or the System Monitor, which needs only `sysinfo`).
+5. Port the compositor, window management, panel, launcher and Settings
+   from `kernel/gui/desktop.cpp`; keep the kernel desktop bootable behind a
+   switch until Pane passes the `desktop*` tests.
+6. The +v2 rows: client isolation tests, fuzz the protocol, 8 ms frames.
+
 - Phase 11 left-overs: demand-paged and shared file mappings, a
   non-blocking `port_send`, signal masks, passing ports through ports.
 - Phase 10 left-overs: MSI-X (NVMe and virtio-blk are polled), keyboard
   LEDs, layouts other than US.
 - **Minor page fault is over budget** (docs/BENCH.md). Profile it first.
-- Desktop left-overs: open/close animations, one-shot-timer frame pacing.
+- Desktop left-overs: open/close animations, one-shot-timer frame pacing,
+  saving preferences, content that reflows when a window is resized, more
+  wallpapers and a custom accent colour, a real application icon set.
+- `make bench` was not re-run for 0.0.5f: run it and add a block to
+  docs/BENCH.md (port round trip, futex, thread create/join are new).
 - Overview for the owner: docs/ROADMAP.md; explaining Cerberus: docs/ABOUT.md;
   installer research: docs/INSTALLER.md; own web browser: phase 15B.
 

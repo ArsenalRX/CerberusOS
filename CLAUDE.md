@@ -26,7 +26,7 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 
 - `make` / `make iso` — kernel, userland, `build/cerberus.iso`.
 - `make test` — every `tests/integration/*.expect` in headless QEMU/KVM (4
-  CPUs) via `tools/qemu-probe.py`; ~8 min. Logs: `build/test-<name>.log`.
+  CPUs) via `tools/qemu-probe.py`; ~25 min. Logs: `build/test-<name>.log`.
 - `make bench` (record in docs/BENCH.md), `make fuzz` (60 s per harness).
 - `make dist` — overwrites `dist/cerberus.iso` (+`VERSION.txt`) and re-points
   every powered-off VirtualBox VM that boots from `dist/`. `make RELEASE=1
@@ -58,6 +58,19 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 - `sed` with `\n` in a replacement inside a C string literal splits the
   string; use the Edit tool or a Python script (run with WSL's `python3`;
   Windows `python3` is not installed) for multi-line source edits.
+- A Python patch script written through a Git Bash heredoc loses one level
+  of backslashes (`\\n` arrives as a real newline inside a C string). Write
+  the script with the Write tool into `build/wip/` (ignored by git, not
+  compiled) and run it with WSL's python3. After any scripted edit, grep
+  for a line that is just `");`.
+- A detached job started as the last thing in a `wsl ... bash -c` dies with
+  it: put `sleep 2` after the `setsid nohup ... &` and check that the log
+  file exists before waiting on it.
+- `make test` now takes about 25 minutes (41 tests). It tests
+  `build/cerberus.iso`: do not rebuild while it runs. To keep working, copy
+  the ISO and test the copy.
+- Timing checks in tests: a wait counted in timer ticks and measured with
+  the reference clock can read 1 ms short. Leave a margin.
 - The kernel links without libgcc: no 128-bit division (`__udivti3`); 128-bit
   multiplication is fine.
 - VirtualBox on this host runs on the Hyper-V backend: slow video memory
@@ -84,6 +97,12 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
   efficient on memory and CPU.
 - Commit messages: `phaseN: …`, `release: …`, `desktop: …`, `docs: …`, with
   the Co-Authored-By line.
+- GitHub: `origin` is https://github.com/ArsenalRX/CerberusOS. After every
+  verified release push `main` and the tags, with README.md (the public
+  overview) and `docs/screenshots/` brought up to date.
+- The owner steers by screenshot: they send pictures of the VM and ask for
+  visual changes mid-task. Do those promptly, show a screenshot back (the
+  probe's `!screenshot`), and keep the desktop customisable.
 
 ## Code map
 
@@ -92,11 +111,16 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 - `kernel/mm/` frame allocator (`pmm`), virtual memory (`vmm`: address
   spaces, VMAs, COW, shootdown), heap (`kheap`: per-CPU slabs), user copies.
 - `kernel/sched/` scheduler (one lock, per-CPU queues, work stealing), sync
-  primitives. `kernel/proc/` processes, ELF loader. `kernel/syscall/`
-  dispatch generated from `table.def` (→ docs/SYSCALLS.md).
+  primitives, interruptible waits. `kernel/proc/` processes and their
+  threads, ELF loader, `signal.cpp` (handlers, `user_return` on every way
+  back to ring 3). `kernel/syscall/` dispatch generated from `table.def`
+  (→ docs/SYSCALLS.md); descriptors are looked up with `FdRef`.
+- `kernel/ipc/` kernel objects behind descriptors (`object.cpp`: also the
+  shared descriptor table and `poll_wake`), `port`, `shm`, `futex`, `event`.
 - `kernel/drivers/` LAPIC/IOAPIC/HPET/PIT, `refclock` (TSC, else HPET, else
   PIT), PS/2, serial, RTC, framebuffer console, `pci`, disks (`ahci` DMA,
-  `ata` PIO, `ramdisk`).
+  `ata` PIO, `ramdisk`), `nvme`, `virtio_blk`, `input` (/dev/input), `bga`
+  (resolution switching on VM display adapters).
 - `kernel/fs/` `vfs` (tree, mounts, permissions, name cache, one sleeping
   VFS lock), `file` (open files, flags), `tmpfs` (also the read-only root
   from the boot archive and `/dev`), `dev` (device switch), `block` (disks),
@@ -106,11 +130,16 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
   mounts).
 - `kernel/gfx/` libgfx software renderer (anti-aliased rounded shapes).
   `kernel/gui/` the in-kernel desktop (`desktop.cpp`: compositor, windows,
-  panel, menu, input; `terminal.cpp`: shell terminal with scrollback). It
+  floating panel, launcher with search, Settings window and `g_prefs`,
+  border effects, wallpapers, `set_resolution`; `terminal.cpp`: shell
+  terminal with scrollback). Desktop tests click fixed coordinates
+  (1280x800): moving anything in the panel, launcher or Settings means
+  updating `tests/integration/desktop*.expect`. It
   moves to userland as Pane in phase 12.
 - `kernel/lib/` kprintf, console lock, kernel shell (`shell.cpp`), panic,
   CSPRNG, lock ranks (`lock_order.h` — add new locks there).
-- `userland/` libc (`cerberus.h`), programs in `bin/` (packed into
+- `userland/` libc (`cerberus.h`; `thread.cpp` has TLS, pthreads and the
+  futex locks; `ipc.cpp` the phase 11 wrappers), programs in `bin/` (packed into
   `boot/initrd.tar`; `fileutils.cpp` is one program under many names, listed
   in the Makefile's `FILEUTILS_NAMES`), `etc/` files.
 - `tests/kernel/` in-kernel self-tests (register in `registry.cpp`; `test
