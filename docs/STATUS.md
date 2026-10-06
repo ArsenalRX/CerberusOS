@@ -18,14 +18,17 @@ matching docs/TO_FINISH.md.
 something works that does not, the next session builds on a broken base; if
 it omits half-done work, that work is lost or done twice.
 
-Last updated: **2026-10-05**.
+Last updated: **2026-10-06**.
 
 ## Version
 
-Latest release: **0.0.5i** (2026-10-05, tag `v0.0.5i`): polish round 3,
-part 1 — phases 4, 10 and 11 revisited: the minor page fault inside its
-budget (a pre-zeroed frame pool, 1.4 µs), `sigprocmask`, `port_try_send`,
-keyboard lock lights. Before it: 0.0.5h (2026-10-05), polish round 2,
+Latest release: **0.0.5j** (2026-10-06, tag `v0.0.5j`): hard links, and
+polish round 4 — virtual desktops, the System Monitor with graphs and a
+process table, a BMP image viewer and wallpaper from a file, repeating
+reminders with snooze, auto-lock, Settings scrolling (B-012), `clear`,
+the task-button menu, two-press power off. Before it: 0.0.5i
+(2026-10-05): the page fault inside its budget, `sigprocmask`,
+`port_try_send`, keyboard lights; 0.0.5h (2026-10-05), polish round 2,
 the owner's eight picks: saved settings and reminders on a `/data` disk,
 text selection and a clipboard, Files, Notes, Calculator, keyboard
 layouts and repeat, a lock screen (salted SHA-256), a tray with quick
@@ -37,23 +40,21 @@ polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.5j-dev+<commit>`. The source is also on GitHub:
+tree now builds as `0.0.6a-dev+<commit>`. The source is also on GitHub:
 https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
 request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-05, night):** 0.0.5i is
+**Where the last session stopped (2026-10-06, early):** 0.0.5j is
 released, in `dist/`, pushed; the owner's VirtualBox VM is "Cerberus
-0.0.5i" (they had deleted "6"; the new one is in their `VirtualBox VMs`
-folder with a 1 GiB disk for `/data`). Round 3 ("re-go through all phases
-1-11") is **part done**: phase 4's page-fault budget, phase 10's keyboard
-lights, phase 11's signal masks and non-blocking send. **Still to do in
-round 3** (docs/TO_FINISH.md step 2): hard links, a lightweight
-`fsck.cerfs`, MSI-X for NVMe/virtio-blk, one-shot timer / tickless idle,
-demand-paged and shared file mappings, passing ports through ports. The
-Desktop HTML list offers eight polish candidates for after that. Nothing
-is half-written.
+0.0.5j" (in their `VirtualBox VMs` folder, 4 CPUs, a 1 GiB disk for
+`/data`). The owner's last instruction: polish for a three-hour box, then
+**move on to phase 12**. The box is spent: round 3 has a–(hard links)
+done and b–f open; round 4 has items 1, 2, 5, 8 done and 3, 4, 6, 7 part
+done (docs/DECISIONS.md, 2026-10-06, lists what is left). **Next session
+starts phase 12 (Pane)** per docs/TO_FINISH.md unless the owner picks
+more polish by number from the Desktop list. Nothing is half-written.
 
 ---
 
@@ -75,16 +76,13 @@ performance are requirements; our own web browser is phase 15B (owner,
 
 ## Last verified
 
-All on 2026-10-05, on the 0.0.5i code (the 0.0.5h run earlier that day:
-49 of 49).
+All on 2026-10-06, on the 0.0.5j code (0.0.5h and 0.0.5i the day before:
+49 of 49 each).
 
-- `make test` in QEMU/KVM, 4 CPUs: all **49** integration tests passed
-  (0.0.5h added `desktop-storage-1/2`, `desktop-clipboard`,
-  `desktop-apps`, `desktop-keyboard`, `desktop-lock`, `desktop-tray`;
-  0.0.5i changed `user-signals`, `user-ipc`, `vmm`, `pmm`,
-  `shell-tests` for the new behaviour). The run was on the final kernel
-  except for three added lines in `badptr` (run separately afterwards);
-  the release ISO differs only in its version string.
+- `make test` in QEMU/KVM, 4 CPUs: all **53** integration tests passed
+  (0.0.5j added `cerfs-links`, `desktop-qol2`, `desktop-desks`,
+  `desktop-viewer`). The run was on the final kernel; the release ISO
+  differs only in its version string.
 - `make bench` (0.0.5i): docs/BENCH.md block of 2026-10-05 — minor page
   fault 1,394 ns, within budget; the rest unchanged.
 - `make fuzz`: not re-run since 0.0.5f.
@@ -193,6 +191,10 @@ All on 2026-10-05, on the 0.0.5i code (the 0.0.5h run earlier that day:
   and `>>`, `cd`, `pwd`, `mount`. `test vfs`, `test cerfsfuzz`.
 - VirtualBox guest device (`kernel/drivers/vmmdev.cpp`, 0.0.5g): the
   host's absolute mouse position on every PS/2 packet (B-003).
+- 0.0.5j: hard links; four virtual desktops; System Monitor graphs and
+  process table (`sched_process_snapshot`); BMP viewer
+  (`kernel/gui/viewer.cpp`) and wallpaper from a file; repeating
+  reminders and snooze; auto-lock; Settings scrolling; `clear`.
 - 0.0.5h: `/data` (the first cerfs disk labelled `data`, mounted at boot;
   `fs_data_format` from Settings → Storage); `desktop.conf` and
   `reminders.txt` on it; a clipboard and terminal selection; Files, Notes

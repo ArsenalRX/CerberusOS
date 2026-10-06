@@ -13,7 +13,7 @@ or renames something a user can see or use.
 **How to read it.** Each line is a capability and the way to use it. An
 item in *italics* is a limit worth knowing.
 
-Last updated: **2026-10-05** (0.0.5i).
+Last updated: **2026-10-06** (0.0.5j).
 
 ---
 
@@ -44,7 +44,7 @@ Last updated: **2026-10-05** (0.0.5i).
 - tmpfs; the boot archive as a read-only `/`; `/dev`; sticky `/tmp`.
 - **cerfs**: journaled, CRC32C-checksummed on-disk file system; survives
   power cuts; `mkfs.cerfs` on the host (`--check`) and inside the OS.
-  *No `fsck` yet; no hard links.*
+  Hard links (`ln a b`). *No `fsck` yet.*
 - Page cache with read-ahead and write-back.
 - **/data**: the first disk with a cerfs volume labelled `data` is mounted
   there at boot (`mkfs.cerfs -L data`, or Settings → Storage). Settings,
@@ -70,8 +70,8 @@ Last updated: **2026-10-05** (0.0.5i).
 ## Kernel shell (the Terminal window, also COM1)
 
 - Commands grouped by `help`; `help <command>`, `help tests`.
-- Line editing: Backspace, Ctrl-U; **history** with Up/Down (Ctrl-P/N on
-  serial); **Tab completion** of command names.
+- Line editing: Backspace, Ctrl-U, Ctrl-L / `clear`; **history** with
+  Up/Down (Ctrl-P/N on serial); **Tab completion** of command names.
 - `run <path>` or just a program's name; `cd`, `pwd`, `mount`, `ls`…
 - Diagnostics: `ps`, `heapstat`, `irqs`, `pci`, `drivers`, `bench`,
   `test <name|all>`, `sym <addr>`, `gui`, `ticks`, `idle`, `timermode`.
@@ -92,7 +92,10 @@ Last updated: **2026-10-05** (0.0.5i).
 - Alt+F4 closes; **Alt+Tab** opens a switcher (tiles; Tab moves on,
   Shift+Tab back, release Alt to pick, Escape cancels).
 - **Super+D** hides every window and brings them back in the same order.
+- **Virtual desktops**: Super+1..4 switches, Super+Shift+1..4 moves the
+  focused window; the taskbar squares (left of the tray) show them.
 - Open/close/minimise/restore **animations** (fade + slide, 160 ms).
+- Power off / Restart in the launcher ask twice ("Sure?").
 - Windows: Terminal (one, the kernel shell), Files, Notes, Calculator,
   About, System Monitor, Memory Map, Settings. *One window per kind.*
 - **Lock screen**: Super+L (password from Settings → Security); the clock
@@ -113,12 +116,17 @@ Last updated: **2026-10-05** (0.0.5i).
   64 KiB; a new note saves to /data/notes.txt or /tmp/notes.txt.
 - **Calculator**: keys or clicks; `+ - * / % ^ ( )`, decimals; Enter or
   `=`; Backspace; Esc clears; result also as hex and binary; M+/MR; copy.
+- **Image Viewer**: BMP files (24/32-bit, what Print Screen writes),
+  fitted to the window; "Set as wallpaper". Opens from Files.
+- **System Monitor**: CPU and memory graphs (last minute), per-CPU load,
+  a process table (pid, name, threads, CPU %, ticks) and End task.
 
 ### Taskbar
 - Floating rounded bar (or docked, edge to edge); glass or solid.
 - Logo button → launcher; search box → launcher with the keyboard in it.
 - A button per window with its app icon; click to focus/minimise;
-  **middle-click closes**; the focused one is marked.
+  **middle-click closes**; **right-click**: Restore, Minimise, Maximise,
+  Snap left/right, Close; the focused one is marked.
 - Memory meter; clock with date (12/24 h, seconds on/off, time zone).
 - **Clock click → calendar**. **Tray chevron → quick settings**: night
   light, show desktop, lock, Settings, accent, frame rate, CPU per core,
@@ -134,9 +142,10 @@ Last updated: **2026-10-05** (0.0.5i).
 ### Calendar and reminders
 - Month view; page with the arrows, the wheel, Left/Right; "Today".
 - Click a day; type `14:30 Text` (or just `Text` for 09:00) + Enter to
-  add a reminder; × removes it; days with reminders show a dot.
-- A reminder fires as a notification at its minute. *Kept in memory only
-  (B-011).*
+  add a reminder; `daily 07:30 Text` / `weekly ...` repeats it; × removes
+  it; days with reminders show a dot.
+- A reminder fires as a notification at its minute, with a **Snooze**
+  button (five minutes). Saved on /data.
 
 ### Notifications
 - Cards top-right, fade in, gone after 8 s or when clicked. From the shell:
@@ -159,7 +168,9 @@ Last updated: **2026-10-05** (0.0.5i).
   the lock keys' state.
 - **Storage**: every disk with its size and state; "Use for settings"
   formats a blank disk as the `data` volume (asks twice).
-- **Security**: set, change or remove the lock-screen password; Lock now.
+- **Security**: set, change or remove the lock-screen password; Lock now;
+  auto-lock after 1/5/15/30 idle minutes.
+- Settings scrolls with the wheel when a tab is taller than the window.
 - Everything is saved to `/data/desktop.conf` when a data disk exists.
 
 ## Security and privacy (in place; see docs/STATUS.md for the full list)
@@ -178,7 +189,7 @@ Last updated: **2026-10-05** (0.0.5i).
 
 ## Tooling (host side)
 
-- `make`, `make iso`, `make test` (49 integration tests in QEMU/KVM),
+- `make`, `make iso`, `make test` (53 integration tests in QEMU/KVM),
   `make bench`, `make fuzz`, `make dist` (also fixes VirtualBox VMs).
 - `tools/qemu-probe.py`: boots the ISO headless and drives it:
   `!key` (text + Enter, including shifted punctuation), `!keys` (key

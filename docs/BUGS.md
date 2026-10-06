@@ -47,20 +47,20 @@ class of bug; if there is none, say so.
 - Guard: none on VirtualBox.
 - Status: OPEN.
 
-### B-012 — The Settings window does not scroll when it is small
-- Found: 2026-10-04.
-- Where: `paint_settings` in `kernel/gui/desktop.cpp`.
-- Symptom: below its minimum height the lower cards are cut off.
-- Cause: content is laid out for the minimum size (620x440); there is no
-  scrolling in the kernel desktop.
-- Fix: partly, 0.0.5g: the card layout fits every tab inside the minimum
-  size at 1280x800; at 800x600 the Display tab is still cut off.
-- Guard: none (visual).
-- Status: OPEN (minor; Pane's toolkit will scroll in phase 13).
-
 ---
 
 ## Fixed
+
+### B-012 — The Settings window did not scroll when it was small
+- Found: 2026-10-04.
+- Where: `paint_settings` in `kernel/gui/desktop.cpp`.
+- Symptom: below its minimum height the lower cards were cut off.
+- Fix (0.0.5j): the cards scroll with the wheel (clipped to the content
+  area, a thin bar shows where); the tab's height is measured on every
+  paint.
+- Guard: none automated (visual); `desktop-qol2` opens Settings at the
+  default size.
+- Status: FIXED 2026-10-06.
 
 ### B-015 — The minor page fault was over its 2 µs budget
 - Found: 2026-10-04, `make bench` since 0.0.5c (2.0–2.9 µs against 2 µs).

@@ -1399,3 +1399,22 @@ measurable; the rest is listed in docs/TO_FINISH.md.
   links in tmpfs and cerfs, a lightweight `fsck.cerfs`, MSI-X for NVMe and
   virtio-blk, a one-shot timer / tickless idle, demand-paged and shared
   file mappings, passing ports through ports.
+
+---
+
+## 2026-10-06 — Round 4 of polish (owner: "do all 1-8", three-hour box)
+
+Done inside the box: hard links (round 3a, with the VFS `link` op appended
+last in `VnodeOps` so no table had to change), Settings scrolling, `clear`,
+auto-lock, the two-press power off, repeating reminders and snooze, the
+task-button menu, four virtual desktops (a window's `desk`; "hidden" =
+minimised or elsewhere, used wherever "minimised" was), the System Monitor
+(a `sched_process_snapshot` copy of the process table under the scheduler
+lock; idle threads excluded from the kernel's share), the BMP viewer and
+wallpaper-from-file (every header field bounds-checked; 32 MiB at most).
+
+Left for the next round, by the owner's list: pinned taskbar apps, drag
+to reorder, hover previews (3); terminal colours/escape sequences, zoom,
+a second terminal (4); a light theme, panel opacity, UI scale (6); screen
+dimming and a boot splash (7); the clock-hover "today" strip (8). Then
+round 3's b–f. The owner said to move to phase 12 after the box.

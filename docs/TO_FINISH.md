@@ -27,7 +27,7 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: desktop polish rounds, then phase 12 (Pane)
+## Right now: phase 12 (Pane) — the polish box is spent
 
 Version **0.0.5g** (desktop polish: calendar, reminders, notifications,
 animations, snapping, Alt+Tab, Settings cards, VirtualBox mouse) is the
@@ -36,6 +36,11 @@ we start phase 12", with a fixed loop: each iteration ships to VirtualBox,
 updates the HTML list on their Windows desktop, and ends with **8
 numbered candidates**; the owner picks by number (CLAUDE.md, "After every
 iteration"). docs/FEATURES.md lists what exists; docs/BUGS.md the bugs.
+
+**Start here next session: phase 12**, step 4 below. The owner's
+three-hour polish box ended with 0.0.5j on 2026-10-06; what it did not
+reach is listed in docs/DECISIONS.md (2026-10-06) and in step 3, and is
+done only if the owner asks for it by number.
 
 **The owner's instruction of 2026-10-05 (evening):** "do all 1-8
 additions and re-go through all phases 1-11 and see if you can iterate to
@@ -202,6 +207,11 @@ First steps of phase 12, in order (SPEC §5, §5A and §9 first):
   access rule, ACPI power off and restart, `runas`, sticky `/tmp`.
 - **Phase 11 — IPC. Release 0.0.5f (2026-10-04).** Plus the Settings
   window, launcher with search, floating taskbar, resolution switching.
+- **Release 0.0.5j (2026-10-06): hard links; polish round 4.** Virtual
+  desktops, System Monitor graphs and process table, BMP viewer and
+  wallpaper from a file, repeating reminders and snooze, auto-lock,
+  Settings scrolling, `clear`, task-button menu, two-press power off;
+  53 tests.
 - **Release 0.0.5i (2026-10-05): polish round 3, part 1.** Pre-zeroed
   frame pool (page fault 1.4 µs), `sigprocmask`, `port_try_send`,
   keyboard lock lights, BENCH block.

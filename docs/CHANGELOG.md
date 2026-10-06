@@ -22,6 +22,35 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5j — 2026-10-06
+
+Round 3 continued (hard links) and round 4 of polish, the owner's eight
+picks of the 0.0.5i list, as far as a three-hour box allowed.
+
+### Security
+- The desktop can **lock itself** after 1, 5, 15 or 30 idle minutes
+  (Settings → Security, once a password is set).
+
+### Fixed
+- Settings scrolls with the wheel when its content does not fit (B-012).
+- Task buttons no longer run under the tray when the taskbar is full.
+
+### Added
+- **Hard links**: `ln a b` on cerfs and tmpfs (`link` system call 16).
+- **Virtual desktops**: four of them; Super+1..4 switches, Super+Shift+1..4
+  moves the focused window; squares on the taskbar show which hold
+  windows (click to switch).
+- **System Monitor**: CPU and memory graphs over the last minute, a
+  process table with each process's CPU share, and End task.
+- **Image Viewer**: opens BMP files (Print Screen's output) from Files;
+  "Set as wallpaper" makes the picture the background.
+- **Reminders repeat**: start the text with `daily` or `weekly`; a
+  reminder's notification has a **Snooze** button (five minutes).
+- **Taskbar button right-click**: Restore, Minimise, Maximise, Snap left,
+  Snap right, Close.
+- Terminal: `clear` and Ctrl+L.
+- Power off and Restart in the launcher ask twice ("Sure?").
+
 ## 0.0.5i — 2026-10-05
 
 ### Performance
