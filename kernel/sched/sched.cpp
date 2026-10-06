@@ -762,6 +762,26 @@ void process_release_threads(Process* p, Thread* keep) {
     sched_unlock(irq);
 }
 
+u32 sched_process_snapshot(ProcessInfo* out, u32 max) {
+    u32 n = 0;
+    u64 irq = sched_lock();
+    for (Process* p = g_processes; p && n < max; p = p->next) {
+        ProcessInfo& i = out[n++];
+        i.pid = p->pid;
+        strlcpy(i.name, p->name, sizeof i.name);
+        i.threads = 0;
+        i.run_ticks = 0;
+        for (Thread* t = p->threads; t; t = t->proc_next) {
+            if (t->is_idle) continue;           // idle time is not the kernel working
+            i.threads++;
+            i.run_ticks += t->run_ticks;
+        }
+        i.zombie = p->zombie;
+    }
+    sched_unlock(irq);
+    return n;
+}
+
 Process* process_find_locked(u32 pid) {
     for (Process* p = g_processes; p; p = p->next)
         if (p->pid == pid) return p;

@@ -34,6 +34,7 @@
 #include <gui/terminal.h>
 #include <lib/kprintf.h>
 #include <lib/csprng.h>
+#include <proc/signal.h>
 #include <lib/panic.h>
 #include <lib/sha256.h>
 #include <lib/string.h>
@@ -987,6 +988,9 @@ void build_shadow(Window& w) {
 }
 
 // ---------------------------------------------------------------- paint ---
+void cpu_sample();
+void notify(const char* title, const char* text);
+
 void paint_lines_header(Surface& s, const char* heading) {
     fill_rect(s, s.bounds(), theme::CONTENT_BG);
     draw_text(s, g.bold, 16, 14, heading, accent());
@@ -1026,48 +1030,147 @@ void paint_about(Surface& s) {
                        s.width - 32, theme::TEXT_MUTED);
 }
 
-void paint_sysmon(Surface& s) {
-    paint_lines_header(s, "System Monitor");
-    char line[96];
-    int y = 50;
-    DateTime now = rtc_now();
-    ksnprintf(line, sizeof line, "%04u-%02u-%02u %02u:%02u:%02u UTC", now.year, now.month, now.day, now.hour,
-              now.minute, now.second);
-    y = paint_kv(s, y, "Clock", line);
-    u64 up = refclock_now_us() / 1000000;
-    ksnprintf(line, sizeof line, "%lu:%02lu:%02lu (%lu ticks at %u Hz)", (unsigned long)(up / 3600),
-              (unsigned long)(up % 3600 / 60), (unsigned long)(up % 60), (unsigned long)lapic_timer_ticks(),
-              TIMER_HZ);
-    y = paint_kv(s, y, "Uptime", line);
-    char brand[49];
-    cpuid_brand(brand);
-    y = paint_kv(s, y, "CPU", brand);
-    ksnprintf(line, sizeof line, "%u in use", smp_cpu_count());
-    y = paint_kv(s, y, "Cores", line);
+// System Monitor (Gauge's first form): the last minute of CPU and memory
+// as graphs, and the process table with an End task button.
+constexpr int HIST = 60;
+u8 g_cpu_hist[HIST];                // total CPU busy %, one per second
+u8 g_ram_hist[HIST];                // RAM used %
+int g_hist_count = 0;
+ProcessInfo g_procs[32];
+u32 g_proc_count = 0;
+u64 g_proc_prev_ticks[32];
+u32 g_proc_prev_pid[32];
+u8 g_proc_cpu[32];                  // percent over the last second
+int g_proc_selected = -1;
+int g_proc_scroll = 0;
+Rect g_proc_rows[32];
+Rect g_proc_end_rect{0, 0, 0, 0};
+int g_proc_rows_shown = 0;
 
+// Once a second (from the pump): a new sample of everything the window shows.
+void sysmon_sample() {
+    cpu_sample();
+    int cpus = (int)smp_cpu_count();
+    if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
+    u32 sum = 0;
+    for (int i = 0; i < cpus; i++) sum += g_cpu_busy[i];
+    PmmStats pm = pmm_stats();
+    u8 ram = pm.usable_frames ? (u8)(pm.used_frames * 100 / pm.usable_frames) : 0;
+    if (g_hist_count == HIST) {
+        memmove(g_cpu_hist, g_cpu_hist + 1, HIST - 1);
+        memmove(g_ram_hist, g_ram_hist + 1, HIST - 1);
+        g_hist_count = HIST - 1;
+    }
+    g_cpu_hist[g_hist_count] = cpus ? (u8)(sum / cpus) : 0;
+    g_ram_hist[g_hist_count] = ram;
+    g_hist_count++;
+    // Processes, and each one's share of the last second (100 ticks).
+    ProcessInfo fresh[32];
+    u32 n = sched_process_snapshot(fresh, 32);
+    for (u32 i = 0; i < n; i++) {
+        u64 prev = 0;
+        for (u32 j = 0; j < g_proc_count; j++)
+            if (g_proc_prev_pid[j] == fresh[i].pid) prev = g_proc_prev_ticks[j];
+        u64 d = fresh[i].run_ticks > prev ? fresh[i].run_ticks - prev : 0;
+        g_proc_cpu[i] = (u8)(d > 100 ? 100 : d);
+    }
+    for (u32 i = 0; i < n; i++) {
+        g_proc_prev_pid[i] = fresh[i].pid;
+        g_proc_prev_ticks[i] = fresh[i].run_ticks;
+    }
+    memcpy(g_procs, fresh, sizeof fresh);
+    g_proc_count = n;
+}
+
+void draw_graph(Surface& s, const Rect& r, const u8* hist, int count, const char* label, u8 now_value, Color c) {
+    fill_rect_rounded(s, r, 8, rgba(255, 255, 255, 7));
+    stroke_rect_rounded(s, r, 8, rgba(255, 255, 255, 14));
+    for (int q = 1; q < 4; q++) draw_hline(s, r.x + 4, r.right() - 5, r.y + r.h * q / 4, rgba(255, 255, 255, 10));
+    int inner_w = r.w - 8, inner_h = r.h - 8;
+    int step = inner_w / (HIST - 1);
+    if (step < 1) step = 1;
+    int x0 = r.right() - 4 - (count - 1) * step;
+    for (int i = 1; i < count; i++) {
+        int xa = x0 + (i - 1) * step, xb = x0 + i * step;
+        int ya = r.bottom() - 4 - inner_h * hist[i - 1] / 100, yb = r.bottom() - 4 - inner_h * hist[i] / 100;
+        // A filled column under the line, then the line itself.
+        fill_rect(s, {xa, yb < ya ? yb : ya, xb - xa, r.bottom() - 4 - (yb < ya ? yb : ya)}, with_alpha(c, 40));
+        draw_line_aa(s, xa, ya, xb, yb, 24, c);
+    }
+    char line[32];
+    ksnprintf(line, sizeof line, "%s  %u%%", label, now_value);
+    draw_text(s, g.bold, r.x + 10, r.y + 8, line, theme::TEXT);
+}
+
+void paint_sysmon(Surface& s) {
+    fill_rect(s, s.bounds(), theme::CONTENT_BG);
+    if (!g_hist_count) sysmon_sample();
+    int cpus = (int)smp_cpu_count();
+    if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
     PmmStats pm = pmm_stats();
     u64 used_mb = pm.used_frames * PAGE_SIZE / MIB, total_mb = pm.usable_frames * PAGE_SIZE / MIB;
-    ksnprintf(line, sizeof line, "%lu / %lu MiB used", (unsigned long)used_mb, (unsigned long)total_mb);
-    y = paint_kv(s, y, "Memory", line);
-    Rect bar{16, y + 2, s.width - 32, 14};
-    fill_rect_rounded(s, bar, 7, rgba(255, 255, 255, 25));
-    int fillw = total_mb ? (int)((u64)bar.w * used_mb / total_mb) : 0;
-    if (fillw > 0) fill_rect_rounded(s, {bar.x, bar.y, fillw < 14 ? 14 : fillw, bar.h}, 7, accent());
-    y += 30;
-    ksnprintf(line, sizeof line, "%lu frames, largest free run %lu MiB", (unsigned long)pm.free_frames,
-              (unsigned long)(pm.largest_free_run * PAGE_SIZE / MIB));
-    y = paint_kv(s, y, "Free", line);
+    // Graphs side by side, a minute long.
+    int gw = (s.width - 16 * 3) / 2, gh = 110;
+    draw_graph(s, {16, 12, gw, gh}, g_cpu_hist, g_hist_count, "CPU", g_cpu_hist[g_hist_count - 1], accent());
+    draw_graph(s, {32 + gw, 12, gw, gh}, g_ram_hist, g_hist_count, "Memory", g_ram_hist[g_hist_count - 1], rgb(74, 222, 128));
+    char line[96];
+    int y = 12 + gh + 8;
+    // One line per CPU, then the memory figure.
+    int cx = 16;
+    for (int i = 0; i < cpus; i++) {
+        ksnprintf(line, sizeof line, "cpu%d %u%%", i, g_cpu_busy[i]);
+        draw_text(s, g.font, cx, y, line, theme::TEXT_MUTED);
+        cx += measure_text(g.font, line) + 14;
+    }
+    ksnprintf(line, sizeof line, "%lu / %lu MiB", (unsigned long)used_mb, (unsigned long)total_mb);
+    int tw = measure_text(g.font, line);
+    draw_text(s, g.font, s.width - 16 - tw, y, line, theme::TEXT_MUTED);
+    y += 26;
+    // The process table.
+    draw_text(s, g.bold, 16, y, "Processes", theme::TEXT);
+    {
+        bool can = g_proc_selected >= 0 && g_proc_selected < (int)g_proc_count && g_procs[g_proc_selected].pid > 1;
+        Rect b{s.width - 16 - 90, y - 4, 90, 26};
+        g_proc_end_rect = can ? b : Rect{0, 0, 0, 0};
+        fill_rect_rounded(s, b, 8, can ? rgb(196, 43, 28) : rgba(255, 255, 255, 10));
+        draw_text(s, g.font, b.x + (b.w - measure_text(g.font, "End task")) / 2, b.y + (b.h - g.font.height) / 2, "End task",
+                  can ? rgb(255, 255, 255) : theme::TEXT_MUTED);
+    }
+    y += 28;
+    draw_text(s, g.mono, 16, y, "  pid  name                  thr   cpu    ticks", theme::TEXT_MUTED);
+    y += 20;
+    int row_h = 20;
+    int rows = (s.height - y - 8) / row_h;
+    if (rows < 1) rows = 1;
+    if (g_proc_scroll > (int)g_proc_count - rows) g_proc_scroll = (int)g_proc_count - rows;
+    if (g_proc_scroll < 0) g_proc_scroll = 0;
+    g_proc_rows_shown = 0;
+    for (int i = g_proc_scroll; i < (int)g_proc_count && g_proc_rows_shown < rows; i++) {
+        const ProcessInfo& p = g_procs[i];
+        Rect r{10, y - 2, s.width - 20, row_h};
+        if (i == g_proc_selected) fill_rect_rounded(s, r, 6, with_alpha(accent(), 70));
+        ksnprintf(line, sizeof line, "%5u  %-20s %3u  %3u%%  %7lu%s", p.pid, p.name, p.threads, g_proc_cpu[i],
+                  (unsigned long)p.run_ticks, p.zombie ? "  (ended)" : "");
+        draw_text(s, g.mono, 16, y, line, p.zombie ? theme::TEXT_MUTED : theme::TEXT);
+        g_proc_rows[g_proc_rows_shown++] = r;
+        y += row_h;
+    }
+}
 
-    ksnprintf(line, sizeof line, "%lu frames, last %lu us, %lu of %lu px written", (unsigned long)g.stats.frames,
-              (unsigned long)g.stats.last_frame_us, (unsigned long)g.stats.last_written_pixels,
-              (unsigned long)g.stats.last_present_pixels);
-    y = paint_kv(s, y, "Compositor", line);
-    int open = 0;
-    for (int i = 0; i < MAX_WINDOWS; i++) open += g.windows[i].used;
-    ksnprintf(line, sizeof line, "%d open, cursor %d,%d, %s", open, g.mx, g.my,
-              ps2mouse_has_wheel() ? "wheel mouse" : "3-button mouse");
-    y = paint_kv(s, y, "Windows", line);
-    draw_text(s, g.font, 16, s.height - 30, "Refreshes every second.", theme::TEXT_MUTED);
+// A click in the System Monitor's content: picks a process or ends it.
+void sysmon_click(int x, int y) {
+    if (g_proc_end_rect.contains(x, y) && g_proc_selected >= 0 && g_proc_selected < (int)g_proc_count) {
+        const Credentials root = {0, 0};
+        Result<void> r = signal_send(g_procs[g_proc_selected].pid, sig::KILL, root);
+        if (!r.ok()) notify("System Monitor", "That process could not be ended.");
+        g_proc_selected = -1;
+        return;
+    }
+    for (int i = 0; i < g_proc_rows_shown; i++)
+        if (g_proc_rows[i].contains(x, y)) {
+            g_proc_selected = g_proc_scroll + i;
+            return;
+        }
 }
 
 void paint_memmap(Surface& s) {
@@ -1191,6 +1294,7 @@ void swatch(Surface& s, int cx, int cy, Color c, bool on, u8 act, int val) {
 
 u8 rounded_coverage(const Rect& r, int R, int x, int y);
 bool password_set();
+void cpu_sample();
 void draw_lock_screen(Surface& back);
 
 // The strip every hue can be picked from, with a knob on the chosen one.
@@ -3479,6 +3583,7 @@ void on_press(int button) {
             g.last_content_win = h.win;
             bool repaint = false;
             if (w.kind == Kind::Calculator) repaint = g_calc.click(cx, cy, 0, app_ctx());
+            else if (w.kind == Kind::SystemMonitor) { sysmon_click(cx, cy); repaint = true; }
             else if (w.kind == Kind::Files) repaint = g_files.click(cx, cy, 0, again ? 2 : 1, app_ctx());
             else if (w.kind == Kind::Notes) {
                 repaint = g_notes.click(cx, cy, 0, false, app_ctx());
@@ -3876,6 +3981,10 @@ void process_mouse() {
                 Window& w = g.windows[h.win];
                 if (w.kind == Kind::Notes && g_notes.wheel(e.dz)) w.needs_paint = true;
                 if (w.kind == Kind::Files && g_files.wheel(e.dz)) w.needs_paint = true;
+                if (w.kind == Kind::SystemMonitor) {
+                    g_proc_scroll -= e.dz * 3;
+                    w.needs_paint = true;
+                }
                 if (w.kind == Kind::Settings) {
                     int max_scroll = g_settings_height - content_rect(w).h;
                     int want = g_settings_scroll - e.dz * 40;
@@ -4293,7 +4402,10 @@ void gui_pump() {
             damage(tray_rect());
         }
         for (int i = 0; i < MAX_WINDOWS; i++)
-            if (g.windows[i].used && g.windows[i].kind == Kind::SystemMonitor) g.windows[i].needs_paint = true;
+            if (g.windows[i].used && g.windows[i].kind == Kind::SystemMonitor) {
+                sysmon_sample();
+                g.windows[i].needs_paint = true;
+            }
     }
 
     u64 now_us = refclock_now_us();

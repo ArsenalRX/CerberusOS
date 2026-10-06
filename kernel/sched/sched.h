@@ -228,6 +228,16 @@ Result<Process*> process_create(const char* name, AddressSpace* space = nullptr)
 void process_release_threads(Process* p, Thread* keep);
 // Scheduler lock held: the process with this pid, or null.
 Process* process_find_locked(u32 pid);
+// A copy of the process table for display (System Monitor): at most `max`
+// rows, returns the count. Thread context.
+struct ProcessInfo {
+    u32 pid;
+    char name[32];
+    u32 threads;
+    u64 run_ticks;              // of all its threads, ever
+    bool zombie;
+};
+u32 sched_process_snapshot(ProcessInfo* out, u32 max);
 // Frees a process and its address space. It must have no threads left.
 void process_destroy(Process* p);
 
