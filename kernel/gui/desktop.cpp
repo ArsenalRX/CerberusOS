@@ -144,6 +144,7 @@ struct Prefs {
     char lock_hash[65] = {};
     char lock_salt[33] = {};
     bool night_light = false;       // a warm tint over the whole screen
+    int autolock_min = 0;           // lock the screen after this many idle minutes; 0 = never
 };
 Prefs g_prefs;
 
@@ -315,6 +316,7 @@ struct State {
     int switcher_count = 0;
     bool ctx_open = false;      // the right-click menu on the desktop
     int ctx_x = 0, ctx_y = 0;
+    int ctx_win = -1;           // ... or on a taskbar button: the window it is about
     u32 shown_before = 0;       // Super+D: the windows it hid, to bring back
     bool tray_open = false;     // the quick-settings panel above the tray button
     u8 tray_anim = ANIM_NONE;
@@ -344,6 +346,8 @@ struct State {
 
     u8 last_second = 255;
     u64 last_frame_us = 0;
+    u64 last_input_us = 0;      // for the auto-lock
+    u64 power_armed_us = 0;     // the launcher's Power off was pressed once
     u64 last_paint_us = 0;
     GuiStats stats{};
 } g;
@@ -391,7 +395,7 @@ u32 g_thumb_px[WALLPAPER_COUNT][THUMB_W * THUMB_H];
 enum : u8 {
     ACT_TAB, ACT_ACCENT, ACT_WALL, ACT_RADIUS, ACT_GLASS, ACT_FLOAT, ACT_CLOCK12, ACT_SECONDS,
     ACT_FX, ACT_BCOLOR, ACT_BWIDTH, ACT_SPEED, ACT_BALL, ACT_GLOW, ACT_MODE, ACT_HUE, ACT_FPS, ACT_TZ, ACT_FORMAT,
-    ACT_LAYOUT, ACT_RDELAY, ACT_RRATE, ACT_PW_FIELD, ACT_PW_SET, ACT_PW_CLEAR, ACT_LOCK,
+    ACT_LAYOUT, ACT_RDELAY, ACT_RRATE, ACT_PW_FIELD, ACT_PW_SET, ACT_PW_CLEAR, ACT_LOCK, ACT_AUTOLOCK,
 };
 struct Ctl {
     Rect r;
@@ -402,6 +406,8 @@ constexpr int MAX_CTLS = 96;
 Ctl g_ctls[MAX_CTLS];
 int g_ctl_count = 0;
 int g_settings_tab = 0;
+int g_settings_scroll = 0;          // pixels the tab's cards are scrolled up (B-012)
+int g_settings_height = 0;          // the tab's content height, from the last paint
 bool g_measuring = false;           // painting only to find out how tall a card is
 int g_format_confirm = -1;          // Storage: the disk whose "erase" button was pressed once
 // Security: the password being typed in Settings, and on the lock screen.
@@ -422,6 +428,7 @@ struct Reminder {
     bool used;
     u16 year;
     u8 month, day, hour, minute;
+    u8 repeat;                      // 0 once, 1 daily, 2 weekly
     char text[40];
 };
 constexpr int MAX_REMINDERS = 32;
@@ -441,6 +448,7 @@ struct Toast {
     char title[32];
     char text[64];
     u64 start, until;
+    char snooze_text[40];       // non-empty: a reminder that "Snooze" repeats in five minutes
 };
 constexpr int MAX_TOASTS = 4;
 Toast g_toasts[MAX_TOASTS];
@@ -609,10 +617,14 @@ Rect cal_area() {
 }
 // The right-click menu's items and its place (kept on the screen).
 const char* const CTX_ITEMS[] = {"Terminal", "Files", "Notes", "Settings", "Change wallpaper", "Show desktop", "About Cerberus"};
+const char* const TASK_ITEMS[] = {"Restore", "Minimise", "Maximise", "Snap left", "Snap right", "Close"};
 constexpr int CTX_COUNT = sizeof CTX_ITEMS / sizeof CTX_ITEMS[0];
+constexpr int TASK_COUNT = sizeof TASK_ITEMS / sizeof TASK_ITEMS[0];
+inline int ctx_item_count() { return g.ctx_win >= 0 ? TASK_COUNT : CTX_COUNT; }
+inline const char* ctx_item(int i) { return g.ctx_win >= 0 ? TASK_ITEMS[i] : CTX_ITEMS[i]; }
 constexpr int CTX_W = 200, CTX_ITEM_H = 32;
 Rect ctx_rect() {
-    int h = CTX_COUNT * CTX_ITEM_H + 12;
+    int h = ctx_item_count() * CTX_ITEM_H + 12;
     int x = g.ctx_x, y = g.ctx_y;
     if (x + CTX_W > g.W - 4) x = g.W - 4 - CTX_W;
     if (y + h > g.H - theme::PANEL_H) y = g.H - theme::PANEL_H - h;
@@ -1108,6 +1120,15 @@ template <typename F> int card(Surface& s, int y, const char* title, F body) {
     return r.bottom() + 10;
 }
 
+// The cards are painted after the sidebar, clipped to the content area to
+// its right, so a scrolled card never shows over it.
+struct CardClip {
+    Surface& s;
+    Rect saved;
+    CardClip(Surface& surface) : s(surface), saved(surface.clip) { s.clip = s.clip.intersect({SIDE + 1, 0, s.width - SIDE - 1, s.height}); }
+    ~CardClip() { s.clip = saved; }
+};
+
 // The little pictures beside the sidebar entries.
 void tab_icon(Surface& s, int x, int y, int tab, bool on) {
     Color c = on ? accent() : theme::TEXT_MUTED;
@@ -1196,7 +1217,8 @@ void paint_settings(Surface& s) {
         ctl_add(r, ACT_TAB, i);
     }
 
-    int y = 18;
+    CardClip card_clip(s);
+    int y = 18 - g_settings_scroll;
     if (g_settings_tab == 0) {
         y = card(s, y, "Accent colour", [&](int x, int y) {
             for (int i = 0; i < ACCENT_COUNT; i++) swatch(s, x + 14 + i * 40, y + 16, ACCENTS[i].c, g_prefs.accent == i, ACT_ACCENT, i);
@@ -1338,6 +1360,15 @@ void paint_settings(Surface& s) {
             }
             return y + 30;
         });
+        if (password_set()) {
+            y = card(s, y, "Lock after being idle for", [&](int x, int y) {
+                int left = x;
+                static const int MINS[] = {0, 1, 5, 15, 30};
+                static const char* const LABELS[] = {"Never", "1 min", "5 min", "15 min", "30 min"};
+                for (int i = 0; i < 5; i++) chip(s, x, y, left, LABELS[i], g_prefs.autolock_min == MINS[i], ACT_AUTOLOCK, MINS[i]);
+                return y + 30;
+            });
+        }
     } else if (g_settings_tab == 5) {
         y = card(s, y, fs_data_mounted() ? "Settings are saved on /data" : "Settings are not saved yet", [&](int x, int y) {
             DiskInfo disks[8];
@@ -1394,6 +1425,17 @@ void paint_settings(Surface& s) {
             }
             return y + 30;
         });
+    }
+    // What does not fit can be scrolled to; a thin bar shows where we are.
+    g_settings_height = y + g_settings_scroll;
+    int max_scroll = g_settings_height - s.height;
+    if (max_scroll > 0) {
+        Rect track{s.width - 6, 8, 3, s.height - 16};
+        fill_rect_rounded(s, track, 1, rgba(255, 255, 255, 14));
+        int th = track.h * s.height / g_settings_height;
+        if (th < 20) th = 20;
+        int ty = track.y + (track.h - th) * g_settings_scroll / max_scroll;
+        fill_rect_rounded(s, {track.x, ty, 3, th}, 1, rgba(255, 255, 255, 70));
     }
 }
 
@@ -1875,7 +1917,9 @@ void draw_menu(Surface& back, int dy = 0) {
         Rect r = menu_power_rect(restart).translated(0, dy);
         bool hover = g.menu_hover == (restart ? ITEM_RESTART : ITEM_POWER);
         fill_rect_rounded(back, r, 8, hover ? (restart ? rgba(255, 255, 255, 40) : rgb(196, 43, 28)) : rgba(255, 255, 255, 18));
-        const char* label = restart ? "Restart" : "Power off";
+        bool armed = refclock_now_us() - g.power_armed_us <= 5000000;
+        const char* label = restart ? (armed ? "Restart?" : "Restart") : (armed ? "Sure?" : "Power off");
+        if (armed) fill_rect_rounded(back, r, 8, with_alpha(accent(), 160));
         draw_text(back, g.font, r.x + (r.w - measure_text(g.font, label)) / 2, r.y + (r.h - g.font.height) / 2, label,
                   theme::TEXT);
     }
@@ -1965,7 +2009,9 @@ void draw_calendar(Surface& back, int dy = 0) {
         if (!r.used || r.year != g.sel_year || r.month != g.sel_month || r.day != g.sel_day) continue;
         ksnprintf(line, sizeof line, "%02u:%02u", r.hour, r.minute);
         draw_text(back, g.mono, cr.x + 22, y, line, accent());
-        draw_text_ellipsis(back, g.font, cr.x + 80, y, r.text, CAL_W - 80 - 50, theme::TEXT);
+        char label[64];
+        ksnprintf(label, sizeof label, "%s%s", r.text, r.repeat == 1 ? " (daily)" : r.repeat == 2 ? " (weekly)" : "");
+        draw_text_ellipsis(back, g.font, cr.x + 80, y, label, CAL_W - 80 - 50, theme::TEXT);
         Rect xr{cr.right() - 40, y - 3, 22, 22};
         bool hover = xr.contains(g.mx, g.my);
         if (hover) fill_rect_rounded(back, xr, 6, rgba(255, 255, 255, 30));
@@ -1983,10 +2029,10 @@ void draw_context_menu(Surface& back) {
     fill_rect_rounded(back, mr.translated(0, 3), 10, rgba(0, 0, 0, 90));
     fill_rect_rounded(back, mr, 10, theme::MENU_BG);
     stroke_rect_rounded(back, mr, 10, theme::BORDER);
-    for (int i = 0; i < CTX_COUNT; i++) {
+    for (int i = 0; i < ctx_item_count(); i++) {
         Rect ir{mr.x + 6, mr.y + 6 + i * CTX_ITEM_H, mr.w - 12, CTX_ITEM_H};
         if (ir.contains(g.mx, g.my)) fill_rect_rounded(back, ir, 6, with_alpha(accent(), 70));
-        draw_text(back, g.font, ir.x + 12, ir.y + (ir.h - g.font.height) / 2, CTX_ITEMS[i], theme::TEXT);
+        draw_text(back, g.font, ir.x + 12, ir.y + (ir.h - g.font.height) / 2, ctx_item(i), theme::TEXT);
     }
 }
 
@@ -2131,6 +2177,12 @@ void draw_toasts(Surface& back) {
             int cx = tr.right() - 20, cy = tr.y + 20;
             draw_line_aa(back, cx - 4, cy - 4, cx + 4, cy + 4, 20, theme::TEXT_MUTED);
             draw_line_aa(back, cx + 4, cy - 4, cx - 4, cy + 4, 20, theme::TEXT_MUTED);
+            if (t.snooze_text[0]) {
+                Rect sb{tr.right() - 86, tr.bottom() - 30, 70, 22};
+                fill_rect_rounded(back, sb, 6, with_alpha(accent(), 140));
+                draw_text(back, g.font, sb.x + (sb.w - measure_text(g.font, "Snooze")) / 2, sb.y + (sb.h - g.font.height) / 2,
+                          "Snooze", rgb(15, 23, 42));
+            }
         });
     }
 }
@@ -2342,7 +2394,7 @@ Hit hit_test(int x, int y) {
         Rect mr = ctx_rect();
         h.what = Hit::Context;
         int i = (y - mr.y - 6) / CTX_ITEM_H;
-        h.item = y >= mr.y + 6 && i < CTX_COUNT ? i : -1;
+        h.item = y >= mr.y + 6 && i < ctx_item_count() ? i : -1;
         return h;
     }
     if (g.menu_open) {
@@ -2505,6 +2557,9 @@ void calendar_page(int months) {
 
 void notify(const char* title, const char* text);
 void open_kind(Kind kind);
+void dismiss_toast(int i);
+void notify_reminder(const char* shown, const char* text);
+void reminder_advance(Reminder& r, int days, int minutes);
 
 void notify_impl(const char* title, const char* text) {
     int slot = -1;
@@ -2518,6 +2573,7 @@ void notify_impl(const char* title, const char* text) {
     }
     Toast& t = g_toasts[slot];
     t.used = true;
+    t.snooze_text[0] = 0;
     strlcpy(t.title, title, sizeof t.title);
     strlcpy(t.text, text, sizeof t.text);
     // Remembered for the tray's history.
@@ -2539,6 +2595,36 @@ void notify_impl(const char* title, const char* text) {
 
 void notify(const char* title, const char* text) { notify_impl(title, text); }
 
+// A reminder's toast: the same card with a snooze button.
+void notify_reminder(const char* shown, const char* text) {
+    notify("Reminder", shown);
+    for (int i = MAX_TOASTS - 1; i >= 0; i--) {
+        if (!g_toasts[i].used) continue;
+        strlcpy(g_toasts[i].snooze_text, text, sizeof g_toasts[i].snooze_text);
+        break;
+    }
+}
+
+void snooze_toast(int i) {
+    if (i < 0 || i >= MAX_TOASTS || !g_toasts[i].used || !g_toasts[i].snooze_text[0]) return;
+    DateTime now = local_now();
+    for (Reminder& r : g_reminders) {
+        if (r.used) continue;
+        r.used = true;
+        r.year = now.year;
+        r.month = now.month;
+        r.day = now.day;
+        r.hour = now.hour;
+        r.minute = now.minute;
+        r.repeat = 0;
+        strlcpy(r.text, g_toasts[i].snooze_text, sizeof r.text);
+        reminder_advance(r, 0, 5);
+        break;
+    }
+    reminders_write();
+    dismiss_toast(i);
+}
+
 void dismiss_toast(int i) {
     if (i < 0 || i >= MAX_TOASTS || !g_toasts[i].used) return;
     damage({toast_rect(0).x - 8, 0, TOAST_W + 24, toast_rect(MAX_TOASTS).y});
@@ -2559,6 +2645,18 @@ void add_reminder() {
         while (*t == ' ') t++;
     }
     if (hour > 23 || minute > 59) return;
+    // "daily" or "weekly" first (before or after the time) repeats it.
+    u8 repeat = 0;
+    auto word = [&](const char* w, u8 kind) {
+        usize n = strlen(w);
+        if (strncmp(t, w, n) == 0 && (t[n] == ' ' || t[n] == 0)) {
+            repeat = kind;
+            t += n;
+            while (*t == ' ') t++;
+        }
+    };
+    word("daily", 1);
+    word("weekly", 2);
     for (Reminder& r : g_reminders) {
         if (r.used) continue;
         r.used = true;
@@ -2567,6 +2665,7 @@ void add_reminder() {
         r.day = (u8)g.sel_day;
         r.hour = (u8)hour;
         r.minute = (u8)minute;
+        r.repeat = repeat;
         strlcpy(r.text, *t ? t : "Reminder", sizeof r.text);
         break;
     }
@@ -2606,13 +2705,28 @@ void calendar_click(int x, int y) {
 }
 
 // Once a second: reminders whose minute has come become notifications.
+// Moves a reminder forward by `days` (a repeat, or a snooze of `minutes`).
+void reminder_advance(Reminder& r, int days, int minutes) {
+    DateTime t{r.year, r.month, r.day, r.hour, r.minute, 0};
+    u64 secs = datetime_to_unix(t) + (u64)days * 86400 + (u64)minutes * 60;
+    DateTime u = unix_to_datetime(secs);
+    r.year = u.year;
+    r.month = u.month;
+    r.day = u.day;
+    r.hour = u.hour;
+    r.minute = u.minute;
+}
+
 void fire_reminders(const DateTime& now) {
     for (Reminder& r : g_reminders) {
         if (!r.used || r.year != now.year || r.month != now.month || r.day != now.day || r.hour != now.hour ||
             r.minute != now.minute)
             continue;
-        r.used = false;
-        notify("Reminder", r.text);
+        if (r.repeat) reminder_advance(r, r.repeat == 1 ? 1 : 7, 0);
+        else r.used = false;
+        char text[64];
+        ksnprintf(text, sizeof text, "%s%s", r.text, r.repeat ? (r.repeat == 1 ? "  (daily)" : "  (weekly)") : "");
+        notify_reminder(text, r.text);
         reminders_write();
         if (g.cal_open) damage(cal_rect());
     }
@@ -2628,8 +2742,15 @@ void open_context_menu(int x, int y) {
     close_menu();
     close_calendar();
     g.ctx_open = true;
+    g.ctx_win = -1;
     g.ctx_x = x;
     g.ctx_y = y;
+    damage(ctx_area());
+}
+
+void open_task_menu(int win, int x, int y) {
+    open_context_menu(x, y);
+    g.ctx_win = win;
     damage(ctx_area());
 }
 
@@ -2764,12 +2885,12 @@ void prefs_write_now() {
     int len = ksnprintf(text, sizeof text,
                         "accent=%d\nhue=%d\nwallpaper=%d\nradius=%d\nglass=%d\nfloating=%d\nclock12=%d\nseconds=%d\n"
                         "fx=%d\nbcolor=%d\nbwidth=%d\nspeed=%d\nball=%d\nglow=%d\nfps=%d\ntz=%d\n"
-                        "layout=%d\nrdelay=%d\nrrate=%d\nlockhash=%s\nlocksalt=%s\nnight=%d\n",
+                        "layout=%d\nrdelay=%d\nrrate=%d\nlockhash=%s\nlocksalt=%s\nnight=%d\nautolock=%d\n",
                         g_prefs.accent, g_prefs.custom_hue, g_prefs.wallpaper, g_prefs.radius, g_prefs.panel_glass,
                         g_prefs.panel_floating, g_prefs.clock_12h, g_prefs.clock_seconds, (int)g_prefs.fx,
                         g_prefs.border_color, g_prefs.border_w, g_prefs.speed, g_prefs.border_all, g_prefs.glow,
                         g_prefs.fps, g_prefs.tz_minutes, g_prefs.layout, g_prefs.repeat_delay, g_prefs.repeat_rate,
-                        g_prefs.lock_hash, g_prefs.lock_salt, g_prefs.night_light);
+                        g_prefs.lock_hash, g_prefs.lock_salt, g_prefs.night_light, g_prefs.autolock_min);
     if (len < 0 || len >= (int)sizeof text) return;
     if (!write_whole_file("/data/desktop.conf", text, (usize)len)) kprintf("gui: could not write /data/desktop.conf\n");
 }
@@ -2820,6 +2941,7 @@ void prefs_load() {
             else if (!strcmp(k, "lockhash") && strlen(eq + 1) == 64) strlcpy(g_prefs.lock_hash, eq + 1, sizeof g_prefs.lock_hash);
             else if (!strcmp(k, "locksalt") && strlen(eq + 1) == 32) strlcpy(g_prefs.lock_salt, eq + 1, sizeof g_prefs.lock_salt);
             else if (!strcmp(k, "night")) g_prefs.night_light = v != 0;
+            else if (!strcmp(k, "autolock")) g_prefs.autolock_min = v == 1 || v == 5 || v == 15 || v == 30 ? v : 0;
         }
         line = more ? end + 1 : end;
     }
@@ -2832,8 +2954,8 @@ void reminders_write() {
     usize len = 0;
     for (const Reminder& r : g_reminders) {
         if (!r.used) continue;
-        int n = ksnprintf(text + len, sizeof text - len, "%04u-%02u-%02u %02u:%02u %s\n", r.year, r.month, r.day, r.hour,
-                          r.minute, r.text);
+        int n = ksnprintf(text + len, sizeof text - len, "%04u-%02u-%02u %02u:%02u %s%s\n", r.year, r.month, r.day, r.hour,
+                          r.minute, r.repeat == 1 ? "daily " : r.repeat == 2 ? "weekly " : "", r.text);
         if (n < 0 || len + (usize)n >= sizeof text) break;
         len += (usize)n;
     }
@@ -2861,9 +2983,13 @@ void reminders_load() {
                 mi = parse_int(line + 14);
             const char* t = line + 16;
             while (*t == ' ') t++;
+            u8 repeat = 0;
+            if (!strncmp(t, "daily ", 6)) { repeat = 1; t += 6; }
+            else if (!strncmp(t, "weekly ", 7)) { repeat = 2; t += 7; }
             if (y >= 2000 && y <= 2200 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && *t) {
                 Reminder& r = g_reminders[count++];
                 r.used = true;
+                r.repeat = repeat;
                 r.year = (u16)y;
                 r.month = (u8)mo;
                 r.day = (u8)d;
@@ -2992,7 +3118,10 @@ bool set_resolution(int nw, int nh);
 
 void settings_apply(u8 act, int val) {
     switch (act) {
-    case ACT_TAB: g_settings_tab = val; break;
+    case ACT_TAB:
+        g_settings_tab = val;
+        g_settings_scroll = 0;
+        break;
     case ACT_ACCENT: g_prefs.accent = val; break;
     case ACT_WALL:
         g_prefs.wallpaper = val;
@@ -3040,6 +3169,7 @@ void settings_apply(u8 act, int val) {
         g_pw_editing = false;
         break;
     case ACT_LOCK: lock_screen(); break;
+    case ACT_AUTOLOCK: g_prefs.autolock_min = val; break;
     case ACT_LAYOUT:
         g_prefs.layout = val;
         ps2kbd_set_layout(val);
@@ -3116,6 +3246,13 @@ void settings_click(int x, int y) {
 void menu_activate(int item) {
     if (item == ITEM_POWER || item == ITEM_RESTART) {
         if (item == ITEM_POWER && !power_can_power_off()) return;
+        // A second press within five seconds does it; the first only arms.
+        u64 now = refclock_now_us();
+        if (now - g.power_armed_us > 5000000) {
+            g.power_armed_us = now;
+            damage(menu_rect());
+            return;
+        }
         close_menu();
         kprintf("gui: %s requested from the launcher\n", item == ITEM_POWER ? "power off" : "restart");
         vfs_sync();
@@ -3139,6 +3276,7 @@ void on_press(int button) {
         // Middle-click on a taskbar button closes its window; right-click
         // on the desktop opens the menu.
         if (button == 2 && h.what == Hit::Task) destroy_window(h.win);
+        else if (button == 1 && h.what == Hit::Task) open_task_menu(h.win, g.mx, g.my);
         else if (button == 1 && h.what == Hit::Nothing && !g.menu_open && !g.cal_open) open_context_menu(g.mx, g.my);
         return;
     }
@@ -3152,6 +3290,22 @@ void on_press(int button) {
     g.last_click_win = h.what == Hit::Title ? h.win : -1;
     switch (h.what) {
     case Hit::Context:
+        if (g.ctx_win >= 0) {
+            int win = g.ctx_win;
+            close_context_menu();
+            if (!g.windows[win].used) break;
+            Window& tw = g.windows[win];
+            switch (h.item) {
+            case 0: restore(tw); unsnap(tw); break;
+            case 1: minimise(tw); break;
+            case 2: restore(tw); if (!tw.maximised) toggle_maximise(tw); break;
+            case 3: restore(tw); snap_window(tw, 1); break;
+            case 4: restore(tw); snap_window(tw, 2); break;
+            case 5: destroy_window(win); break;
+            default: break;
+            }
+            break;
+        }
         close_context_menu();
         switch (h.item) {
         case 0: open_kind(Kind::Terminal); break;
@@ -3169,7 +3323,13 @@ void on_press(int button) {
         default: break;
         }
         break;
-    case Hit::Toast: dismiss_toast(h.item); break;
+    case Hit::Toast: {
+        Rect r = toast_rect(h.item);
+        Rect sb{r.right() - 86, r.bottom() - 30, 70, 22};
+        if (g_toasts[h.item].snooze_text[0] && sb.contains(g.mx, g.my)) snooze_toast(h.item);
+        else dismiss_toast(h.item);
+        break;
+    }
     case Hit::Tray:
         if (g.tray_open) close_tray();
         else open_tray();
@@ -3432,6 +3592,7 @@ void terminal_scroll(int lines, bool to_bottom = false) {
 void process_keyboard() {
     KeyEvent e;
     while (ps2kbd_poll_event(&e)) {
+        g.last_input_us = refclock_now_us();
         // Super opens the menu when released on its own, as on Windows; used
         // with another key (Super+T, Super+M) it is only a modifier.
         if (e.key == key::SUPER) {
@@ -3634,6 +3795,7 @@ void process_keyboard() {
 void process_mouse() {
     MouseEvent e;
     while (ps2mouse_poll(&e)) {
+        g.last_input_us = refclock_now_us();
         if (e.absolute) {
             int nx = (int)((u32)e.ax * (u32)(g.W - 1) / 65535), ny = (int)((u32)e.ay * (u32)(g.H - 1) / 65535);
             if (nx != g.mx || ny != g.my) {
@@ -3652,6 +3814,16 @@ void process_mouse() {
                 Window& w = g.windows[h.win];
                 if (w.kind == Kind::Notes && g_notes.wheel(e.dz)) w.needs_paint = true;
                 if (w.kind == Kind::Files && g_files.wheel(e.dz)) w.needs_paint = true;
+                if (w.kind == Kind::Settings) {
+                    int max_scroll = g_settings_height - content_rect(w).h;
+                    int want = g_settings_scroll - e.dz * 40;
+                    if (want > max_scroll) want = max_scroll;
+                    if (want < 0) want = 0;
+                    if (want != g_settings_scroll) {
+                        g_settings_scroll = want;
+                        w.needs_paint = true;
+                    }
+                }
             }
         }
         u8 changed = e.buttons ^ g.buttons;
@@ -3990,6 +4162,15 @@ void gui_terminal_putc(char c) {
     g.term_dirty = true;
 }
 
+void gui_terminal_clear() {
+    if (!g.active) return;
+    console_lock();
+    g.term.clear();
+    console_unlock();
+    g.term_dirty = true;
+    g_compositor_wake_hint();
+}
+
 int gui_terminal_getc() {
     if (__atomic_load_n(&g.term_in_head, __ATOMIC_ACQUIRE) == g.term_in_tail) return -1;
     char c = g.term_in[g.term_in_tail];
@@ -4041,6 +4222,9 @@ void gui_pump() {
         damage(clock_rect());
         if (now.second == 0 || g.last_frame_us == 0) fire_reminders(now);
         if (g_locked && now.second == 0) damage({0, g.H / 2 - 200, g.W, 300});
+        if (!g_locked && g_prefs.autolock_min && password_set() &&
+            refclock_now_us() - g.last_input_us > (u64)g_prefs.autolock_min * 60000000ull)
+            lock_screen();
         if (g.cal_open) damage(cal_rect());         // "today" can change
         if (g.tray_open) {
             cpu_sample();

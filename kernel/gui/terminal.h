@@ -16,6 +16,8 @@ public:
     // Changes the visible grid (clamped to the storage). Text is kept.
     void resize(int cols, int rows);
     void putc(char c);
+    // Empties the live screen (the history keeps what was there).
+    void clear();
     // Scrolls the view back (lines > 0) or forward (lines < 0) through the
     // history; 0 lines back is the live screen.
     void scroll(int lines);

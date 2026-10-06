@@ -1,0 +1,63 @@
+# Polish round 4, part 1 (0.0.5j): a repeating reminder, the task-button
+# menu, Ctrl+L, Settings scrolling at a small window height, and the
+# launcher's two-press power off. 1280x800.
+gui: desktop up at 1280x800
+cerberus kernel shell
+# A daily reminder appears in the calendar's list with "(daily)".
+!mouseto 1200 770
+!button left down
+!button left up
+!wait 0.5
+!key daily 07:30 Stand up
+!wait 0.5
+!screenshot build/qol2-1.png
+!mouseto 120 400
+!button left down
+!button left up
+!key cat /data/reminders.txt
+!wait 0.5
+# (no data disk here: the file does not exist; the reminder lives in memory)
+!key clear
+!wait 0.5
+!screenshot build/qol2-2.png
+!key ticks
+!wait 0.5
+ticks=
+# Right-click the Terminal's taskbar button (x=445..620, y=770): Minimise is
+# the second item; the terminal goes; then "ticks" typed goes nowhere, so
+# restore it through the same menu's first item.
+!mouseto 530 770
+!button right down
+!button right up
+!wait 0.4
+!screenshot build/qol2-3.png
+!mouseto 560 596
+!button left down
+!button left up
+!wait 0.5
+!screenshot build/qol2-4.png
+!mouseto 530 770
+!button right down
+!button right up
+!wait 0.4
+!mouseto 560 564
+!button left down
+!button left up
+!wait 0.5
+!key ticks
+!wait 0.5
+ticks=
+# Power off needs two presses: one press only arms it.
+!mouseto 28 780
+!button left down
+!button left up
+!wait 0.5
+!mouseto 274 710
+!button left down
+!button left up
+!screenshot build/qol2-5.png
+!button left down
+!button left up
+!wait 3
+gui: power off requested from the launcher
+!poweredoff

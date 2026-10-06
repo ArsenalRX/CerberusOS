@@ -188,6 +188,17 @@ void Terminal::putc(char c) {
     }
 }
 
+void Terminal::clear() {
+    // The old screen moves whole into the history, then a screen of fresh
+    // lines follows it; the cursor goes to the top of that.
+    while (cy_ < rows_ - 1) newline();
+    for (int i = 0; i < rows_; i++) newline();
+    cx_ = 0;
+    cy_ = 0;
+    scroll_ = 0;
+    all_dirty_ = true;
+}
+
 void Terminal::scroll(int lines) {
     int s = scroll_ + lines;
     int max = max_scroll();

@@ -40,6 +40,7 @@ int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
 int cmd_resolution(int argc, char** argv);
 int cmd_notify(int argc, char** argv);
+int cmd_clear(int argc, char** argv);
 int cmd_irqs(int argc, char** argv);
 int cmd_heapstat(int, char**);
 int cmd_ps(int, char**);
@@ -80,6 +81,7 @@ const ShellCommandEntry COMMANDS[] = {
     {"resolution", "[<width> <height>]", "show or change the screen resolution", cmd_resolution},
     {"gui", "", "compositor statistics", cmd_gui},
     {"notify", "<text...>", "show a notification on the desktop", cmd_notify},
+    {"clear", "", "clear the terminal (also Ctrl+L)", cmd_clear},
 
     {"Power", nullptr, nullptr, nullptr},
     {"poweroff", "", "save everything and switch off", cmd_poweroff},
@@ -94,6 +96,15 @@ const ShellCommandEntry COMMANDS[] = {
     {"timermode", "periodic|oneshot", "APIC timer mode", cmd_timermode},
     {"panic", "", "trigger a kernel panic (halts)", cmd_panic},
 };
+
+int cmd_clear(int, char**) {
+    if (!gui_active()) {
+        kprintf("\x1b[2J\x1b[H");
+        return 0;
+    }
+    gui_terminal_clear();
+    return 0;
+}
 
 int cmd_notify(int argc, char** argv) {
     if (argc < 2) {
@@ -546,6 +557,13 @@ int read_line(char* buf, usize cap) {
                 n--;
                 kprintf("\b \b");
             }
+            continue;
+        }
+        if (c == 0x0C) {        // Ctrl-L: a clean screen with the line typed so far
+            gui_terminal_clear();
+            kprintf("cerberus> ");
+            buf[n] = 0;
+            kprintf("%s", buf);
             continue;
         }
         if (c == 0x15) {        // Ctrl-U clears the line

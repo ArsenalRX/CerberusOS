@@ -24,6 +24,8 @@ void gui_pump();
 void gui_terminal_putc(char c);
 // Keyboard input that reached the terminal window; -1 if none.
 int gui_terminal_getc();
+// Clears the terminal window (the shell's `clear`, Ctrl+L).
+void gui_terminal_clear();
 
 // Abandons the desktop and hands the framebuffer back to the text console,
 // so a panic or exception dump is visible. Not reversible.
