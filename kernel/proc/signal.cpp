@@ -50,7 +50,32 @@ void signal_post_locked(Process* p, int signo) {
     u64 handler = signo == sig::KILL ? sig::DFL : p->sig_handlers[signo];
     if (handler == sig::IGN || (handler == sig::DFL && signo == sig::CHLD)) return;
     p->sig_pending |= 1ull << signo;
-    for (Thread* t = p->threads; t; t = t->proc_next) thread_interrupt_locked(t);
+    // A thread that masks the signal is left alone; the signal waits in
+    // sig_pending until some thread can take it.
+    for (Thread* t = p->threads; t; t = t->proc_next)
+        if (signo == sig::KILL || !(t->sig_mask & (1ull << signo))) thread_interrupt_locked(t);
+}
+
+// sigprocmask: how 0 blocks `set`, 1 unblocks it, 2 replaces the mask.
+Result<u64> signal_set_mask(int how, u64 set, bool apply) {
+    Thread* t = thread_current();
+    u64 irq = sched_lock();
+    u64 old = t->sig_mask;
+    if (apply) {
+        u64 m = old;
+        if (how == 0) m |= set;
+        else if (how == 1) m &= ~set;
+        else if (how == 2) m = set;
+        else {
+            sched_unlock(irq);
+            return Error::Invalid;
+        }
+        t->sig_mask = m & ~(1ull << sig::KILL) & ~1ull;
+        // Something that was held back may be deliverable now.
+        if (t->process->sig_pending & ~t->sig_mask) t->interrupt_pending = true;
+    }
+    sched_unlock(irq);
+    return old;
 }
 
 Result<void> signal_send(u32 pid, int signo, const Credentials& sender) {
@@ -132,8 +157,9 @@ void user_return(InterruptFrame* f) {
             thread_exit(0);                     // another thread is ending the process
         }
         int signo = 0;
-        if (p->sig_pending) {
-            signo = __builtin_ctzll(p->sig_pending);
+        u64 takeable = p->sig_pending & ~t->sig_mask;
+        if (takeable) {
+            signo = __builtin_ctzll(takeable);
             p->sig_pending &= ~(1ull << signo);
         }
         if (!signo) {

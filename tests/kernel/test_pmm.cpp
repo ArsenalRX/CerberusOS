@@ -26,6 +26,9 @@ Chunk g_chunks[N];
 } // namespace
 
 int ktest_pmm(int, char**) {
+    // The pre-zeroed pool fills itself in the background; this test checks
+    // the bitmap to the frame, so the pool is stopped and emptied first.
+    pmm_zeroing_pause(true);
     PmmStats before = pmm_stats();
     u64 sum_before = pmm_bitmap_checksum();
     kprintf("  before: %lu free, %lu used, largest run %lu\n", (unsigned long)before.free_frames,
@@ -86,5 +89,6 @@ int ktest_pmm(int, char**) {
     KTEST_CHECK(end.largest_free_run == before.largest_free_run);
     KTEST_CHECK(pmm_bitmap_checksum() == sum_before);
     kprintf("  freed everything: bitmap checksum and stats match\n");
+    pmm_zeroing_pause(false);
     return 0;
 }

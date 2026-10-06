@@ -62,6 +62,23 @@ class of bug; if there is none, say so.
 
 ## Fixed
 
+### B-015 — The minor page fault was over its 2 µs budget
+- Found: 2026-10-04, `make bench` since 0.0.5c (2.0–2.9 µs against 2 µs).
+- Where: `kernel/mm/pmm.cpp` (`pmm_alloc_zeroed`), the fault path in
+  `kernel/mm/vmm.cpp`.
+- Symptom: every first touch of a page cost about 2.1 µs under QEMU/KVM.
+- Cause: the fault allocated a frame and cleared it there and then; under
+  a hypervisor the clearing is also the frame's first touch, which the
+  host has to back (an EPT fault) inside our fault.
+- Fix (0.0.5i): a background thread keeps up to 512 frames zeroed ahead of
+  time (`zeroer`, LOW priority, woken when the pool drops below a
+  quarter); a single-frame `pmm_alloc_zeroed` takes one of those. Pooled
+  frames are reported as free, `pmm_alloc` takes them when the bitmap is
+  empty, and tests that audit the bitmap pause the pool
+  (`pmm_zeroing_pause`). `make bench`: 1,394 ns.
+- Guard: `make bench` (docs/BENCH.md), `test pmm`, `test vmm`.
+- Status: FIXED 2026-10-05.
+
 ### B-011 — Settings and reminders were lost at restart
 - Found: 2026-10-04 (owner: "keep the desktop customisable").
 - Where: `kernel/fs/fs.cpp`, `kernel/gui/desktop.cpp`.

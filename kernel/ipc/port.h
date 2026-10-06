@@ -48,7 +48,8 @@ Result<File*> port_connect(const char* name, const Credentials& cred, u32 pid);
 // call) with `nfds` descriptors (references taken over too). Waits while
 // the peer's queue is full. Errors: Invalid (not a channel end), Pipe (the
 // peer is gone), Interrupted.
-Result<void> port_send(File* end, u8* data, usize len, File** fds, u32 nfds);
+// `nonblock`: Error::Again instead of waiting for room in the queue.
+Result<void> port_send(File* end, u8* data, usize len, File** fds, u32 nfds, bool nonblock = false);
 
 struct PortMessage {
     u8* data;                   // kmalloc'd; the receiver frees it

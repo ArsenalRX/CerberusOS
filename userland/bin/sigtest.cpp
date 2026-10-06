@@ -98,6 +98,21 @@ int main(int, char**, char**) {
     if (status_of(pid) != 0) return fail("the child");
     printf("sigtest: a sleep of 5 s was interrupted by a signal and returned EINTR\n");
 
+    // 4. A blocked signal waits: with SIGUSR1 masked, raising it runs no
+    // handler and a sleep is not interrupted; unblocking delivers it.
+    g_usr1 = 0;
+    uint64_t mask = 1ull << SIGUSR1, old = 0;
+    if (sigprocmask(SIG_BLOCK, &mask, &old) != 0 || old != 0) return fail("sigprocmask block");
+    if (raise(SIGUSR1) != 0) return fail("raise while blocked");
+    if (sleep_ms(30) != 0 || g_usr1 != 0) return fail("a blocked signal was delivered");
+    if (sigprocmask(SIG_UNBLOCK, &mask, &old) != 0 || old != mask) return fail("sigprocmask unblock");
+    if (g_usr1 != 1) return fail("the unblocked signal was not delivered");
+    mask = 1ull << SIGKILL;
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+    sigprocmask(SIG_BLOCK, NULL, &old);
+    if (old & (1ull << SIGKILL)) return fail("SIGKILL could be blocked");
+    printf("sigtest: a blocked signal waited until it was unblocked; SIGKILL cannot be blocked\n");
+
     // 4. Default actions and SIGKILL.
     pid = fork();
     if (pid == 0) {

@@ -9,6 +9,7 @@
 #include <fs/cerfs_mkfs.h>
 #include <lib/csprng.h>
 #include <mm/kheap.h>
+#include <mm/pmm.h>
 #include <fs/tmpfs.h>
 #include <fs/vfs.h>
 #include <lib/kprintf.h>
@@ -107,6 +108,7 @@ void fs_init() {
     vfs_unlock();
 
     page_cache_start_writeback();
+    pmm_start_zeroing();
     kprintf("fs: / from the boot archive (%lu entries, read-only), /dev, /tmp; %u disk(s)\n",
             (unsigned long)entries, block_count());
     // The first disk labelled "data" becomes /data (settings, reminders, the

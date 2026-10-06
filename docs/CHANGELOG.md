@@ -22,6 +22,22 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.5i — 2026-10-05
+
+### Performance
+- The first touch of a page (a minor page fault) takes 1.4 µs instead of
+  2.1 µs: frames are zeroed ahead of time by a background thread (B-015).
+
+### Added
+- `sigprocmask`: a thread can block signals; a blocked signal waits until
+  it is unblocked. SIGKILL cannot be blocked. New threads and children
+  inherit the mask.
+- `port_try_send`: as `port_send`, but EAGAIN instead of waiting when the
+  queue is full.
+- The keyboard's Caps Lock and Num Lock lights follow the keys.
+
+## 0.0.5h — 2026-10-05
+
 ### Security
 - A **lock screen**: Super+L (or the tray's Lock) locks the desktop behind
   a password set in Settings → Security; the password is stored as a

@@ -241,6 +241,7 @@ void spawn_entry(void* arg) {
 struct ForkCtx {
     InterruptFrame frame;
     u64 fs_base;
+    u64 sig_mask;
     u8 fpu[FPU_STATE_SIZE];
 };
 
@@ -252,6 +253,7 @@ void fork_entry(void* arg) {
         process_exit(wait_status_exited(127));
     }
     thread_set_fs_base(ctx->fs_base);
+    thread_current()->sig_mask = ctx->sig_mask;
     InterruptFrame f = ctx->frame;
     kfree(ctx);
     enter_user(&f);
@@ -464,6 +466,7 @@ Result<i64> process_fork(const InterruptFrame* frame) {
     ctx->frame = *frame;
     ctx->frame.rax = 0;                 // what fork returns in the child
     ctx->fs_base = thread_current()->fs_base;
+    ctx->sig_mask = thread_current()->sig_mask;
     thread_snapshot_fpu(ctx->fpu);
 
     Result<AddressSpace*> space = parent->space->clone();
@@ -626,6 +629,7 @@ Result<u32> process_thread_spawn(vaddr_t entry, u64 arg, vaddr_t stack, u64 tls)
         return Error::Again;
     }
     Result<Thread*> t = kthread_create(user_thread_entry, ctx, p->name, prio::NORMAL, p, false);
+    if (t.ok()) t.value()->sig_mask = thread_current()->sig_mask;
     if (!t.ok()) {
         irq = sched_lock();
         p->live_threads--;

@@ -55,3 +55,6 @@ int ps2kbd_repeat_delay();
 int ps2kbd_repeat_rate();
 // The lock and modifier bits at this moment (mod::*).
 u8 ps2kbd_mods();
+// Sends the Caps/Num/Scroll Lock lights to the keyboard if a lock key
+// changed since the last call. Thread context (the compositor calls it).
+void ps2kbd_update_leds();

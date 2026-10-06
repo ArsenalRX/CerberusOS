@@ -9,6 +9,8 @@
 #include <lib/string.h>
 #include <mm/early_map.h>
 #include <mm/pmm.h>
+#include <lib/lock_order.h>
+#include <sched/sched.h>
 #include <sched/sync.h>
 
 namespace {
@@ -94,6 +96,10 @@ void pmm_init() {
             (unsigned long)bitmap_phys);
 }
 
+namespace {
+paddr_t pool_take(bool refill);
+} // namespace
+
 paddr_t pmm_alloc(usize count) {
     if (!count || !g_bitmap) return PMM_NO_MEMORY;
     g_lock.lock();
@@ -106,7 +112,9 @@ paddr_t pmm_alloc(usize count) {
     }
     if (f == (u64)-1) {
         g_lock.unlock();
-        return PMM_NO_MEMORY;
+        // The bitmap is out, but the pre-zeroed pool may still hold frames
+        // (they are reported as free): hand one of those out.
+        return count == 1 ? pool_take(false) : PMM_NO_MEMORY;
     }
     for (u64 i = 0; i < count; i++) set(f + i);
     g_used += count;
@@ -115,10 +123,98 @@ paddr_t pmm_alloc(usize count) {
     return f * PAGE_SIZE;
 }
 
+// Frames zeroed ahead of time by a background thread (B-015, the minor
+// page fault over budget): a fault then takes a ready frame instead of
+// clearing one, which also moves the hypervisor's first-touch cost out of
+// the fault. The pool is refilled when it runs low.
+namespace {
+constexpr u32 ZERO_POOL = 512;
+paddr_t g_zero_pool[ZERO_POOL];
+u32 g_zero_count = 0;
+Spinlock g_zero_lock = SPINLOCK_RANKED(lock_rank::UNRANKED);   // a leaf
+WaitQueue g_zero_wake;
+bool g_zero_thread = false;
+bool g_zero_paused = false;         // tests that audit the bitmap stop the refills
+
+void zero_thread(void*) {
+    for (;;) {
+        u32 have;
+        {
+            SpinGuard guard(g_zero_lock);
+            have = g_zero_count;
+        }
+        while (have < ZERO_POOL) {
+            paddr_t p = pmm_alloc(1);
+            if (p == PMM_NO_MEMORY) break;
+            memset(hhdm_virt(p), 0, PAGE_SIZE);
+            bool kept;
+            {
+                SpinGuard guard(g_zero_lock);
+                kept = !g_zero_paused && g_zero_count < ZERO_POOL;
+                if (kept) g_zero_pool[g_zero_count++] = p;
+                have = kept ? g_zero_count : ZERO_POOL;
+            }
+            if (!kept) {
+                pmm_free(p, 1);
+                break;
+            }
+        }
+        g_zero_wake.wait_ticks(100);
+    }
+}
+} // namespace
+
+namespace {
+// One frame from the pool, or PMM_NO_MEMORY; `refill` wakes the zeroing
+// thread when the pool runs low.
+paddr_t pool_take(bool refill) {
+    paddr_t p = PMM_NO_MEMORY;
+    u32 left = 0;
+    {
+        SpinGuard guard(g_zero_lock);
+        if (g_zero_count) {
+            p = g_zero_pool[--g_zero_count];
+            left = g_zero_count;
+        }
+    }
+    if (p != PMM_NO_MEMORY && refill && left < ZERO_POOL / 4 && g_zero_thread) g_zero_wake.wake_one();
+    return p;
+}
+} // namespace
+
 paddr_t pmm_alloc_zeroed(usize count) {
+    if (count == 1) {
+        paddr_t p = pool_take(true);
+        if (p != PMM_NO_MEMORY) return p;
+    }
     paddr_t p = pmm_alloc(count);
     if (p != PMM_NO_MEMORY) memset(hhdm_virt(p), 0, count * PAGE_SIZE);
     return p;
+}
+
+void pmm_start_zeroing() {
+    Result<Thread*> t = kthread_create(zero_thread, nullptr, "zeroer", prio::LOW, nullptr, true);
+    g_zero_thread = t.ok();
+    if (!g_zero_thread) kprintf("pmm: no zeroing thread (frames are cleared on demand)\n");
+}
+
+u32 pmm_zeroed_ready() {
+    SpinGuard guard(g_zero_lock);
+    return g_zero_count;
+}
+
+void pmm_zeroing_pause(bool pause) {
+    paddr_t drained[ZERO_POOL];
+    u32 n = 0;
+    {
+        SpinGuard guard(g_zero_lock);
+        g_zero_paused = pause;
+        if (pause) {
+            while (g_zero_count) drained[n++] = g_zero_pool[--g_zero_count];
+        }
+    }
+    for (u32 i = 0; i < n; i++) pmm_free(drained[i], 1);
+    if (!pause && g_zero_thread) g_zero_wake.wake_one();
 }
 
 void pmm_free(paddr_t addr, usize count) {
@@ -141,8 +237,11 @@ PmmStats pmm_stats() {
     g_lock.lock();
     s.total_frames = g_frames;
     s.usable_frames = g_usable;
-    s.used_frames = g_used;
-    s.free_frames = g_usable - g_used;
+    // Frames waiting in the pre-zeroed pool belong to nobody yet: they
+    // count as free, so the pool's refills do not show up as use.
+    u64 pooled = pmm_zeroed_ready();
+    s.used_frames = g_used - pooled;
+    s.free_frames = g_usable - g_used + pooled;
     s.reserved_frames = g_frames - g_usable;
     u64 run = 0, best = 0;
     for (u64 f = 0; f < g_frames; f++) {

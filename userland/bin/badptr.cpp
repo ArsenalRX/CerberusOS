@@ -59,6 +59,9 @@ int main(int, char**, char**) {
         expect("mount(bad source)", CALL(SYS_mount, p, "/mnt", "tmpfs", 0, 0, 0), -EFAULT);
         expect("mount(bad type)", CALL(SYS_mount, "none", "/mnt", p, 0, 0, 0), -EFAULT);
         expect("umount(bad path)", CALL(SYS_umount, p, 0, 0, 0, 0, 0), -EFAULT);
+        expect("sigprocmask(bad set)", CALL(SYS_sigprocmask, 0, p, 0, 0, 0, 0), -EFAULT);
+        expect("sigprocmask(bad old set)", CALL(SYS_sigprocmask, 0, 0, p, 0, 0, 0), -EFAULT);
+        expect("port_try_send(bad message)", CALL(SYS_port_try_send, 0, p, 16, 0, 0, 0), -EFAULT);
         int dfd = open("/bin", O_RDONLY | O_DIRECTORY);
         expect("readdir(bad buffer)", CALL(SYS_readdir, dfd, p, 1, 0, 0, 0), -EFAULT);
         close(dfd);
@@ -77,6 +80,7 @@ int main(int, char**, char**) {
     longpath[sizeof longpath - 1] = 0;
     expect("open(path too long)", CALL(SYS_open, longpath, 0, 0, 0, 0, 0), -ENAMETOOLONG);
     expect("reboot(unknown request)", CALL(SYS_reboot, 99, 0, 0, 0, 0, 0), -EINVAL);
+    expect("sigprocmask(unknown how)", CALL(SYS_sigprocmask, 7, buf, 0, 0, 0, 0), -EINVAL);
     expect("mount(unknown type)", CALL(SYS_mount, "none", "/mnt", "nosuchfs", 0, 0, 0), -ENODEV);
     // A string pointer array whose entries point at bad addresses.
     unsigned long argv_bad[] = {(unsigned long)"ok", KERNEL, 0};

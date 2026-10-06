@@ -35,6 +35,14 @@ int port_send(int port, const void* msg, size_t len, const int* fds, int nfds) {
     return (int)CALL(SYS_port_send, port, msg, len, fds, nfds, 0);
 }
 
+int sigprocmask(int how, const uint64_t* set, uint64_t* oldset) {
+    return (int)CALL(SYS_sigprocmask, how, set, oldset, 0, 0, 0);
+}
+
+int port_try_send(int port, const void* msg, size_t len, const int* fds, int nfds) {
+    return (int)CALL(SYS_port_try_send, port, msg, len, fds, nfds, 0);
+}
+
 long port_recv(int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms) {
     return CALL(SYS_port_recv, port, buf, len, fds, nfds, timeout_ms);
 }

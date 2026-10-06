@@ -102,6 +102,11 @@ typedef void (*sighandler_t)(int);
 sighandler_t signal(int sig, sighandler_t handler);
 int kill(pid_t pid, int sig);
 int raise(int sig);
+// Signal masks: a set is a bit per signal number (1ull << SIGUSR1).
+#define SIG_BLOCK 0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+int sigprocmask(int how, const uint64_t* set, uint64_t* oldset);
 
 // ---- threads ----
 // Thread-local variables (__thread) work, and errno is one.
@@ -153,6 +158,8 @@ int port_connect(const char* name);
 int port_accept(int port, uint64_t timeout_ms);
 // One whole message, optionally with open descriptors (files, shared memory).
 int port_send(int port, const void* msg, size_t len, const int* fds, int nfds);
+// EAGAIN instead of waiting when the queue is full.
+int port_try_send(int port, const void* msg, size_t len, const int* fds, int nfds);
 // Returns the message's length. *nfds: room in fds on entry, count on return.
 long port_recv(int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms);
 // Who is at the other end, as the kernel recorded it.

@@ -681,7 +681,7 @@ i64 sys_port_connect(u64 name, u64, u64, u64, u64, u64, InterruptFrame*) {
     return install_new(port_connect(kname, p->cred, p->pid));
 }
 
-i64 sys_port_send(u64 fd, u64 msg, u64 len, u64 fds, u64 nfds, u64, InterruptFrame*) {
+i64 port_send_common(u64 fd, u64 msg, u64 len, u64 fds, u64 nfds, bool nonblock) {
     if (len > port::MESSAGE_MAX) return -err::MSGSIZE;
     if (nfds > port::FDS_MAX) return -err::INVAL;
     FdRef f(fd);
@@ -702,8 +702,28 @@ i64 sys_port_send(u64 fd, u64 msg, u64 len, u64 fds, u64 nfds, u64, InterruptFra
         kfree(data);
         return -err::BADF;
     }
-    Result<void> r = port_send(f, data, len, files, (u32)nfds);     // takes the buffer and the references
+    Result<void> r = port_send(f, data, len, files, (u32)nfds, nonblock);     // takes the buffer and the references
     return r.ok() ? 0 : errno_of(r.error());
+}
+
+i64 sys_port_send(u64 fd, u64 msg, u64 len, u64 fds, u64 nfds, u64, InterruptFrame*) {
+    return port_send_common(fd, msg, len, fds, nfds, false);
+}
+
+i64 sys_sigprocmask(u64 how, u64 set_ptr, u64 old_ptr, u64, u64, u64, InterruptFrame*) {
+    u64 set = 0;
+    if (set_ptr && !copy_from_user(&set, set_ptr, sizeof set).ok()) return -err::FAULT;
+    Result<u64> old = signal_set_mask((int)how, set, set_ptr != 0);
+    if (!old.ok()) return errno_of(old.error());
+    if (old_ptr) {
+        u64 o = old.value();
+        if (!copy_to_user(old_ptr, &o, sizeof o).ok()) return -err::FAULT;
+    }
+    return 0;
+}
+
+i64 sys_port_try_send(u64 fd, u64 msg, u64 len, u64 fds, u64 nfds, u64, InterruptFrame*) {
+    return port_send_common(fd, msg, len, fds, nfds, true);
 }
 
 i64 sys_port_recv(u64 fd, u64 buf, u64 len, u64 fds, u64 nfds_ptr, u64 timeout_ms, InterruptFrame*) {

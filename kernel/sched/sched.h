@@ -124,6 +124,7 @@ struct Thread {
     bool user;                  // a user thread counted in process->live_threads
     bool joining;               // a thread_join is waiting for this thread
     bool interrupt_pending;     // a signal or the end of the process is waiting: see thread_interrupt_locked
+    u64 sig_mask;               // signals this thread does not take (bit per number); SIGKILL never counts
     bool interruptible;         // blocked in a wait that an interruption may end
     bool interrupted;           // the last interruptible wait was ended that way
     bool iret_return;           // leave the current system call through iretq (all registers restored)

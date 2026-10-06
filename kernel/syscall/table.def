@@ -88,6 +88,8 @@ SYSCALL(43, futex_wait, "int futex_wait(uint32_t* addr, uint32_t val, uint64_t t
 SYSCALL(44, futex_wake, "int futex_wake(uint32_t* addr, int count)",
         "Wakes up to count threads waiting on addr; returns how many. EINVAL, EFAULT.")
 
+SYSCALL(45, sigprocmask, "int sigprocmask(int how, const uint64_t* set, uint64_t* oldset)",
+        "Changes which signals the calling thread takes: how 0 (SIG_BLOCK) adds *set to the mask, 1 (SIG_UNBLOCK) removes it, 2 (SIG_SETMASK) replaces it; set may be null to only read. A blocked signal stays pending until some thread of the process unblocks it. SIGKILL cannot be blocked. New threads start with their creator's mask; fork keeps it. EINVAL, EFAULT.")
 SYSCALL(50, port_create, "int port_create(const char* name, int mode)",
         "Creates a named port (letters, digits, '.', '-', '_'; up to 63) and returns a descriptor to accept connections on. mode is permission bits as for a file: connecting needs write permission. EEXIST, EINVAL, EMFILE, ENOMEM.")
 SYSCALL(51, port_connect, "int port_connect(const char* name)",
@@ -96,6 +98,8 @@ SYSCALL(52, port_send, "int port_send(int port, const void* msg, size_t len, con
         "Sends one message of up to 64 KiB with up to 8 descriptors (files, devices, shared memory) over a channel. Waits while 64 messages or 1 MiB are queued. EMSGSIZE, EPIPE (the other end is closed), EBADF, EINVAL, EINTR, EFAULT.")
 SYSCALL(53, port_recv, "long port_recv(int port, void* buf, size_t len, int* fds, int* nfds, uint64_t timeout_ms)",
         "Receives the next message; returns its length. *nfds is the room in fds on entry and the number of descriptors received on return. On a named port it accepts a connection: length 0 and one descriptor, the server's end of the channel. timeout 0 = do not wait, ~0 = no limit. EAGAIN, ETIMEDOUT, EPIPE, ENOSPC (the message or its descriptors do not fit; it stays queued), EMFILE, EINTR, EFAULT.")
+SYSCALL(54, port_try_send, "int port_try_send(int port, const void* msg, size_t len, const int* fds, int nfds)",
+        "As port_send, but returns EAGAIN at once instead of waiting when the queue is full (64 messages or 1 MiB).")
 SYSCALL(55, shm_create, "int shm_create(size_t size)",
         "Creates a block of zero-filled shared memory (at most 256 MiB) and returns a descriptor, which can be sent over a port. EINVAL, ENOMEM, EMFILE.")
 SYSCALL(56, shm_map,   "void* shm_map(int handle, int prot)",

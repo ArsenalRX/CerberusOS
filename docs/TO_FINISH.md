@@ -54,7 +54,18 @@ it then ask you to iterate." So, in order, each step a verified build in
    notification history. New windows go in their own files under
    `kernel/gui/` (an app = paint + key + click + wheel over a Surface),
    dispatched from `desktop.cpp`.
-2. **Round 3 (→ 0.0.5i…), phases 1–11 revisited — START HERE:** for each phase, read
+2. **Round 3 (→ 0.0.5i…), phases 1–11 revisited — IN PROGRESS.** Part 1
+   shipped as 0.0.5i (2026-10-05): phase 4 page-fault budget met with a
+   pre-zeroed frame pool (B-015); phase 10 keyboard lights; phase 11
+   `sigprocmask` and `port_try_send`; a new docs/BENCH.md block. **START
+   HERE with part 2**, in this order, each with a test: (a) hard links
+   (`link` syscall 16; tmpfs and cerfs `link` ops, nlink in unlink,
+   `fsck`'s link counts); (b) a lightweight `fsck.cerfs` for the leaked
+   inode after a power cut; (c) MSI-X so NVMe and virtio-blk stop
+   polling; (d) demand-paged and shared file mappings; (e) one-shot APIC
+   timer and tickless idle (measure idle wake-ups before and after);
+   (f) ports passed through ports (the reference-cycle problem in
+   docs/DECISIONS.md must be solved first). The general method: for each phase, read
    its SPEC §5/§5A rows and docs/DECISIONS.md deviations, run its tests
    and benchmarks, and close what is closable: phase 4 the minor-page-fault
    cost; phase 6 one-shot timer / tickless idle; phase 9 `fsck`-lite and
@@ -175,6 +186,9 @@ First steps of phase 12, in order (SPEC §5, §5A and §9 first):
   access rule, ACPI power off and restart, `runas`, sticky `/tmp`.
 - **Phase 11 — IPC. Release 0.0.5f (2026-10-04).** Plus the Settings
   window, launcher with search, floating taskbar, resolution switching.
+- **Release 0.0.5i (2026-10-05): polish round 3, part 1.** Pre-zeroed
+  frame pool (page fault 1.4 µs), `sigprocmask`, `port_try_send`,
+  keyboard lock lights, BENCH block.
 - **Release 0.0.5h (2026-10-05): polish round 2.** `/data` auto-mount and
   Settings → Storage; saved settings and reminders; clipboard and terminal
   selection; Files, Notes, Calculator; keyboard layouts and repeat; lock

@@ -4028,6 +4028,7 @@ void gui_pump() {
     }
     process_keyboard();
     process_mouse();
+    ps2kbd_update_leds();
 
     while (__atomic_load_n(&g_pending_head, __ATOMIC_ACQUIRE) != g_pending_tail) {
         const Toast& t = g_pending[g_pending_tail % MAX_TOASTS];

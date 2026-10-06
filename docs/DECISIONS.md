@@ -1368,3 +1368,34 @@ the same result); persisting preferences in `/tmp` (not persistence).
 Rejected: storing preferences in the cerfs superblock (one disk, one
 owner, no room); a plain-text lock password (never); an interpreter for a
 config format richer than `key=value`.
+
+---
+
+## 2026-10-05 — Round 3, part 1: phases 4, 10 and 11 revisited
+
+The owner asked to "re-go through all phases 1-11 and iterate to make it
+better each phase". The first pass closed what was both small and
+measurable; the rest is listed in docs/TO_FINISH.md.
+
+- **Phase 4 (memory), the page-fault budget (B-015):** a pool of
+  pre-zeroed frames, filled by a LOW-priority thread that sleeps until the
+  pool drops below a quarter. Pooled frames are reported as free and are
+  handed out by `pmm_alloc` when the bitmap is empty, so no accounting or
+  exhaustion behaviour changes; tests that audit the bitmap pause the pool.
+  1,394 ns against 2,000. Rejected: zeroing in the idle thread itself (the
+  idle thread must stay trivially short so `hlt` is reached quickly), and
+  huge-page backing (not yet).
+- **Phase 10 (drivers):** the keyboard's lock lights are set from the
+  compositor's thread after a lock key changes (never from the interrupt
+  handler, which cannot wait for the keyboard's acknowledgement).
+- **Phase 11 (IPC):** `sigprocmask` with a per-thread mask (POSIX shape:
+  a blocked signal stays in the process's pending set until a thread that
+  does not block it exists; SIGKILL is never blockable; fork and
+  `thread_spawn` copy the creator's mask). Deviation kept: a handler does
+  not mask its own signal while it runs. `port_try_send` (number 54) is
+  the non-blocking send the spec's flag was meant for; a new call rather
+  than a flag keeps the five-argument `port_send` as programs use it.
+- **Deferred to the next pass** (each a day's work with tests): hard
+  links in tmpfs and cerfs, a lightweight `fsck.cerfs`, MSI-X for NVMe and
+  virtio-blk, a one-shot timer / tickless idle, demand-paged and shared
+  file mappings, passing ports through ports.

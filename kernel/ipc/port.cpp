@@ -219,7 +219,7 @@ Result<File*> port_connect(const char* name, const Credentials& cred, u32 pid) {
     return client;
 }
 
-Result<void> port_send(File* f, u8* data, usize len, File** fds, u32 nfds) {
+Result<void> port_send(File* f, u8* data, usize len, File** fds, u32 nfds, bool nonblock) {
     Endpoint* e = (Endpoint*)file_object(f, ObjectKind::PortEndpoint);
     Message* m = e ? (Message*)kzalloc(sizeof(Message)) : nullptr;
     if (!m) {
@@ -260,6 +260,10 @@ Result<void> port_send(File* f, u8* data, usize len, File** fds, u32 nfds) {
             q.bytes += len;
             sched_wake_one_locked(q.readers);
             poll_wake_locked();
+            break;
+        }
+        if (nonblock) {
+            err = Error::Again;
             break;
         }
         if (sched_block_interruptible_locked(&q.writers, 0) == WaitResult::Interrupted) {

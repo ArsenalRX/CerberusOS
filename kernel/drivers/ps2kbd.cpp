@@ -80,6 +80,7 @@ const Override FR[] = {
 const char* const LAYOUT_NAMES[KBD_LAYOUTS] = {"US", "UK", "German", "French"};
 int g_layout = 0;
 int g_repeat_delay = 1, g_repeat_rate = 2;
+volatile bool g_leds_dirty = true;      // the lights are set once at start too
 
 // Set 2 make code -> set 1 make code, for ordinary and for extended (E0)
 // keys. Built once from pairs; 0 = no such key.
@@ -188,8 +189,8 @@ void handle_key(u8 code, bool extended, bool pressed) {
     case key::CTRL: g_mods = pressed ? (g_mods | mod::CTRL) : (g_mods & ~mod::CTRL); break;
     case key::ALT: g_mods = pressed ? (g_mods | mod::ALT) : (g_mods & ~mod::ALT); break;
     case key::SUPER: g_mods = pressed ? (g_mods | mod::SUPER) : (g_mods & ~mod::SUPER); break;
-    case key::CAPS_LOCK: if (pressed && !repeat) g_mods ^= mod::CAPS; break;
-    case key::NUM_LOCK: if (pressed && !repeat) g_mods ^= mod::NUM; break;
+    case key::CAPS_LOCK: if (pressed && !repeat) { g_mods ^= mod::CAPS; g_leds_dirty = true; } break;
+    case key::NUM_LOCK: if (pressed && !repeat) { g_mods ^= mod::NUM; g_leds_dirty = true; } break;
     default: break;
     }
 
@@ -391,6 +392,16 @@ void ps2kbd_set_repeat(int delay, int rate) {
 }
 
 u8 ps2kbd_mods() { return g_mods; }
+
+void ps2kbd_update_leds() {
+    if (!g_leds_dirty) return;
+    g_leds_dirty = false;
+    u8 leds = (u8)(((g_mods & mod::NUM) ? 2 : 0) | ((g_mods & mod::CAPS) ? 4 : 0));
+    u64 flags = interrupts_save();
+    flush_output();
+    if (kbd_send(0xED)) kbd_send(leds);
+    interrupts_restore(flags);
+}
 
 bool ps2kbd_poll_event(KeyEvent* out) {
     if (__atomic_load_n(&g_head, __ATOMIC_ACQUIRE) == g_tail) return false;

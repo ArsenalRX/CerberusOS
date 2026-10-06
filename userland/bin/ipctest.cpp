@@ -271,9 +271,16 @@ static int test_limits() {
         static char big[PORT_MESSAGE_MAX];
         for (unsigned i = 0; i < sizeof big; i++) big[i] = (char)i;
         if (port_send(ch, big, sizeof big + 1, nullptr, 0) != -1 || errno != EMSGSIZE) exit(41);
-        // More than the queue holds (64 messages): the sends past that wait
-        // until the parent starts reading.
-        for (int i = 0; i < 200; i++) {
+        // Exactly the queue (64 messages) goes through without waiting; the
+        // 65th try without waiting is refused with EAGAIN; then the sends
+        // past the queue wait until the parent starts reading.
+        for (int i = 0; i < 64; i++) {
+            big[0] = (char)i;
+            if (port_try_send(ch, big, 1000, nullptr, 0) != 0) exit(44);
+        }
+        big[0] = 64;
+        if (port_try_send(ch, big, 1000, nullptr, 0) != -1 || errno != EAGAIN) exit(45);
+        for (int i = 64; i < 200; i++) {
             big[0] = (char)i;
             if (port_send(ch, big, 1000, nullptr, 0) != 0) exit(42);
         }
@@ -296,7 +303,7 @@ static int test_limits() {
     if (port_recv(ch, buf, sizeof buf, nullptr, nullptr, 0) != -1 || errno != EPIPE) return fail("recv after the end");
     close(ch);
     close(listener);
-    printf("ipctest: a full queue made the sender wait; nothing was lost or reordered; 64 KiB is the limit\n");
+    printf("ipctest: a full queue made the sender wait (and port_try_send gave EAGAIN); nothing was lost or reordered; 64 KiB is the limit\n");
     return 0;
 }
 

@@ -253,3 +253,25 @@ idle desktop 0 %, last composite 141 µs. No change from 0.0.5c outside
 run-to-run variation. All four disk drivers (AHCI by interrupt, NVMe,
 virtio-blk, IDE) pass the cerfs acceptance test; they were not timed
 against each other.
+
+## 0.0.5i — 2026-10-05 (polish round 3: the pre-zeroed frame pool)
+
+Commit: the `v0.0.5i` tag. Debug build.
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs, 512 MiB — `make bench`, one run
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 24 ns | 2,000 ns | within |
+| Wake-up latency, average | 10 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 114 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 76 ns | 100 ns | within |
+| Minor page fault | **1,394 ns** (was 2,052–2,129) | 2,000 ns | **within** for the first time (B-015) |
+| System-call round trip | 36 ns | 300 ns | within |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+| Last composite | 356 µs | 8 ms | within (the bench ran with the desktop's windows open) |
+
+The page fault no longer clears its frame: a background thread keeps up to
+512 frames zeroed, so the fault takes one that is ready, and the
+hypervisor's first-touch cost moves out of the fault into idle time.
+Everything else is unchanged within run-to-run variation.

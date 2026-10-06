@@ -10,7 +10,7 @@ W+X requests rejected
 kernel image: writes to .rodata and .text fault; a jump into .data faults
 demand paging: 64 pages reserved, 4 touched, 4 frames allocated
 zeroing: frame
-came back all zero
+came all zero
 mprotect: read-only pages refuse writes
 munmap: hole punched
 guard page: the page below the mapping is reserved and faults

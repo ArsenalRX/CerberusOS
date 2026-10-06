@@ -137,14 +137,25 @@ int ktest_vmm(int, char**) {
     kprintf("  demand paging: 64 pages reserved, 4 touched, 4 frames allocated\n");
 
     // --- a reused frame arrives zeroed ---
+    // A fault takes a frame from the pre-zeroed pool when one is ready, so
+    // the frame just freed need not be the one mapped; whatever is mapped
+    // must be all zero, and so must a frame zeroed on demand (count > 1
+    // never comes from the pool).
     paddr_t dirty = pmm_alloc(1);
     KTEST_CHECK(dirty != PMM_NO_MEMORY);
     memset(hhdm_virt(dirty), 0xA5, PAGE_SIZE);
     pmm_free(dirty, 1);
     KTEST_CHECK(user_page_is_zero(region + 10 * PAGE_SIZE));
     Result<paddr_t> got = as->translate(region + 10 * PAGE_SIZE);
-    KTEST_CHECK(got.ok() && got.value() == dirty);
-    kprintf("  zeroing: frame %#lx held 0xA5 bytes, was freed, and came back all zero\n", (unsigned long)dirty);
+    KTEST_CHECK(got.ok());
+    paddr_t two = pmm_alloc_zeroed(2);
+    KTEST_CHECK(two != PMM_NO_MEMORY);
+    bool clean = true;
+    for (usize i = 0; i < 2 * PAGE_SIZE; i++) clean &= ((const u8*)hhdm_virt(two))[i] == 0;
+    KTEST_CHECK(clean);
+    pmm_free(two, 2);
+    kprintf("  zeroing: frame %#lx held 0xA5 bytes, was freed, and the next user page came all zero (%u frames pre-zeroed)\n",
+            (unsigned long)dirty, pmm_zeroed_ready());
 
     // --- data pages are not executable; mprotect ---
     KTEST_CHECK(!probe_exec((void*)(region + 1 * PAGE_SIZE)));

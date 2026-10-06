@@ -11,6 +11,6 @@ a closed peer gives EPIPE, a closed port ENOENT
 uid 1000 was refused by a 0600 port (EACCES) and accepted by a 0666 one
 a file and 64 KiB of shared memory crossed a port; both sides saw each other's writes
 4 processes added 50000 each under a futex mutex: the counter is exactly 200000
-a full queue made the sender wait; nothing was lost or reordered
+a full queue made the sender wait (and port_try_send gave EAGAIN); nothing was lost or reordered
 ipctest: PASS
 run: /bin/ipctest exited with status 0

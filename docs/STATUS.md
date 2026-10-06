@@ -22,7 +22,10 @@ Last updated: **2026-10-05**.
 
 ## Version
 
-Latest release: **0.0.5h** (2026-10-05, tag `v0.0.5h`): polish round 2,
+Latest release: **0.0.5i** (2026-10-05, tag `v0.0.5i`): polish round 3,
+part 1 — phases 4, 10 and 11 revisited: the minor page fault inside its
+budget (a pre-zeroed frame pool, 1.4 µs), `sigprocmask`, `port_try_send`,
+keyboard lock lights. Before it: 0.0.5h (2026-10-05), polish round 2,
 the owner's eight picks: saved settings and reminders on a `/data` disk,
 text selection and a clipboard, Files, Notes, Calculator, keyboard
 layouts and repeat, a lock screen (salted SHA-256), a tray with quick
@@ -34,22 +37,23 @@ polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.5i-dev+<commit>`. The source is also on GitHub:
+tree now builds as `0.0.5j-dev+<commit>`. The source is also on GitHub:
 https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
 request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-05, late):** 0.0.5h is
-released, in `dist/`, pushed, verified on VirtualBox (4 CPUs). The owner
-asked for all eight candidates (done) and then "re-go through all phases
-1-11 and iterate to make it better each phase" — that is **round 3**,
-described in docs/TO_FINISH.md "Right now", step 2; it is the next job.
-The Desktop HTML list offers eight further polish candidates for after it
-(image viewer and own wallpaper; virtual desktops; taskbar pins and
-previews; terminal colours and a second terminal; a grown-up System
-Monitor; themes and UI scale; auto-lock and a boot splash; repeating
-reminders with snooze). Nothing is half-written.
+**Where the last session stopped (2026-10-05, night):** 0.0.5i is
+released, in `dist/`, pushed; the owner's VirtualBox VM is "Cerberus
+0.0.5i" (they had deleted "6"; the new one is in their `VirtualBox VMs`
+folder with a 1 GiB disk for `/data`). Round 3 ("re-go through all phases
+1-11") is **part done**: phase 4's page-fault budget, phase 10's keyboard
+lights, phase 11's signal masks and non-blocking send. **Still to do in
+round 3** (docs/TO_FINISH.md step 2): hard links, a lightweight
+`fsck.cerfs`, MSI-X for NVMe/virtio-blk, one-shot timer / tickless idle,
+demand-paged and shared file mappings, passing ports through ports. The
+Desktop HTML list offers eight polish candidates for after that. Nothing
+is half-written.
 
 ---
 
@@ -71,16 +75,19 @@ performance are requirements; our own web browser is phase 15B (owner,
 
 ## Last verified
 
-All on 2026-10-05, on the 0.0.5g code.
+All on 2026-10-05, on the 0.0.5i code (the 0.0.5h run earlier that day:
+49 of 49).
 
-- `make test` in QEMU/KVM, 4 CPUs: all **42** integration tests passed (the
-  41 of 0.0.5f plus `desktop-qol`; `desktop` and `desktop-settings` were
-  rewritten for the new layout: calendar, notification, closing a window,
-  the hue strip, the Wallpaper tab). The run was on the final kernel; the
-  release ISO differs only in its version string.
-- `make fuzz` and `make bench`: not re-run for 0.0.5g (nothing below the
-  desktop changed except the driver registry's null check and the new
-  `vmmdev` driver); docs/BENCH.md is from 0.0.5c.
+- `make test` in QEMU/KVM, 4 CPUs: all **49** integration tests passed
+  (0.0.5h added `desktop-storage-1/2`, `desktop-clipboard`,
+  `desktop-apps`, `desktop-keyboard`, `desktop-lock`, `desktop-tray`;
+  0.0.5i changed `user-signals`, `user-ipc`, `vmm`, `pmm`,
+  `shell-tests` for the new behaviour). The run was on the final kernel
+  except for three added lines in `badptr` (run separately afterwards);
+  the release ISO differs only in its version string.
+- `make bench` (0.0.5i): docs/BENCH.md block of 2026-10-05 — minor page
+  fault 1,394 ns, within budget; the rest unchanged.
+- `make fuzz`: not re-run since 0.0.5f.
 - **VirtualBox 7.2.6 (Hyper-V backend), a temporary VM "cerberus-check"
   with 4 CPUs, 2 GiB, VBoxVGA**: the first build faulted at boot (B-013,
   fixed); the final build booted to the desktop, `vmmdev` reported that

@@ -44,6 +44,9 @@ i64 signal_return(InterruptFrame* frame);
 // A fault in user code: if the process handles `signo`, arranges for the
 // handler to run and returns true; otherwise false (the caller ends it).
 bool signal_deliver_fault(InterruptFrame* frame, int signo);
+// The calling thread's signal mask: returns the old mask; with `apply`,
+// changes it (how 0 block, 1 unblock, 2 set). SIGKILL cannot be masked.
+Result<u64> signal_set_mask(int how, u64 set, bool apply);
 // Maps the sigreturn trampoline into the active (new) address space near
 // `hint` and returns its address. Error: NoMemory.
 Result<vaddr_t> signal_map_trampoline(AddressSpace* space, vaddr_t hint);

@@ -13,7 +13,7 @@ or renames something a user can see or use.
 **How to read it.** Each line is a capability and the way to use it. An
 item in *italics* is a limit worth knowing.
 
-Last updated: **2026-10-05** (0.0.5h).
+Last updated: **2026-10-05** (0.0.5i).
 
 ---
 
@@ -27,8 +27,10 @@ Last updated: **2026-10-05** (0.0.5h).
 - Timers: APIC timer at 100 Hz; reference clock from the TSC, HPET or PIT.
 - ACPI power off and restart (`poweroff`, `reboot`, launcher buttons).
 - PCI with MSI; disks: AHCI (DMA, interrupt-driven), NVMe, virtio-blk,
-  IDE (PIO). PS/2 keyboard (set 2, full map, Num Lock, repeat) and mouse
-  (wheel). Framebuffer; resolution switching on the Bochs/VirtualBox/QEMU
+  IDE (PIO). PS/2 keyboard (set 2, full map, Num Lock, repeat, the lock
+  lights) and mouse (wheel).
+- Memory: a pool of pre-zeroed frames filled in the background, so a
+  page fault costs about 1.4 µs under KVM. Framebuffer; resolution switching on the Bochs/VirtualBox/QEMU
   display adapter (`bga`), 640x480 up to 5120x1440 (32:9 ultrawide).
 - VirtualBox guest device (`vmmdev`): absolute mouse position, so the
   pointer matches the host's and the mouse need not be captured.
@@ -58,9 +60,10 @@ Last updated: **2026-10-05** (0.0.5h).
 - Threads inside a program (`pthread_create`/`join`, mutexes, condition
   variables, `__thread`), futexes (also across processes).
 - Named **ports** (messages up to 64 KiB, carry open files and shared
-  memory, permission-checked, sender identity from the kernel), shared
-  memory, signals with handlers, event queues (`event_wait` over ports,
-  timers, input devices, child exit).
+  memory, permission-checked, sender identity from the kernel;
+  `port_try_send` for a non-blocking send), shared memory, signals with
+  handlers and per-thread masks (`sigprocmask`), event queues
+  (`event_wait` over ports, timers, input devices, child exit).
 - Private file `mmap`, `mprotect`, `kill`, `getrandom`, `sysinfo`.
 - `runas <uid> <program>`; a process can drop root for good.
 
