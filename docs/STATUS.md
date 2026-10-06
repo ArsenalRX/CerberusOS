@@ -22,7 +22,10 @@ Last updated: **2026-10-06**.
 
 ## Version
 
-Latest release: **0.0.5j** (2026-10-06, tag `v0.0.5j`): hard links, and
+**0.0.5j is built and committed but NOT yet released** (the session hit
+its usage limit during the full `make test` of 2026-10-06; next session:
+`make test`, `make RELEASE=1 dist`, tag `v0.0.5j`, VERSION to 0.0.6a,
+rename the VM, push). `dist/` still holds 0.0.5i. 0.0.5j holds: hard links, and
 polish round 4 — virtual desktops, the System Monitor with graphs and a
 process table, a BMP image viewer and wallpaper from a file, repeating
 reminders with snooze, auto-lock, Settings scrolling (B-012), `clear`,
