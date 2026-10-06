@@ -80,9 +80,27 @@ void free_node(TmpNode* n) {
 
 // A name no longer refers to `n`: free it now, or when its last vnode
 // reference goes (tmp_release).
+// One name fewer: the node goes when its last name and reference are gone.
 void drop_name(TmpNode* n) {
+    if (n->v->nlink > 1 && n->v->type != VType::Dir) {
+        n->v->nlink--;
+        n->v->ctime = vfs_now();
+        return;
+    }
     n->v->nlink = 0;
     if (n->v->refs == 0) free_node(n);
+}
+
+Result<void> tmp_link(Vnode* dir, const char* name, usize len, Vnode* existing) {
+    TmpNode* d = node_of(dir);
+    if (find_entry(d, name, len)) return Error::Exists;
+    TmpEntry* e = new_entry(name, len, node_of(existing));
+    if (!e) return Error::NoMemory;
+    e->next = d->entries;
+    d->entries = e;
+    existing->nlink++;
+    existing->ctime = d->v->mtime = d->v->ctime = vfs_now();
+    return {};
 }
 
 Result<TmpNode*> make_node(TmpFs* fs, TmpNode* parent, VType type, u32 mode, u32 uid, u32 gid) {
@@ -320,7 +338,7 @@ void tmp_release(Vnode* v) {
 
 const VnodeOps g_tmp_ops = {
     tmp_lookup, tmp_create, tmp_unlink, tmp_rename, tmp_read, tmp_write, tmp_truncate, tmp_readdir, tmp_readlink,
-    nullptr,    nullptr,    nullptr,    tmp_release,
+    nullptr,    nullptr,    nullptr,    tmp_release, tmp_link,
 };
 
 Result<Mount*> mount_tmpfs(const char*, u32 flags) { return tmpfs_create("tmpfs", flags); }

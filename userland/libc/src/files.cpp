@@ -30,6 +30,7 @@ int rmdir(const char* path) { return (int)CALL(SYS_rmdir, path, 0, 0, 0); }
 int unlink(const char* path) { return (int)CALL(SYS_unlink, path, 0, 0, 0); }
 int rename(const char* from, const char* to) { return (int)CALL(SYS_rename, from, to, 0, 0); }
 int symlink(const char* target, const char* path) { return (int)CALL(SYS_symlink, target, path, 0, 0); }
+int link(const char* oldpath, const char* newpath) { return (int)CALL(SYS_link, oldpath, newpath, 0, 0); }
 long readlink(const char* path, char* buf, size_t n) { return CALL(SYS_readlink, path, buf, n, 0); }
 int chmod(const char* path, int mode) { return (int)CALL(SYS_chmod, path, mode, 0, 0); }
 int chown(const char* path, int uid, int gid) { return (int)CALL(SYS_chown, path, uid, gid, 0); }

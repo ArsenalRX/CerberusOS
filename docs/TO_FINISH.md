@@ -73,7 +73,23 @@ it then ask you to iterate." So, in order, each step a verified build in
    phase 11 non-blocking `port_send`, signal masks, demand-paged file
    mmap, passing ports through ports; `make bench` and a new
    docs/BENCH.md block. Record each in docs/BUGS.md or docs/DECISIONS.md.
-3. Then phase 12 (below) when the owner says so.
+3. **Round 4 (owner, 2026-10-05 night: "do all 1-8 improvements"), the
+   eight polish candidates of the 0.0.5i Desktop list, all of them:**
+   (1) image viewer (BMP, PNG) and a wallpaper from a file, Print Screen
+   as PNG; (2) virtual desktops, Super+1..4 / Super+Shift+1..4, a taskbar
+   indicator, quarter snapping; (3) taskbar: pinned apps, drag to reorder,
+   right-click menu on a button, hover previews; (4) terminal: colours and
+   basic escape sequences, Ctrl+L, scrollback search, Ctrl+wheel zoom, a
+   second terminal; (5) System Monitor: per-process list with End task,
+   CPU/RAM graphs over a minute, disk I/O; (6) a light theme, panel colour
+   and transparency, UI scale 100/125/150 %, terminal font size;
+   (7) auto-lock after idle, screen dimming, power-off confirmation, a
+   boot splash; (8) reminders that repeat daily/weekly, snooze, a "today"
+   strip on the clock hover. Interleave with round 3's remaining items
+   where they touch the same code; ship in releases of a few items each.
+   **Time box (owner, 2026-10-05 night): polish for about three hours of
+   work, then move on to phase 12 whatever is left.**
+4. Then phase 12 (below) when the owner says so.
 
 First steps of phase 12, in order (SPEC §5, §5A and §9 first):
 

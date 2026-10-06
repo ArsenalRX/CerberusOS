@@ -54,6 +54,8 @@ int main(int, char**, char**) {
         expect("readlink(bad path)", CALL(SYS_readlink, p, buf, 16, 0, 0, 0), -EFAULT);
         expect("symlink(bad target)", CALL(SYS_symlink, p, "/tmp/l", 0, 0, 0, 0), -EFAULT);
         expect("symlink(bad path)", CALL(SYS_symlink, "/x", p, 0, 0, 0, 0), -EFAULT);
+        expect("link(bad old path)", CALL(SYS_link, p, "/tmp/l", 0, 0, 0, 0), -EFAULT);
+        expect("link(bad new path)", CALL(SYS_link, "/bin/hello", p, 0, 0, 0, 0), -EFAULT);
         expect("chmod(bad path)", CALL(SYS_chmod, p, 0644, 0, 0, 0, 0), -EFAULT);
         expect("chown(bad path)", CALL(SYS_chown, p, 0, 0, 0, 0, 0), -EFAULT);
         expect("mount(bad source)", CALL(SYS_mount, p, "/mnt", "tmpfs", 0, 0, 0), -EFAULT);
@@ -74,6 +76,8 @@ int main(int, char**, char**) {
     expect("truncate(read-only descriptor)", CALL(SYS_truncate, fd, 0, 0, 0, 0, 0), -EBADF);
     expect("openat(bad directory descriptor)", CALL(SYS_openat, 29, "x", 0, 0, 0, 0), -EBADF);
     expect("mkdir(in the read-only root)", CALL(SYS_mkdir, "/newdir", 0755, 0, 0, 0, 0), -EROFS);
+    expect("link(a directory)", CALL(SYS_link, "/tmp", "/tmp/dirlink", 0, 0, 0, 0), -EPERM);
+    expect("link(across file systems)", CALL(SYS_link, "/bin/hello", "/tmp/hello", 0, 0, 0, 0), -EXDEV);
     char longpath[300];
     memset(longpath, 'a', sizeof longpath - 1);
     longpath[0] = '/';

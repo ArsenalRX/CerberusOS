@@ -87,6 +87,9 @@ struct VnodeOps {
     // The last reference went away. The file system may forget the object
     // (and free it if no name refers to it any more).
     void (*release)(Vnode* v);
+    // A second name for `existing` (never a directory) in `dir`, on the
+    // same file system. Exists if the name is taken. Null: no hard links.
+    Result<void> (*link)(Vnode* dir, const char* name, usize len, Vnode* existing);
 };
 
 struct Vnode {
@@ -159,6 +162,10 @@ Result<Vnode*> vfs_create(Vnode* start, const char* path, const Credentials& cre
                           bool* created = nullptr);
 Result<void> vfs_unlink(Vnode* start, const char* path, const Credentials& cred, bool dir_wanted);
 Result<void> vfs_rename(Vnode* start, const char* from, const char* to, const Credentials& cred);
+// A hard link: `newpath` becomes another name for the file at `oldpath`
+// (symlinks are not followed). Perm for directories, CrossDevice across
+// file systems, NotSupported where the file system has no links.
+Result<void> vfs_link(Vnode* start, const char* oldpath, const char* newpath, const Credentials& cred);
 Result<usize> vfs_read(Vnode* v, u64 offset, void* buf, usize n);
 Result<usize> vfs_write(Vnode* v, u64 offset, const void* buf, usize n);
 Result<void> vfs_truncate(Vnode* v, u64 size);

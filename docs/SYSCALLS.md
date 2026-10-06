@@ -24,6 +24,7 @@ every other register is preserved. Numbers never change. Only implemented calls 
 | 13 | `long getcwd(char* buf, size_t n)` | Stores the working directory's absolute path; returns its length. ENAMETOOLONG if n is too small, EFAULT. |
 | 14 | `int dup(int fd)` | Duplicates a descriptor onto the lowest free one (close-on-exec cleared). EBADF, EMFILE. |
 | 15 | `int dup2(int oldfd, int newfd)` | Makes newfd refer to oldfd's file, closing newfd first. EBADF. |
+| 16 | `int link(const char* oldpath, const char* newpath)` | Gives the file at oldpath a second name (a hard link). Not for directories (EPERM) or across file systems (EXDEV); ENOTSUP on a file system without links; EEXIST, ENOENT, EACCES, EROFS, EFAULT. |
 | 17 | `long ioctl(int fd, unsigned request, void* arg)` | Device control. Block devices: BLKGETSIZE64 (0x80081272) stores the size in bytes. EBADF, ENODEV, EFAULT. |
 | 18 | `int truncate(int fd, long size)` | Sets the length of a file open for writing. EBADF, EINVAL, EISDIR, EROFS, ENOSPC. |
 | 19 | `int sync(void)` | Writes every file system's changes to its disk. Returns 0. |

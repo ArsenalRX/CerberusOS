@@ -224,6 +224,15 @@ i64 sys_mkdir(u64 path, u64 mode, u64, u64, u64, u64, InterruptFrame*) {
     return make_object(path, VType::Dir, (u32)mode, nullptr);
 }
 
+i64 sys_link(u64 oldpath, u64 newpath, u64, u64, u64, u64, InterruptFrame*) {
+    char kold[PATH_MAX], knew[PATH_MAX];
+    Error e = user_path(oldpath, kold);
+    if (e == Error::None) e = user_path(newpath, knew);
+    if (e != Error::None) return errno_of(e);
+    Result<void> r = vfs_link(self()->cwd, kold, knew, self()->cred);
+    return r.ok() ? 0 : errno_of(r.error());
+}
+
 i64 sys_symlink(u64 target, u64 path, u64, u64, u64, u64, InterruptFrame*) {
     char ktarget[PATH_MAX];
     Error e = user_path(target, ktarget);

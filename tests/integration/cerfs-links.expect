@@ -1,0 +1,42 @@
+#!disk new 64M links
+#!hostcheck links
+# Hard links (0.0.5j, round 3a): `ln a b` on a cerfs disk gives one file two
+# names; writing through one shows through the other; removing the first
+# name keeps the file; the link count follows; a directory cannot be
+# linked. The same on tmpfs (/tmp). The disk passes the host check with
+# the link counts in it.
+ahci: sda
+cerberus kernel shell
+!send mount -t cerfs /dev/disk/sda /mnt
+!wait 3
+cerfs: mounted /dev/disk/sda
+!send write /mnt/a first line
+!send ln /mnt/a /mnt/b
+!send cat /mnt/b
+!wait 1
+first line
+!send stat /mnt/b
+!wait 1
+Links: 2
+!send rm /mnt/a
+!send cat /mnt/b
+!wait 1
+first line
+!send stat /mnt/b
+!wait 1
+Links: 1
+!send mkdir /mnt/d
+!send ln /mnt/d /mnt/e
+!wait 1
+ln: /mnt/e: operation not permitted
+!send write /tmp/t hello tmp
+!send ln /tmp/t /tmp/u
+!send rm /tmp/t
+!send cat /tmp/u
+!wait 1
+hello tmp
+!send umount /mnt
+!wait 2
+!send poweroff
+!wait 3
+!poweredoff

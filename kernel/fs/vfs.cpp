@@ -436,6 +436,36 @@ Result<void> vfs_unlink(Vnode* start, const char* path, const Credentials& cred,
     return r;
 }
 
+Result<void> vfs_link(Vnode* start, const char* oldpath, const char* newpath, const Credentials& cred) {
+    Locked l;
+    LookupFlags of;
+    of.follow_last = false;
+    Result<Vnode*> o = resolve_locked(start, oldpath, cred, of, nullptr);
+    if (!o.ok()) return o.error();
+    Vnode* old = o.value();
+    char name[vfs::NAME_MAX + 1];
+    LookupFlags pf;
+    pf.want_parent = true;
+    Result<Vnode*> p = resolve_locked(start, newpath, cred, pf, name);
+    if (!p.ok()) {
+        unref_locked(old);
+        return p.error();
+    }
+    Vnode* dir = p.value();
+    Result<void> r;
+    if (old->type == VType::Dir) r = Error::Perm;
+    else if (old->mount != dir->mount) r = Error::CrossDevice;
+    else if (!dir->ops->link) r = Error::NotSupported;
+    if (r.ok()) r = vfs_access(dir, cred, vfs::W_OK | vfs::X_OK);
+    if (r.ok()) {
+        dcache_forget(dir, name, strlen(name));
+        r = dir->ops->link(dir, name, strlen(name), old);
+    }
+    unref_locked(dir);
+    unref_locked(old);
+    return r;
+}
+
 Result<void> vfs_rename(Vnode* start, const char* from, const char* to, const Credentials& cred) {
     Locked l;
     char fname[vfs::NAME_MAX + 1], tname[vfs::NAME_MAX + 1];

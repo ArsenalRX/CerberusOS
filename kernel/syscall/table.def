@@ -43,6 +43,8 @@ SYSCALL(14, dup,       "int dup(int fd)",
         "Duplicates a descriptor onto the lowest free one (close-on-exec cleared). EBADF, EMFILE.")
 SYSCALL(15, dup2,      "int dup2(int oldfd, int newfd)",
         "Makes newfd refer to oldfd's file, closing newfd first. EBADF.")
+SYSCALL(16, link,      "int link(const char* oldpath, const char* newpath)",
+        "Gives the file at oldpath a second name (a hard link). Not for directories (EPERM) or across file systems (EXDEV); ENOTSUP on a file system without links; EEXIST, ENOENT, EACCES, EROFS, EFAULT.")
 SYSCALL(17, ioctl,     "long ioctl(int fd, unsigned request, void* arg)",
         "Device control. Block devices: BLKGETSIZE64 (0x80081272) stores the size in bytes. EBADF, ENODEV, EFAULT.")
 SYSCALL(18, truncate,  "int truncate(int fd, long size)",

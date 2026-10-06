@@ -1013,6 +1013,28 @@ Result<void> cer_unlink(Vnode* dir, const char* name, usize len, bool dir_wanted
     return r;
 }
 
+Result<void> cer_link(Vnode* dir, const char* name, usize len, Vnode* existing) {
+    CerNode* d = node_of(dir);
+    CerNode* e = node_of(existing);
+    CerFs* fs = d->fs;
+    Result<void> rr = tx_reserve(fs);
+    if (!rr.ok()) return rr;
+    DirSlot s;
+    Result<bool> f = dir_find(d, name, len, &s);
+    if (!f.ok()) return f.error();
+    if (f.value()) return Error::Exists;
+    if (existing->nlink >= 0xFFFE) return Error::TooBig;
+    Result<void> r = dir_add(d, name, len, e->ino, dirtype_of(existing->type));
+    if (!r.ok()) return r;
+    u64 now = vfs_now();
+    existing->nlink++;
+    existing->ctime = now;
+    dir->mtime = dir->ctime = now;
+    r = node_write(e);
+    if (r.ok()) r = node_write(d);
+    return r;
+}
+
 Result<void> cer_rename(Vnode* from_dir, const char* from, usize from_len, Vnode* to_dir, const char* to,
                         usize to_len) {
     CerNode* fd = node_of(from_dir);
@@ -1228,7 +1250,7 @@ void cer_release(Vnode* v) {
 
 const VnodeOps g_ops = {
     cer_lookup,   cer_create,   cer_unlink,  cer_rename, cer_read,  cer_write,   cer_truncate,
-    cer_readdir,  cer_readlink, cer_setattr, cer_fsync,  nullptr,   cer_release,
+    cer_readdir,  cer_readlink, cer_setattr, cer_fsync,  nullptr,   cer_release, cer_link,
 };
 
 // ---------------------------------------------------------------- mount --

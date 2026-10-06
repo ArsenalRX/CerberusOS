@@ -133,11 +133,10 @@ int main(int argc, char** argv) {
     }
     if (!strcmp(tool, "stat")) return cmd_stat(argc, argv);
     if (!strcmp(tool, "ln")) {
-        if (argc != 4 || strcmp(argv[1], "-s")) {
-            dprintf(2, "usage: ln -s target linkname (only symbolic links)\n");
-            return 2;
-        }
-        return symlink(argv[2], argv[3]) < 0 ? fail(tool, argv[3]) : 0;
+        if (argc == 4 && !strcmp(argv[1], "-s")) return symlink(argv[2], argv[3]) < 0 ? fail(tool, argv[3]) : 0;
+        if (argc == 3) return link(argv[1], argv[2]) < 0 ? fail(tool, argv[2]) : 0;
+        dprintf(2, "usage: ln [-s] target linkname\n");
+        return 2;
     }
     if (!strcmp(tool, "sync")) {
         sync();

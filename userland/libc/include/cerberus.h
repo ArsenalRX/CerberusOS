@@ -272,6 +272,7 @@ int rmdir(const char* path);
 int unlink(const char* path);
 int rename(const char* from, const char* to);
 int symlink(const char* target, const char* path);
+int link(const char* oldpath, const char* newpath);
 long readlink(const char* path, char* buf, size_t n);
 int chmod(const char* path, int mode);
 int chown(const char* path, int uid, int gid);
