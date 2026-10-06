@@ -31,6 +31,7 @@
 #include <gui/desktop.h>
 #include <gui/files.h>
 #include <gui/notes.h>
+#include <gui/viewer.h>
 #include <gui/terminal.h>
 #include <lib/kprintf.h>
 #include <lib/csprng.h>
@@ -193,7 +194,7 @@ constexpr u64 ANIM_US = 160000;
 constexpr int SLIDE_OPEN = 12, SLIDE_MINIMISE = 30, SLIDE_MENU = 10;
 enum : u8 { ANIM_NONE, ANIM_IN, ANIM_OUT };
 
-enum class Kind { Terminal, About, SystemMonitor, MemoryMap, Settings, Files, Notes, Calculator };
+enum class Kind { Terminal, About, SystemMonitor, MemoryMap, Settings, Files, Notes, Calculator, Viewer };
 
 struct Window {
     bool used = false;
@@ -239,6 +240,7 @@ const App APPS[] = {
     {"Files", "browse folders disk explorer manager", Kind::Files, rgb(250, 204, 21)},
     {"Notes", "text editor write edit", Kind::Notes, rgb(45, 212, 191)},
     {"Calculator", "maths math calc numbers hex binary", Kind::Calculator, rgb(248, 113, 113)},
+    {"Image Viewer", "picture photo bmp screenshot frame wallpaper", Kind::Viewer, rgb(251, 146, 60)},
     {"Settings", "theme colours colors wallpaper background border rgb display resolution screen appearance",
      Kind::Settings, rgb(167, 139, 250)},
     {"System Monitor", "cpu memory ram tasks performance", Kind::SystemMonitor, rgb(74, 222, 128)},
@@ -253,6 +255,7 @@ constexpr int ITEM_NONE = -1, ITEM_POWER = -2, ITEM_RESTART = -3;
 CalcApp g_calc;
 NotesApp g_notes;
 FilesApp g_files;
+ViewerApp g_viewer;
 
 char g_search[24];                  // what has been typed into the launcher
 int g_search_len = 0;
@@ -947,6 +950,13 @@ void open_kind(Kind kind) {
             g.windows[idx].min_h = NotesApp::MIN_H;
         }
         break;
+    case Kind::Viewer:
+        idx = create_window(kind, "Image Viewer", {x + 50, y + 10, 720, 520});
+        if (idx >= 0) {
+            g.windows[idx].min_w = ViewerApp::MIN_W;
+            g.windows[idx].min_h = ViewerApp::MIN_H;
+        }
+        break;
     case Kind::Calculator:
         idx = create_window(kind, "Calculator", {x + 200, y + 40, 340, 480});
         if (idx >= 0) {
@@ -1579,11 +1589,34 @@ AppContext app_ctx() {
 void serve_open_request() {
     const char* path = g_files.take_open_request();
     if (!path) return;
-    g_notes.load(path);
+    usize len = strlen(path);
+    bool image = len > 4 && (!strcmp(path + len - 4, ".bmp") || !strcmp(path + len - 4, ".BMP"));
+    Kind kind = image ? Kind::Viewer : Kind::Notes;
+    if (image) g_viewer.load(path);
+    else g_notes.load(path);
     g_files.clear_open_request();
-    open_kind(Kind::Notes);
+    open_kind(kind);
     for (int i = 0; i < MAX_WINDOWS; i++)
-        if (g.windows[i].used && g.windows[i].kind == Kind::Notes) g.windows[i].needs_paint = true;
+        if (g.windows[i].used && g.windows[i].kind == kind) g.windows[i].needs_paint = true;
+}
+
+void render_wallpaper(Surface& s, int style, bool decorate);
+void refresh_everything();
+
+// The viewer's image, scaled to the screen, becomes the wallpaper (until
+// a built-in one is chosen again; it is not kept across a restart).
+void wallpaper_from_viewer() {
+    const Surface* img = g_viewer.image();
+    if (!img) return;
+    render_wallpaper(g.wall, g_prefs.wallpaper, false);
+    // Cover the screen, keeping the picture's shape, cropping the overflow.
+    int W = g.W, H = g.H;
+    int w = W, h = (int)((i64)img->height * W / img->width);
+    if (h < H) { h = H; w = (int)((i64)img->width * H / img->height); }
+    Rect dst{(W - w) / 2, (H - h) / 2, w, h};
+    blit_scaled(g.wall, dst, *img);
+    g_prefs.wallpaper = -1;         // "a picture"
+    refresh_everything();
 }
 
 void paint_window_content(Window& w) {
@@ -1626,6 +1659,7 @@ void paint_window_content(Window& w) {
         break;
     }
     case Kind::Calculator: g_calc.paint(view, app_ctx()); break;
+    case Kind::Viewer: g_viewer.paint(view, app_ctx()); break;
     case Kind::About: paint_about(view); break;
     case Kind::SystemMonitor: paint_sysmon(view); break;
     case Kind::MemoryMap: paint_memmap(view); break;
@@ -1898,7 +1932,7 @@ void draw_panel(Surface& back) {
     int x = sr.right() + 12;
     int shown = 0;
     for (int i = 0; i < g.order_count; i++) shown += g.windows[g.order[i]].used && g.windows[g.order[i]].desk == g.cur_desk;
-    int room = clock_rect().x - 10 - x;
+    int room = desk_rect(0).x - 16 - x;        // up to the desktop squares and the tray
     int task_w = shown ? (room - 6 * (shown - 1)) / shown : 176;
     if (task_w > 176) task_w = 176;
     if (task_w < 40) task_w = 40;
@@ -1908,7 +1942,7 @@ void draw_panel(Surface& back) {
         Window& w = g.windows[idx];
         if (!w.used || w.desk != g.cur_desk) continue;
         Rect tr{x, mid - 18, task_w, 36};
-        if (tr.right() > clock_rect().x - 8) break;
+        if (tr.right() > desk_rect(0).x - 12) break;
         bool focused = g.focus == idx;
         bool hover = tr.contains(g.mx, g.my);
         if (focused) fill_rect_rounded(back, tr, 10, with_alpha(accent(), hover ? 74 : 54));
@@ -3045,7 +3079,7 @@ void prefs_write_now() {
                         "accent=%d\nhue=%d\nwallpaper=%d\nradius=%d\nglass=%d\nfloating=%d\nclock12=%d\nseconds=%d\n"
                         "fx=%d\nbcolor=%d\nbwidth=%d\nspeed=%d\nball=%d\nglow=%d\nfps=%d\ntz=%d\n"
                         "layout=%d\nrdelay=%d\nrrate=%d\nlockhash=%s\nlocksalt=%s\nnight=%d\nautolock=%d\n",
-                        g_prefs.accent, g_prefs.custom_hue, g_prefs.wallpaper, g_prefs.radius, g_prefs.panel_glass,
+                        g_prefs.accent, g_prefs.custom_hue, g_prefs.wallpaper < 0 ? 0 : g_prefs.wallpaper, g_prefs.radius, g_prefs.panel_glass,
                         g_prefs.panel_floating, g_prefs.clock_12h, g_prefs.clock_seconds, (int)g_prefs.fx,
                         g_prefs.border_color, g_prefs.border_w, g_prefs.speed, g_prefs.border_all, g_prefs.glow,
                         g_prefs.fps, g_prefs.tz_minutes, g_prefs.layout, g_prefs.repeat_delay, g_prefs.repeat_rate,
@@ -3583,6 +3617,10 @@ void on_press(int button) {
             g.last_content_win = h.win;
             bool repaint = false;
             if (w.kind == Kind::Calculator) repaint = g_calc.click(cx, cy, 0, app_ctx());
+            else if (w.kind == Kind::Viewer) {
+                repaint = g_viewer.click(cx, cy, 0, app_ctx());
+                if (g_viewer.take_wallpaper_request()) wallpaper_from_viewer();
+            }
             else if (w.kind == Kind::SystemMonitor) { sysmon_click(cx, cy); repaint = true; }
             else if (w.kind == Kind::Files) repaint = g_files.click(cx, cy, 0, again ? 2 : 1, app_ctx());
             else if (w.kind == Kind::Notes) {

@@ -1,0 +1,39 @@
+# Image viewer (0.0.5j): Print Screen writes /tmp/screenshot-1.bmp; Files,
+# opened at / then into tmp, shows it in the viewer on a double-click;
+# "Set as wallpaper" makes it the background. 1280x800. The Files window
+# opens at 200,152 (640x440), rows from y=229, 26 apart; the viewer's
+# wallpaper button is at the top right of its content.
+gui: desktop up at 1280x800
+cerberus kernel shell
+!keys print
+!wait 1.5
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key files
+!wait 1
+!mouseto 260 397
+!dblclick
+!wait 0.6
+!mouseto 260 241
+!dblclick
+!wait 1.5
+!screenshot build/viewer-1.png
+# The viewer frame is at 250,162 (720x520; content from 251,195): the
+# button spans the last 140 px of the content's width, 5..31 down.
+!mouseto 900 213
+!button left down
+!button left up
+!wait 1.5
+!screenshot build/viewer-2.png
+!keys alt f4
+!wait 0.3
+!keys alt f4
+!wait 0.3
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=

@@ -111,7 +111,9 @@ void FilesApp::open_selected() {
         if (strlen(path) < sizeof cwd_) go(path);
         return;
     }
-    if (e.size > 64 * 1024) {
+    usize nl = strlen(e.name);
+    bool image = nl > 4 && (!strcmp(e.name + nl - 4, ".bmp") || !strcmp(e.name + nl - 4, ".BMP"));
+    if (!image && e.size > 64 * 1024) {
         ksnprintf(status_, sizeof status_, "%s is too big for Notes (64 KiB at most)", e.name);
         return;
     }
