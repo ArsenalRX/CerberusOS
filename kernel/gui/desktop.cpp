@@ -211,7 +211,9 @@ struct Window {
     int min_w = 240, min_h = 140;
     u8 anim = ANIM_NONE;        // appearing, or (minimised) on its way out
     u64 anim_start = 0;
+    u8 desk = 0;                // the virtual desktop it is on (0..DESKS-1)
 };
+constexpr int DESKS = 4;
 
 // A closed window, kept only until it has faded away. It owns the buffers
 // the window had.
@@ -285,6 +287,7 @@ struct State {
     int order_count = 0;
     int focus = -1;
     u32 next_id = 1;
+    int cur_desk = 0;           // the virtual desktop shown
 
     int mx = 0, my = 0;
     u8 buttons = 0;
@@ -648,6 +651,11 @@ Rect tray_button_rect() {
     int sep = b.right() - 16 - 104;
     return {sep - 16 - 64 - 12 - 28, bar_mid() - 12, 24, 24};
 }
+// The virtual-desktop squares, to the left of the tray button.
+Rect desk_rect(int d) {
+    Rect t = tray_button_rect();
+    return {t.x - 10 - DESKS * 18 + d * 18, bar_mid() - 7, 14, 14};
+}
 Rect tray_rect() {
     int cpus = (int)smp_cpu_count();
     if (cpus > MAX_CPUS_SHOWN) cpus = MAX_CPUS_SHOWN;
@@ -726,6 +734,8 @@ Surface content_view(Window& w) {
 
 // --------------------------------------------------------------- windows --
 int window_index(const Window* w) { return (int)(w - g.windows); }
+// Not on screen: minimised, or on another virtual desktop.
+inline bool hidden(const Window& w) { return w.minimised || w.desk != g.cur_desk; }
 
 void raise_window(int idx) {
     int pos = -1;
@@ -753,7 +763,7 @@ void set_focus(int idx) {
 int top_visible_window() {
     for (int i = g.order_count - 1; i >= 0; i--) {
         Window& w = g.windows[g.order[i]];
-        if (w.used && !w.minimised) return g.order[i];
+        if (w.used && !hidden(w)) return g.order[i];
     }
     return -1;
 }
@@ -785,6 +795,7 @@ int create_window(Kind kind, const char* title, Rect frame) {
     strlcpy(w.title, title, sizeof w.title);
     w.frame = frame;
     w.needs_paint = true;
+    w.desk = (u8)g.cur_desk;
     if (kind == Kind::About) {
         w.min_w = 430;
         w.min_h = 340;
@@ -801,13 +812,14 @@ int create_window(Kind kind, const char* title, Rect frame) {
 }
 
 void switcher_finish(bool pick);
+void switch_desk(int d);
 
 void destroy_window(int idx) {
     Window& w = g.windows[idx];
     if (!w.used) return;
     damage(anim_bounds(w));
     damage(panel_rect());
-    if (!w.minimised && g_ghost_count < MAX_GHOSTS) {
+    if (!hidden(w) && g_ghost_count < MAX_GHOSTS) {
         // Leave its picture behind to fade out.
         Ghost& gh = g_ghosts[g_ghost_count++];
         gh.w = w;
@@ -905,6 +917,7 @@ void open_kind(Kind kind) {
     for (int i = 0; i < MAX_WINDOWS; i++) {
         Window& w = g.windows[i];
         if (w.used && w.kind == kind) {
+            if (w.desk != g.cur_desk) switch_desk(w.desk);
             restore(w);
             return;
         }
@@ -1009,7 +1022,7 @@ void paint_about(Surface& s) {
     ksnprintf(line, sizeof line, "%dx%d, 32 bpp", g.W, g.H);
     y = paint_kv(s, y, "Display", line);
     y = paint_kv(s, y, "Language", "Spec (planned; compiler not started)");
-    draw_text_ellipsis(s, g.font, 16, s.height - 30, "Alt+Tab switch, Super+arrows snap, Super+D desktop, Print Screen",
+    draw_text_ellipsis(s, g.font, 16, s.height - 30, "Super+1..4 desktops, Super+arrows snap, Super+D, Alt+Tab, Print Screen",
                        s.width - 32, theme::TEXT_MUTED);
 }
 
@@ -1780,7 +1793,7 @@ void draw_panel(Surface& back) {
     g.task_count = 0;
     int x = sr.right() + 12;
     int shown = 0;
-    for (int i = 0; i < g.order_count; i++) shown += g.windows[g.order[i]].used;
+    for (int i = 0; i < g.order_count; i++) shown += g.windows[g.order[i]].used && g.windows[g.order[i]].desk == g.cur_desk;
     int room = clock_rect().x - 10 - x;
     int task_w = shown ? (room - 6 * (shown - 1)) / shown : 176;
     if (task_w > 176) task_w = 176;
@@ -1789,7 +1802,7 @@ void draw_panel(Surface& back) {
     // button does not move when its window is clicked.
     for (int idx = 0; idx < MAX_WINDOWS; idx++) {
         Window& w = g.windows[idx];
-        if (!w.used) continue;
+        if (!w.used || w.desk != g.cur_desk) continue;
         Rect tr{x, mid - 18, task_w, 36};
         if (tr.right() > clock_rect().x - 8) break;
         bool focused = g.focus == idx;
@@ -1854,9 +1867,19 @@ void draw_panel(Surface& back) {
             draw_line_aa(back, cx - 5, cy + 3, cx, cy - 2, 24, gc);
             draw_line_aa(back, cx + 5, cy + 3, cx, cy - 2, 24, gc);
         }
+        // The desktops: a square each, the current one in the accent colour,
+        // a dot in those that hold windows.
+        for (int d = 0; d < DESKS; d++) {
+            Rect dr = desk_rect(d);
+            bool any = false;
+            for (int i = 0; i < MAX_WINDOWS; i++) any |= g.windows[i].used && g.windows[i].desk == d;
+            bool here = d == g.cur_desk, dh = dr.inset(-3).contains(g.mx, g.my);
+            fill_rect_rounded(back, dr, 4, here ? accent() : rgba(255, 255, 255, dh ? 50 : 24));
+            if (any && !here) fill_circle_aa(back, dr.x + 7, dr.y + 7, 2, theme::TEXT);
+        }
         // Caps Lock on, or Num Lock off, is worth a glance: a small pill.
         u8 m = ps2kbd_mods();
-        int px = tb.x - 8;
+        int px = desk_rect(0).x - 8;
         auto pill = [&](const char* label, Color c) {
             int w = measure_text(g.font, label) + 12;
             Rect r{px - w, mid - 10, w, 20};
@@ -2255,7 +2278,7 @@ void compose(const Rect& r) {
     blit(g.back, c.x, c.y, wv);
     for (int i = 0; i < g.order_count; i++) {
         Window& w = g.windows[g.order[i]];
-        if (!w.used || (w.minimised && w.anim != ANIM_OUT)) continue;
+        if (!w.used || w.desk != g.cur_desk || (w.minimised && w.anim != ANIM_OUT)) continue;
         if (!anim_bounds(w).overlaps(c)) continue;
         bool focused = g.focus == g.order[i];
         u32 e = w.anim ? anim_eased(w.anim_start) : 255;
@@ -2366,7 +2389,7 @@ int resize_shape(u8 edges) {
 }
 
 struct Hit {
-    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu, Clock, Calendar, Toast, Context, Tray, TrayPopup } what = Nothing;
+    enum What { Nothing, Title, Button, Content, Edge, Panel, Launcher, Task, Menu, Clock, Calendar, Toast, Context, Tray, TrayPopup, Desk } what = Nothing;
     int win = -1;
     int button = -1;
     u8 edges = 0;
@@ -2415,6 +2438,11 @@ Hit hit_test(int x, int y) {
         Rect ck = clock_rect();
         if (ck.contains(x, y) && x >= ck.right() - 118) h.what = Hit::Clock;
         if (tray_button_rect().inset(-3).contains(x, y)) h.what = Hit::Tray;
+        for (int d = 0; d < DESKS; d++)
+            if (desk_rect(d).inset(-3).contains(x, y)) {
+                h.what = Hit::Desk;
+                h.item = d;
+            }
         for (int i = 0; i < g.task_count; i++) {
             if (g.task_rects[i].contains(x, y)) {
                 h.what = Hit::Task;
@@ -2425,7 +2453,7 @@ Hit hit_test(int x, int y) {
     }
     for (int i = g.order_count - 1; i >= 0; i--) {
         Window& w = g.windows[g.order[i]];
-        if (!w.used || w.minimised) continue;
+        if (!w.used || hidden(w)) continue;
         Rect outer = w.frame.inset(-theme::RESIZE_BAND);
         if (!outer.contains(x, y)) continue;
         h.win = g.order[i];
@@ -2738,6 +2766,8 @@ void close_context_menu() {
     damage(ctx_area());
 }
 
+void switch_desk(int d);
+
 void open_context_menu(int x, int y) {
     close_menu();
     close_calendar();
@@ -2754,15 +2784,40 @@ void open_task_menu(int win, int x, int y) {
     damage(ctx_area());
 }
 
+// Super+1..4: another virtual desktop; Super+Shift+1..4 moves the focused
+// window there.
+void switch_desk(int d) {
+    if (d < 0 || d >= DESKS || d == g.cur_desk) return;
+    close_menu();
+    close_calendar();
+    close_context_menu();
+    g.cur_desk = d;
+    g.focus = -1;
+    set_focus(top_visible_window());
+    damage_all();
+}
+
+void move_window_to_desk(Window& w, int d) {
+    if (d < 0 || d >= DESKS || w.desk == d) return;
+    damage(anim_bounds(w));
+    w.desk = (u8)d;
+    w.anim = ANIM_NONE;
+    if (g.focus == window_index(&w)) {
+        g.focus = -1;
+        set_focus(top_visible_window());
+    }
+    damage(panel_rect());
+}
+
 // Super+D: hide every window, or bring back the ones it hid.
 void toggle_show_desktop() {
     bool any = false;
-    for (int i = 0; i < MAX_WINDOWS; i++) any |= g.windows[i].used && !g.windows[i].minimised;
+    for (int i = 0; i < MAX_WINDOWS; i++) any |= g.windows[i].used && !hidden(g.windows[i]);
     if (any) {
         g.shown_before = 0;
         for (int i = 0; i < MAX_WINDOWS; i++) {
             Window& w = g.windows[i];
-            if (!w.used || w.minimised) continue;
+            if (!w.used || hidden(w)) continue;
             g.shown_before |= 1u << i;
             minimise(w);
         }
@@ -2784,7 +2839,7 @@ void switcher_step(int dir) {
     if (!g.switcher_open) {
         g.switcher_count = 0;
         for (int i = g.order_count - 1; i >= 0; i--)
-            if (g.windows[g.order[i]].used) g.switcher_wins[g.switcher_count++] = g.order[i];
+            if (g.windows[g.order[i]].used && g.windows[g.order[i]].desk == g.cur_desk) g.switcher_wins[g.switcher_count++] = g.order[i];
         if (g.switcher_count < 2) {
             g.switcher_count = 0;
             return;
@@ -3334,6 +3389,7 @@ void on_press(int button) {
         if (g.tray_open) close_tray();
         else open_tray();
         break;
+    case Hit::Desk: switch_desk(h.item); break;
     case Hit::TrayPopup:
         for (int i = 0; i < g_tray_ctl_count; i++) {
             const Ctl& c = g_tray_ctls[i];
@@ -3553,8 +3609,8 @@ void on_motion() {
     if (h.what == Hit::Calendar || last_what == Hit::Calendar) damage(cal_rect());
     if (h.what == Hit::Context || last_what == Hit::Context) damage(ctx_rect());
     if (h.what == Hit::TrayPopup || last_what == Hit::TrayPopup) damage(tray_rect());
-    bool panel_now = h.what == Hit::Panel || h.what == Hit::Launcher || h.what == Hit::Task || h.what == Hit::Clock || h.what == Hit::Tray;
-    bool panel_before = last_what == Hit::Panel || last_what == Hit::Launcher || last_what == Hit::Task || last_what == Hit::Clock || last_what == Hit::Tray;
+    bool panel_now = h.what == Hit::Panel || h.what == Hit::Launcher || h.what == Hit::Task || h.what == Hit::Clock || h.what == Hit::Tray || h.what == Hit::Desk;
+    bool panel_before = last_what == Hit::Panel || last_what == Hit::Launcher || last_what == Hit::Task || last_what == Hit::Clock || last_what == Hit::Tray || last_what == Hit::Desk;
     if (panel_now || panel_before) damage(panel_rect());
     int hb = -1;
     if (h.win >= 0 && (h.what == Hit::Title || h.what == Hit::Button)) hb = h.button;
@@ -3656,6 +3712,12 @@ void process_keyboard() {
         if (super_ && e.ascii == 't') { close_menu(); close_calendar(); open_kind(Kind::Terminal); continue; }
         if (super_ && e.ascii == 'm') { if (g.focus >= 0) toggle_maximise(g.windows[g.focus]); continue; }
         if (super_ && e.ascii == 'd') { close_menu(); close_calendar(); toggle_show_desktop(); continue; }
+        if (super_ && e.keycode >= 0x02 && e.keycode < 0x02 + DESKS) {     // the 1..4 keys, whatever they type
+            int d = (int)e.keycode - 0x02;
+            if (shift) { if (g.focus >= 0) move_window_to_desk(g.windows[g.focus], d); }
+            else switch_desk(d);
+            continue;
+        }
         if (super_ && (e.key == key::LEFT || e.key == key::RIGHT || e.key == key::UP || e.key == key::DOWN)) {
             if (g.focus >= 0) {
                 Window& w = g.windows[g.focus];
@@ -4242,7 +4304,7 @@ void gui_pump() {
         g_last_anim_us = now_us;
         for (int i = 0; i < MAX_WINDOWS; i++) {
             const Window& w = g.windows[i];
-            if (w.used && !w.minimised && (g_prefs.border_all || i == g.focus)) damage(w.frame.inset(-6));
+            if (w.used && !hidden(w) && (g_prefs.border_all || i == g.focus)) damage(w.frame.inset(-6));
         }
     }
     if (now_us - g.last_frame_us < frame_us()) return;
@@ -4287,7 +4349,7 @@ void gui_pump() {
 
     for (int i = 0; i < g.order_count; i++) {
         Window& w = g.windows[g.order[i]];
-        if (!w.used || w.minimised) continue;
+        if (!w.used || hidden(w)) continue;
         if (w.needs_paint || (w.kind == Kind::Terminal && g.term_dirty)) paint_window_content(w);
     }
     if (g.damage_all || g.damage_count) flush_frame();

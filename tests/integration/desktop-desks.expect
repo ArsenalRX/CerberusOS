@@ -1,0 +1,43 @@
+# Virtual desktops (0.0.5j): Super+2 shows an empty second desktop (the
+# taskbar has no buttons, the squares show which desktops hold windows);
+# the calculator opened there stays there; Super+1 comes back to the
+# terminal; Super+Shift+2 moves the terminal over; clicking a square
+# switches too. 1280x800; the squares sit left of the tray chevron (x≈1044):
+# desktop 1 at about x=950, desktop 2 at x=968.
+gui: desktop up at 1280x800
+cerberus kernel shell
+!keys meta_l 2
+!wait 0.5
+!screenshot build/desks-1.png
+!mouseto 150 780
+!button left down
+!button left up
+!wait 0.4
+!key calc
+!wait 0.8
+!key 6*7
+!wait 0.4
+!screenshot build/desks-2.png
+!keys meta_l 1
+!wait 0.5
+!screenshot build/desks-3.png
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=
+!keys meta_l shift 2
+!wait 0.5
+!screenshot build/desks-4.png
+!mouseto 968 770
+!button left down
+!button left up
+!wait 0.5
+!screenshot build/desks-5.png
+!mouseto 120 400
+!button left down
+!button left up
+!key ticks
+!wait 0.5
+ticks=
