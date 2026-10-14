@@ -27,5 +27,5 @@ if "$GIT" -C "$DIR" diff --cached --quiet; then
     echo "push-site: nothing changed"
     exit 0
 fi
-"$GIT" -C "$DIR" commit -q -m "$MSG" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" || exit 1
+"$GIT" -C "$DIR" commit -q -m "$MSG" || exit 1
 "$GIT" -C "$DIR" push -q origin HEAD:main && echo "push-site: pushed $("$GIT" -C "$DIR" rev-parse --short HEAD)"

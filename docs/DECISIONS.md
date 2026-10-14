@@ -1313,7 +1313,7 @@ kernel-hosted desktop and moves with it to Pane (phase 12).
 - **Docs**: two new files the owner asked for. docs/BUGS.md is the bug
   ledger (every bug: symptom, cause, fix, guard, with ids `B-nnn`);
   docs/FEATURES.md is the inventory of what exists and how it is used.
-  Both are read at the start of a session (CLAUDE.md).
+  Both are read at the start of a session (docs/WORKING_NOTES.md).
 - **Owner's working style** (recorded so it is kept): after each iteration
   update the HTML list on their Windows desktop with what was fixed or
   added, and end it with 8 numbered QoL candidates for them to choose
@@ -1623,7 +1623,8 @@ ACPICA, mlibc, QuickJS), and a software bill of materials per ISO.
 → 16 → 17 → 17B → 18 → 18B → 19.
 
 **Docs the owner wants added** (CERBERUS_DOCS_NEEDED, 2026-10-12), biggest
-payoff first; CLAUDE.md already exists, so that row is done:
+payoff first; the working-notes file (docs/WORKING_NOTES.md) already
+exists, so that row is done:
 
 1. `docs/INDEX.md`: a task-to-doc map ("adding a syscall → SYSCALLS,
    INVARIANTS, PLAYBOOKS §2") so a session does not read everything.
@@ -1706,7 +1707,7 @@ from `docs/` and to be updated and pushed every time something changes.
   and pushes it (`tools/push-site.sh`). `make dist` regenerates the site
   too, so a release cannot ship without the site following. The site
   directory is `SITE_DIR` in the Makefile.
-- The rule in CLAUDE.md "After every iteration": run `make site-push`.
+- The rule in docs/WORKING_NOTES.md "After every iteration": run `make site-push`.
 - The hand-written pages are replaced: their design (dark theme, aurora
   background, cards, the release dropdowns) is kept in the generator's
   templates; their content now comes from the docs.
@@ -1715,3 +1716,44 @@ Rejected: a static-site generator from the outside (a dependency under
 §0 rule 14, and a Jekyll build on GitHub's side that cannot be checked
 locally); editing the two HTML files by hand each release (that is how
 they went stale and gained wrong dates).
+
+Addendum (owner, later the same day): the site carries no link to the
+GitHub repository (no navigation tab, no footer link, no "view the
+source" on the document pages). The generator keeps the repository URL
+only for its own commit messages.
+
+---
+
+## 2026-10-13 — Every build is a release (owner)
+
+The owner said "release after every build". From now on a finished piece
+of work that passes `make test` goes through the whole release procedure
+(docs/SPEC.md §23.4) in the same session, without a separate go-ahead:
+changelog block and STATUS, the `release: <version>` commit, the
+`v<version>` tag, `make RELEASE=1 dist`, the VirtualBox VM renamed, the
+Desktop list, `release: begin <next>`, push of `main` and the tags, and
+`make site-push`. The version still moves one letter per release (§23.1),
+so letters will be used faster; decision 10 above (one minor version per
+phase) is still the owner's to make. `make fuzz` and `make bench` are
+run when a hostile-input or budgeted path changed, and the report says so
+either way. The first release under the rule is 0.0.5j, which had been
+built and tested on 2026-10-06 but never tagged.
+
+Rejected: batching several builds into one release (the owner wants each
+build they test to be a named, tagged version they can go back to).
+
+---
+
+## 2026-10-13 — No assistant attribution anywhere in the repository (owner)
+
+The owner asked for the assistant's name to be removed from everything
+in the repository. From now on: commit messages carry no `Co-Authored-By`
+or other attribution line (in this repository and in the website
+repository); the working notes the assistant reads at the start of a
+session live in `docs/WORKING_NOTES.md` (the root file the tool loads
+automatically is now a two-line untracked pointer to it, excluded through
+`.git/info/exclude`); docs/ABOUT.md says "an AI coding assistant" without naming
+one; docs/SPEC.md's opening line no longer names the tool (an edit to the
+spec's preamble only, recorded here per §22). The git history before this
+entry still contains attribution lines; rewriting it is the owner's call
+(a force-push of `main` and every tag, in both repositories).

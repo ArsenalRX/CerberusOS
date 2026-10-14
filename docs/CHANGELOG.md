@@ -22,10 +22,11 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
-## 0.0.5j — 2026-10-06
+## 0.0.5j — 2026-10-13
 
 Round 3 continued (hard links) and round 4 of polish, the owner's eight
-picks of the 0.0.5i list, as far as a three-hour box allowed.
+picks of the 0.0.5i list, as far as a three-hour box allowed. Built and
+fully tested on 2026-10-06 (53 of 53 tests); released on 2026-10-13.
 
 ### Security
 - The desktop can **lock itself** after 1, 5, 15 or 30 idle minutes

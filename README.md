@@ -9,7 +9,9 @@ x86-64 hardware (today: QEMU and VirtualBox), brings up every CPU core, runs
 protected user programs, stores files on a journaled disk format of its own,
 and draws a desktop with windows you can move, resize and close.
 
-> **Status: early.** Version `0.0.5g`. Build phases 0 to 11 of 19 are done.
+> **Status: early.** Version `0.0.5j`. Build phases 0 to 11 of 19 are done.
+> The project site, generated from these docs: https://accerberus.github.io
+> How the work is organised: [docs/WORKING_NOTES.md](docs/WORKING_NOTES.md).
 > It runs in a virtual machine, not yet on your laptop, and it is not
 > ready for real data. See [What works today](#what-works-today) and
 > [Where it is going](#where-it-is-going).

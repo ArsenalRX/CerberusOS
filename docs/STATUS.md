@@ -18,14 +18,13 @@ matching docs/TO_FINISH.md.
 something works that does not, the next session builds on a broken base; if
 it omits half-done work, that work is lost or done twice.
 
-Last updated: **2026-10-06**.
+Last updated: **2026-10-13**.
 
 ## Version
 
-**0.0.5j is built and committed but NOT yet released** (the session hit
-its usage limit during the full `make test` of 2026-10-06; next session:
-`make test`, `make RELEASE=1 dist`, tag `v0.0.5j`, VERSION to 0.0.6a,
-rename the VM, push). `dist/` still holds 0.0.5i. 0.0.5j holds: hard links, and
+**0.0.5j is the current release (2026-10-13).** It was built and fully
+tested on 2026-10-06 (53 of 53) and released on 2026-10-13 after the
+session of 2026-10-06 ran out before tagging it. It holds: hard links, and
 polish round 4 — virtual desktops, the System Monitor with graphs and a
 process table, a BMP image viewer and wallpaper from a file, repeating
 reminders with snooze, auto-lock, Settings scrolling (B-012), `clear`,
@@ -49,15 +48,20 @@ request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-06, early):** 0.0.5j is
-released, in `dist/`, pushed; the owner's VirtualBox VM is "Cerberus
-0.0.5j" (in their `VirtualBox VMs` folder, 4 CPUs, a 1 GiB disk for
-`/data`). The owner's last instruction: polish for a three-hour box, then
-**move on to phase 12**. The box is spent: round 3 has a–(hard links)
-done and b–f open; round 4 has items 1, 2, 5, 8 done and 3, 4, 6, 7 part
-done (docs/DECISIONS.md, 2026-10-06, lists what is left). **Next session
-starts phase 12 (Pane)** per docs/TO_FINISH.md unless the owner picks
-more polish by number from the Desktop list. Nothing is half-written.
+**Where the last session stopped (2026-10-13):** 0.0.5j released, in
+`dist/`, pushed; the owner's VirtualBox VM is "Cerberus 0.0.5j" (in
+their `VirtualBox VMs` folder, 4 CPUs, a 1 GiB disk for `/data`). The
+session also folded the owner's roadmap review into docs/DECISIONS.md
+(2026-10-13, OPEN decisions 8–15) and made the public website
+(https://accerberus.github.io) generated from `docs/` (`make site-push`).
+**Owner rules added on 2026-10-13:** every build ends in a release (tag,
+`dist/`, VM, Desktop list, website, push); the website is regenerated and
+pushed after every change. The polish box is spent: round 3 has a (hard
+links) done and b–f open; round 4 has items 1, 2, 5, 8 done and 3, 4, 6,
+7 part done (docs/DECISIONS.md, 2026-10-06). **Next session starts phase
+12 (Pane)** per docs/TO_FINISH.md unless the owner picks more polish by
+number or answers decisions 8–15 first (11B/11C before Pane is one of
+them). Nothing is half-written.
 
 ---
 
@@ -69,9 +73,10 @@ more polish by number from the Desktop list. Nothing is half-written.
 12-13) runs in its own thread; 0.0.5g (2026-10-05) is a polish release of
 it.
 
-Next up: more desktop polish rounds chosen by the owner by number, then
-**Phase 12 — Pane, the window server as a user program** (SPEC §5 and
-§5A) when the owner says so.
+Next up: **Phase 12 — Pane, the window server as a user program** (SPEC
+§5 and §5A), unless the owner first picks polish by number or decides
+that the proposed phases 11B and 11C come first (docs/DECISIONS.md,
+2026-10-13, decision 14).
 
 Spec is version 2 (2026-10-03): security, privacy, networking and
 performance are requirements; our own web browser is phase 15B (owner,
@@ -111,7 +116,7 @@ All on 2026-10-06, on the 0.0.5j code (0.0.5h and 0.0.5i the day before:
   2.7 GiB, IDE, DVD = `dist/cerberus.iso`); it was 32-bit and was switched
   to 64-bit that day (B-001). It was left in a *saved* state, so it could
   not be renamed; when powered off, rename it `Cerberus <version>`
-  (CLAUDE.md). The boot menu no longer waits (B-002). Automated checks use
+  (docs/WORKING_NOTES.md). The boot menu no longer waits (B-002). Automated checks use
   a temporary "cerberus-check" VM in the session scratchpad (4 CPUs,
   2 GiB, VBoxVGA, serial to a file), deleted afterwards. Earlier, as of
   2026-10-04 (late evening), one VM was registered:

@@ -275,3 +275,27 @@ The page fault no longer clears its frame: a background thread keeps up to
 512 frames zeroed, so the fault takes one that is ready, and the
 hypervisor's first-touch cost moves out of the fault into idle time.
 Everything else is unchanged within run-to-run variation.
+
+## 0.0.5j — 2026-10-13 (hard links; polish round 4)
+
+Commit: the `v0.0.5j` tag (the kernel is that of 2026-10-06; the release
+build differs only in its version string). Debug build. Run on
+2026-10-13 before tagging, together with `make fuzz` (ELF 4,203,264
+inputs, tar 25,856, 600 `sysfuzz` children, 5,257 damaged cerfs images
+with the new hard-link code: no crash).
+
+### QEMU 8.2 + KVM in WSL2, 4 CPUs, 512 MiB — `make bench`, one run
+
+| Metric | Measured | Budget | Verdict |
+|---|---|---|---|
+| Context switch | 21 ns | 2,000 ns | within |
+| Wake-up latency, average | 10 µs | 1,000 µs | within |
+| Wake-up latency, worst of 500 | 194 µs | 1,000 µs | within |
+| `kmalloc(64)` + `kfree` pair | 67 ns | 100 ns | within |
+| Minor page fault | 1,161 ns | 2,000 ns | within |
+| System-call round trip | 30 ns | 300 ns | within |
+| Idle desktop CPU use | 0 % of ticks | under 1 % | within |
+| Last composite | 300 µs | 8 ms | within (partial frame) |
+
+No change from 0.0.5i outside run-to-run variation; every budgeted
+figure is within budget.

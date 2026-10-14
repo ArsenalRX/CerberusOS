@@ -13,14 +13,27 @@ re-ordered or re-scoped, or the owner adds a request.
 and is written for a person, not a programmer; tick items and move finished
 phases into it. Keep phase numbers identical to docs/SPEC.md §5.
 
-Last updated: **2026-10-05**, at release **0.0.5g** (phase 11 complete; desktop polish).
+Last updated: **2026-10-13**, at release **0.0.5j** (phase 11 complete; polish rounds 1–4).
 
 ---
 
-## What Cerberus can do today (0.0.5g)
+## What Cerberus can do today (0.0.5j)
 
 Cerberus is a 64-bit operating system written from scratch. It boots in
 QEMU and VirtualBox from an ISO (`dist/cerberus.iso`), with old BIOS or UEFI.
+
+**New since 0.0.5g (releases 0.0.5h, i, j; the full list is docs/FEATURES.md)**
+- Settings, reminders and notes are **saved** on a `/data` disk (Settings →
+  Storage sets one up); a **lock screen** (Super+L, auto-lock after idle
+  minutes); a clipboard with text selection; **Files**, **Notes**,
+  **Calculator** and an **Image Viewer** (BMP, "Set as wallpaper");
+  keyboard layouts US/UK/DE/FR with repeat settings and lock lights; a
+  **tray** with night light, a CPU meter and the notification history.
+- **Four virtual desktops** (Super+1..4); a **System Monitor** with CPU and
+  memory graphs, a process table and End task; repeating reminders with
+  snooze; a right-click menu on taskbar buttons; `clear` in the terminal.
+- **Hard links** (`ln a b`), `sigprocmask`, `port_try_send`; the minor page
+  fault is inside its budget (1.4 µs) thanks to a pool of pre-zeroed frames.
 
 **Starting up**
 - Boots straight into its own kernel in about a second; prints a boot
@@ -147,8 +160,16 @@ windows. The Spec programming language has not been started.
   dragging); frames drawn as soon as input arrives.
 - [x] Super opens the menu only on its own; the open menu takes all keys;
   About window fixes.
-- [ ] Still to do: open/close animations; frame pacing from a one-shot
-  timer; send input interrupts to a core that is not drawing.
+- [x] Open/close animations (done in 0.0.5g).
+- [ ] Still to do: frame pacing from a one-shot timer; send input
+  interrupts to a core that is not drawing.
+
+---
+
+## Done in 0.0.5d: anti-aliased text
+
+- [x] Build-time rendered DejaVu fonts for the whole desktop (interface,
+  terminal, wordmarks), a smooth close button, a dithered wallpaper.
 
 ---
 
@@ -499,7 +520,12 @@ menu.
 - [ ] Security left-overs: decide on retpolines; a per-core stack-protector
   value.
 - [ ] Not yet checked: UEFI boot and software emulation for this release; a
-  non-debug (`DEBUG=0`) build since 0.5.0.
+  non-debug (`DEBUG=0`) build since release 0.5.0 (2026-10-03).
+- [ ] *(fix)* Not everything the kernel can do has a command-line tool yet:
+  `head tail wc grep find sort diff du df kill sleep date env tee hexdump
+  uname free top` (phase 13's CLI set, or the proposed phase 11B).
+- [ ] Not there yet, so nobody looks for it: swap, pipes, a debugger, drag
+  and drop, time zones beyond a UTC offset.
 
 ---
 
@@ -507,18 +533,19 @@ menu.
 
 Budgets are defined for QEMU/KVM (docs/BENCH.md has every measurement).
 
-| What | Now (0.0.5a) | Budget | Status |
+| What | Now (0.0.5i) | Budget | Status |
 |---|---|---|---|
-| Switching between threads | 22–24 ns | 2,000 ns | well within |
-| Waking a waiting thread | 7–9 µs | 1,000 µs | well within |
-| Kernel memory allocate + free | 76–84 ns | 100 ns | within |
-| System call round trip | 33–34 ns | 300 ns | well within |
-| First touch of a memory page (minor fault) | 2.0–2.9 µs | 2 µs | **over** |
+| Switching between threads | 24 ns | 2,000 ns | well within |
+| Waking a waiting thread | 10 µs | 1,000 µs | well within |
+| Kernel memory allocate + free | 76 ns | 100 ns | within |
+| System call round trip | 36 ns | 300 ns | well within |
+| First touch of a memory page (minor fault) | 1.4 µs | 2 µs | within (since 0.0.5i) |
 | Idle desktop CPU use | 0 % | under 1 % | within |
 | Full-screen redraw on VirtualBox | ~23 ms | 8 ms (phase 12) | **over** |
 
 **Improvements planned**
-- [ ] *(speed)* Profile and cut the minor page-fault cost under 2 µs.
+- [x] *(speed)* The minor page fault under 2 µs: a pool of pre-zeroed
+  frames (0.0.5i, B-015).
 - [x] *(speed)* Faster window dragging: only changed pixels written
   (0.0.5b). The framebuffer was already write-combining.
 - [ ] *(speed)* One-shot timer: frame pacing at the display rate, and later

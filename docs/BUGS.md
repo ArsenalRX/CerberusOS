@@ -195,7 +195,7 @@ class of bug; if there is none, say so.
 - Cause: a wait counted in timer ticks and measured with the reference
   clock can read 1 ms short.
 - Fix: the test allows 45 ms. Looped 16 times afterwards without failure.
-- Guard: the rule in CLAUDE.md ("Timing checks in tests: leave a margin").
+- Guard: the rule in docs/WORKING_NOTES.md ("Timing checks in tests: leave a margin").
 - Status: FIXED 2026-10-04.
 
 ### B-007 — Keyboard stalled on VirtualBox with several CPUs
@@ -227,5 +227,5 @@ class of bug; if there is none, say so.
 - Cause: one level of backslash escaping is removed by the shell path.
 - Fix: write patch scripts with the editor into `build/wip/` and run them
   from there; grep for a line that is only `");` afterwards.
-- Guard: the rule in CLAUDE.md "Pitfalls".
+- Guard: the rule in docs/WORKING_NOTES.md "Pitfalls".
 - Status: FIXED (process).

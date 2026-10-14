@@ -1,4 +1,9 @@
-# Cerberus — working notes for Claude Code
+# Cerberus — working notes for the coding assistant
+
+(This file is loaded at the start of every session through the untracked
+root pointer file. The owner asked on 2026-10-13 that the repository
+carry no assistant name or attribution: no `Co-Authored-By` lines, no
+tool names in docs or commit messages.)
 
 (The OS was called Lumen until 2026-10-04; history files and git log use
 the old name. Its file system lumfs is now cerfs.)
@@ -25,6 +30,14 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
 
 ## After every iteration (owner, 2026-10-05)
 
+- **Every build is a release** (owner, 2026-10-13: "release after every
+  build"). When a piece of work is finished and `make test` passes, do the
+  whole of SPEC §23.4 at once, without asking: changelog block, STATUS,
+  `release: <version>` commit, tag `v<version>`, `make RELEASE=1 dist`,
+  rename the VM, the Desktop list, `release: begin <next>`, push `main`
+  and the tags, `make site-push`. Run `make fuzz` when a hostile-input
+  path changed and `make bench` when a budgeted path changed (record it in
+  docs/BENCH.md); otherwise say in the report that they were not re-run.
 - Put the build into VirtualBox: `make dist` (or copy `build/cerberus.iso`
   to `dist/cerberus.iso` while `make test` is running), and tell the owner
   the version (bottom-right of the wallpaper and in About). If the owner's
@@ -36,6 +49,15 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
   open, in plain words, plus a table of from-scratch programs still to
   write, and always end with **8 numbered QoL / addition candidates** for
   the owner to pick from.
+- **Preview every build yourself in VirtualBox** (owner, 2026-10-13):
+  boot the release ISO in a temporary VM (4 CPUs, 2 GiB, VBoxVGA, made
+  with VBoxManage in the scratchpad and deleted afterwards), drive it with
+  `keyboardputscancode`, take `screenshotpng` pictures of the desktop, the
+  launcher, Settings and whatever changed, **look at them**, and write a
+  "GUI and layout review" section into the Desktop list: what looks off
+  (alignment, spacing, contrast, clipping, stale text) and concrete
+  improvements to recommend. The QEMU probe's `!screenshot` is the fast
+  check during work; the VirtualBox pass is the one that ships.
 - The owner has an ultrawide monitor (32:9 modes matter) and tests in
   VirtualBox with the Hyper-V backend.
 - **Update and push the public website** (owner, 2026-10-13): `make
@@ -126,8 +148,8 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 - Desktop must look sleek ("Linux and Windows combined"), Windows-style
   caption buttons, smooth and responsive; privacy and security first;
   efficient on memory and CPU.
-- Commit messages: `phaseN: …`, `release: …`, `desktop: …`, `docs: …`, with
-  the Co-Authored-By line.
+- Commit messages: `phaseN: …`, `release: …`, `desktop: …`, `docs: …`; no
+  attribution or co-author lines (owner, 2026-10-13).
 - GitHub: `origin` is https://github.com/ArsenalRX/CerberusOS. After every
   verified release push `main` and the tags, with README.md (the public
   overview) and `docs/screenshots/` brought up to date.

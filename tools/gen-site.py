@@ -32,7 +32,6 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SITE = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else (ROOT.parent / "ACCerberus.github.io")
 BASE_URL = "https://accerberus.github.io"
-REPO_URL = "https://github.com/ArsenalRX/CerberusOS"
 TODAY = datetime.date.today().isoformat()
 
 # The release that completed each phase before the changelog named phases
@@ -800,7 +799,8 @@ if (list && toggle) {
 
 ICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%2306070f'/><circle cx='50' cy='50' r='20' fill='%235aa2ff'/></svg>"
 
-NAV = [("/", "Home"), ("/#today", "Today"), ("/roadmap/", "Roadmap"), ("/roadmap/#releases", "Releases"), ("/docs/", "Docs"), (REPO_URL, "GitHub")]
+# No link to the source repository anywhere on the site (owner, 2026-10-13).
+NAV = [("/", "Home"), ("/#today", "Today"), ("/roadmap/", "Roadmap"), ("/roadmap/#releases", "Releases"), ("/docs/", "Docs")]
 
 
 def shell(title, description, path, body, body_class, version, image="/img/screenshots/settings.png"):
@@ -849,7 +849,6 @@ def shell(title, description, path, body, body_class, version, image="/img/scree
       <a href="/">Home</a>
       <a href="/roadmap/">Roadmap</a>
       <a href="/docs/">Docs</a>
-      <a href="%(repo)s">Source</a>
     </nav>
   </div>
 </footer>
@@ -858,7 +857,7 @@ def shell(title, description, path, body, body_class, version, image="/img/scree
 </html>
 """ % {"title": html.escape(title), "desc": html.escape(description, quote=True), "base": BASE_URL, "path": path,
        "image": image, "icon": ICON, "cls": body_class, "nav": nav, "body": body, "version": version,
-       "today": TODAY, "repo": REPO_URL}
+       "today": TODAY}
 
 
 def esc(s):
@@ -996,7 +995,7 @@ def build():
       <div class="cta">
         <a class="btn primary" href="#today">See what works</a>
         <a class="btn" href="/roadmap/">Roadmap</a>
-        <a class="btn" href="%(repo)s">Source on GitHub</a>
+        <a class="btn" href="/docs/">Docs</a>
       </div>
       %(hero)s
       <div class="stats reveal">%(stats)s</div>
@@ -1153,7 +1152,7 @@ def build():
       </div>
     </div>
 """ % {
-        "pill": pill, "repo": REPO_URL, "stats": stats, "cards": "".join(cards),
+        "pill": pill, "stats": stats, "cards": "".join(cards),
         "hero": ('<figure class="shot hero-shot reveal"><div class="tilt"><img src="/img/screenshots/%s" alt="%s" width="1280" height="800" /></div></figure>' % (
             hero_shot.name, esc(captions.get(hero_shot.stem, "The Cerberus desktop")))) if hero_shot else "",
         "not_yet": ('<p class="note" style="margin-top:28px"><b>Not there yet:</b> %s</p>' % md_inline(" ".join(not_yet["text"].split()))) if not_yet else "",
@@ -1291,11 +1290,11 @@ def build():
         page = """
     <div class="head">
       <span class="eyebrow">Docs &middot; %(file)s</span>
-      <div class="docmeta"><span>%(words)s words</span><span>updated with every commit</span><a href="%(repo)s/blob/main/docs/%(file)s">View the source on GitHub</a></div>
+      <div class="docmeta"><span>%(words)s words</span><span>regenerated with every change</span></div>
       %(toc)s
     </div>
     <article class="prose">%(body)s</article>
-""" % {"file": esc(md_file.name), "words": "{:,}".format(words), "repo": REPO_URL, "toc": toc_html, "body": body_html}
+""" % {"file": esc(md_file.name), "words": "{:,}".format(words), "toc": toc_html, "body": body_html}
         doc_pages.append((name, title, blurb, page))
 
     order = {n: i for i, n in enumerate(DOC_ORDER)}

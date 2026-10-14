@@ -13,7 +13,7 @@ re-ordered or re-scoped, so that "What it can do today" and "Where it's
 going" stay true. Keep the language names from docs/DECISIONS.md (Spec,
 `specc`, `.spec`), never the older name used in SPEC.md.
 
-Last updated: **2026-10-05**, at release **0.0.5g**. (The system was called Lumen until 2026-10-04.)
+Last updated: **2026-10-13**, at release **0.0.5j**. (The system was called Lumen until 2026-10-04.)
 
 ---
 
@@ -39,9 +39,9 @@ everyday computer.
   and a taskbar, and a planned programming language, Spec, designed
   together with the system.
 - **Who makes it.** A personal project by one developer, the project owner,
-  built with an AI coding assistant (Claude Code) working from a written
+  built with an AI coding assistant working from a written
   design document.
-- **Where it stands.** The current release is **0.0.5g** (2026-10-05). It
+- **Where it stands.** The current release is **0.0.5j** (2026-10-13). It
   runs in the VirtualBox and QEMU virtual machines from a single ISO file,
   on old BIOS or modern UEFI, and can keep files on a virtual hard disk. It
   cannot yet connect to the internet or be installed on a real PC.
@@ -127,7 +127,7 @@ Programs run in **user mode**, a restricted processor mode. Only the
 kernel runs in **kernel mode** with full rights. When a program needs
 something only the kernel can do (open a file, get memory, start another
 program), it makes a **system call**: a controlled request through a single
-door, where every argument is checked. Cerberus has 14 system calls today and
+door, where every argument is checked. Cerberus has 74 system calls today and
 a small C library for programs. A program that crashes is stopped and
 reported; the rest of the system carries on.
 
@@ -317,7 +317,7 @@ instructions, and finally writes an ELF program file Cerberus can run.
 Phase 16 is done when `specc hello.spec -o hello` makes a program that runs
 on Cerberus and a Spec application with windows runs on the desktop.
 
-## What it can do today (0.0.5g)
+## What it can do today (0.0.5j)
 
 - Boots in VirtualBox and QEMU from one ISO, with BIOS or UEFI, in about a
   second, and uses every processor core.
@@ -331,6 +331,10 @@ on Cerberus and a Spec application with windows runs on the desktop.
   Settings window (any accent colour, six wallpapers, RGB window borders,
   resolutions up to ultrawide, time zone), and keyboard shortcuts
   (Alt+Tab, Alt+F4, Super, Super+D, Super+arrows, Print Screen).
+- Since 0.0.5h: settings, reminders and notes saved on a `/data` disk; a
+  lock screen; a clipboard; Files, Notes, Calculator and an image viewer;
+  keyboard layouts; a tray; four virtual desktops; a System Monitor with
+  graphs and a process table; hard links on cerfs.
 - Keeps files and folders, in memory and on disks formatted with cerfs
   (which survives a power cut), with permissions and the usual tools
   (`ls`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `mount`, `mkfs.cerfs` ...).
@@ -340,7 +344,7 @@ on Cerberus and a Spec application with windows runs on the desktop.
 - Has a built-in terminal shell that runs programs by name, with output
   redirection, system information and self-tests; the terminal scrolls back
   1,000 lines.
-- Has the security protections listed above, checked by 42 automated tests
+- Has the security protections listed above, checked by 53 automated tests
   and fuzzing.
 
 It cannot yet use the network, play sound, use USB, have user accounts,

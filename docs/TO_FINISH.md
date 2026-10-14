@@ -2,7 +2,7 @@
 
 A living checklist of what is done, what is in progress, and what remains.
 Pairs with `docs/STATUS.md` (current state) and `docs/SPEC.md` (the full plan).
-Read this to pick up work. Dates are absolute. Last updated 2026-10-05 (release 0.0.5g).
+Read this to pick up work. Dates are absolute. Last updated 2026-10-13 (release 0.0.5j).
 
 **What this file is for.** The ordered list of everything left to build, and
 the one place that says what to do first.
@@ -27,20 +27,23 @@ first, implement, self-review, verify with real output, document, commit.
 
 ---
 
-## Right now: phase 12 (Pane) — the polish box is spent
+## Right now: phase 12 (Pane), or the owner's decisions 8–15 first
 
-Version **0.0.5g** (desktop polish: calendar, reminders, notifications,
-animations, snapping, Alt+Tab, Settings cards, VirtualBox mouse) is the
-release of 2026-10-05. The owner said on 2026-10-05: "do more polish until
-we start phase 12", with a fixed loop: each iteration ships to VirtualBox,
-updates the HTML list on their Windows desktop, and ends with **8
-numbered candidates**; the owner picks by number (CLAUDE.md, "After every
+Version **0.0.5j** (hard links; polish round 4: virtual desktops, System
+Monitor graphs and process table, BMP viewer, repeating reminders,
+auto-lock) is the release of 2026-10-13. The loop since 2026-10-05: each
+iteration ships to VirtualBox, updates the HTML list on the owner's
+Windows desktop, ends with **8 numbered candidates**, and since 2026-10-13
+**every build is released** (tag, `dist/`, VM renamed, website pushed)
+and the website is regenerated from `docs/` (docs/WORKING_NOTES.md, "After every
 iteration"). docs/FEATURES.md lists what exists; docs/BUGS.md the bugs.
 
-**Start here next session: phase 12**, step 4 below. The owner's
-three-hour polish box ended with 0.0.5j on 2026-10-06; what it did not
-reach is listed in docs/DECISIONS.md (2026-10-06) and in step 3, and is
-done only if the owner asks for it by number.
+**Start here next session: phase 12**, step 4 below, unless the owner has
+answered decisions 8–15 in docs/DECISIONS.md (2026-10-13), in particular
+whether the proposed phases 11B (plumbing) and 11C (debugging) come before
+Pane. The three-hour polish box ended with 0.0.5j; what it did not reach
+is in docs/DECISIONS.md (2026-10-06) and in step 3, and is done only if
+the owner asks for it by number.
 
 **The owner's instruction of 2026-10-05 (evening):** "do all 1-8
 additions and re-go through all phases 1-11 and see if you can iterate to

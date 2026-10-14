@@ -1,6 +1,6 @@
 # Cerberus OS + Glint — Full Build Specification
 
-**This document is the prompt.** Paste it into Claude Code (or keep it at
+**This document is the prompt.** Give it to the coding assistant (or keep it at
 `docs/SPEC.md` in the repo and reference it every session). It defines a
 complete operating system with a graphical desktop and a systems programming
 language that targets it.
