@@ -22,9 +22,10 @@ Last updated: **2026-10-13**.
 
 ## Version
 
-**0.0.5j is the current release (2026-10-13).** It was built and fully
-tested on 2026-10-06 (53 of 53) and released on 2026-10-13 after the
-session of 2026-10-06 ran out before tagging it. It holds: hard links, and
+**0.0.6a is the current release (2026-10-13, evening):** the VirtualBox
+mouse fix (B-016), 53 of 53 tests. Before it, **0.0.5j** (2026-10-13), built
+and fully tested on 2026-10-06 and released after the session of
+2026-10-06 ran out before tagging it. 0.0.5j holds: hard links, and
 polish round 4 — virtual desktops, the System Monitor with graphs and a
 process table, a BMP image viewer and wallpaper from a file, repeating
 reminders with snooze, auto-lock, Settings scrolling (B-012), `clear`,

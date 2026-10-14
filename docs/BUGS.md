@@ -59,8 +59,8 @@ class of bug; if there is none, say so.
   of every build (`tools/vbox-preview.sh`) shows the boot line, and the
   owner's hand check covers motion. Rule: never rely on a PS/2 packet
   arriving under VirtualBox.
-- Status: FIXED in the tree 2026-10-13, awaiting the owner's check on
-  their VM (dev build 0.0.6a-dev in `dist/`).
+- Status: FIXED 2026-10-13 (0.0.6a); the owner's check on their VM is
+  still to come.
 
 ### B-010 — `eventtest` misses its 1 ms wake-up limit on VirtualBox
 - Found: 2026-10-04, running the phase 11 programs on VirtualBox.
