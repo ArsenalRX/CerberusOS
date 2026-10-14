@@ -14,7 +14,6 @@ something the docs do not:
   docs/SYSCALLS.md         the system-call count
   tests/integration/       the integration-test count
   docs/screenshots/        the pictures
-  docs/*.md                rendered one page each under /docs/
 
 usage: python3 tools/gen-site.py [site-dir]     (default ../ACCerberus.github.io)
 
@@ -38,24 +37,6 @@ TODAY = datetime.date.today().isoformat()
 # in its text (0.0.1 and 0.3.0 predate the per-phase headings).
 EARLY_PHASE_RELEASE = {0: "0.3.0", 1: "0.3.0", 2: "0.3.0", 3: "0.3.0"}
 
-# One line per document for the docs index; a file not listed here gets its
-# own "What this file is for" paragraph instead.
-DOC_BLURBS = {
-    "ABOUT": "A plain-language tour of Cerberus and the Spec language, for anyone.",
-    "STATUS": "What is true right now: the version, what is verified, what is half-done.",
-    "ROADMAP": "Everything still to add, fix and speed up, phase by phase, written for a person.",
-    "FEATURES": "The inventory of what exists today and how each thing is used.",
-    "CHANGELOG": "What changed in every version, newest first.",
-    "BUGS": "The bug ledger: every bug found, its cause, its fix and what guards against it.",
-    "BENCH": "Measured performance over time, against the written budgets.",
-    "DECISIONS": "Why the system is the way it is: every design decision, dated, with the alternatives rejected.",
-    "SPEC": "The full specification: the contract the system is built to.",
-    "TO_FINISH": "The working checklist: what is done, what is next, what remains.",
-    "SYSCALLS": "The system-call reference, generated from the kernel's own table.",
-    "INSTALLER": "Research notes for the installer, USB media and dual boot (phase 18).",
-}
-DOC_ORDER = ["ABOUT", "FEATURES", "STATUS", "ROADMAP", "CHANGELOG", "BUGS", "BENCH",
-             "SYSCALLS", "DECISIONS", "SPEC", "TO_FINISH", "INSTALLER"]
 
 
 def read(name):
@@ -73,7 +54,25 @@ def slugify(text):
 # check boxes, tables, fenced code, block quotes, rules; inline code, bold,
 # italic, links, images). Written here rather than imported (no dependencies).
 
+def voice(text):
+    """The docs are written as notes between the project's owner and the
+    assistant; the site speaks for the project itself (owner, 2026-10-13:
+    nothing on it may read as if someone were building it for them)."""
+    text = re.sub(r"\s*\((?:the )?owner[^)]*\)", "", text, flags=re.I)
+    text = re.sub(r"\*?Owner decision (?:needed )?first:?\*?", "**Decision to make first:**", text)
+    text = re.sub(r"owner decisions? (\d)", r"decision \1", text, flags=re.I)
+    text = re.sub(r"Decided by the owner on", "Decided on", text)
+    text = re.sub(r"Owner asked for", "Planned:", text)
+    text = re.sub(r"\bthe owner's (eight|\d+) picks\b", r"the \1 picks", text, flags=re.I)
+    text = re.sub(r"\bthe owner's\b", "the project's", text, flags=re.I)
+    text = re.sub(r"\bthe owner said to\b", "the plan is to", text, flags=re.I)
+    text = re.sub(r"\bthe owner\b", "the project", text, flags=re.I)
+    text = re.sub(r"\bowner\b", "project", text)
+    return text
+
+
 def md_inline(text, in_code=False):
+    text = voice(text)
     codes = []
 
     def keep(m):
@@ -442,7 +441,7 @@ def first_sentence(text, limit):
 
 def plain(md):
     """Markdown → plain text for short blurbs."""
-    t = re.sub(r"`([^`]+)`", r"\1", md)
+    t = re.sub(r"`([^`]+)`", r"\1", voice(md))
     t = re.sub(r"\*\*(.+?)\*\*", r"\1", t)
     t = re.sub(r"\*(.+?)\*", r"\1", t)
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
@@ -800,7 +799,7 @@ if (list && toggle) {
 ICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%2306070f'/><circle cx='50' cy='50' r='20' fill='%235aa2ff'/></svg>"
 
 # No link to the source repository anywhere on the site (owner, 2026-10-13).
-NAV = [("/", "Home"), ("/#today", "Today"), ("/roadmap/", "Roadmap"), ("/roadmap/#releases", "Releases"), ("/docs/", "Docs")]
+NAV = [("/", "Home"), ("/#today", "Today"), ("/#security", "Security"), ("/roadmap/", "Roadmap"), ("/roadmap/#releases", "Releases")]
 
 
 def shell(title, description, path, body, body_class, version, image="/img/screenshots/settings.png"):
@@ -848,7 +847,7 @@ def shell(title, description, path, body, body_class, version, image="/img/scree
     <nav>
       <a href="/">Home</a>
       <a href="/roadmap/">Roadmap</a>
-      <a href="/docs/">Docs</a>
+      <a href="/roadmap/#releases">Releases</a>
     </nav>
   </div>
 </footer>
@@ -952,8 +951,8 @@ def build():
     for a in features:
         if a["title"] in skip or not a["bullets"]:
             continue
-        cards.append('<article class="card slim reveal"><h3>%s</h3><p>%s</p><a class="more" href="/docs/features/#%s">All of it &rarr;</a></article>' % (
-            esc(a["title"]), md_inline(first_sentence(plain(a["bullets"][0]), 170)), a["id"]))
+        cards.append('<article class="card slim reveal"><h3>%s</h3><p>%s</p></article>' % (
+            esc(a["title"]), md_inline(first_sentence(plain(a["bullets"][0]), 170))))
     not_yet = next((a for a in features if a["title"] == "Not there yet"), None)
 
     news = []
@@ -995,7 +994,6 @@ def build():
       <div class="cta">
         <a class="btn primary" href="#today">See what works</a>
         <a class="btn" href="/roadmap/">Roadmap</a>
-        <a class="btn" href="/docs/">Docs</a>
       </div>
       %(hero)s
       <div class="stats reveal">%(stats)s</div>
@@ -1007,14 +1005,14 @@ def build():
       <div class="grid g3">
         <article class="card reveal"><span class="num">01</span><h3>Private and secure by design</h3><p>No telemetry. Nothing leaves the machine unless you ask. Memory is never writable and executable at once, and every system-call argument is treated as hostile.</p></article>
         <article class="card reveal"><span class="num">02</span><h3>Fast and small</h3><p>A message between two programs takes well under a microsecond. Every performance budget is measured and recorded, so a regression is visible.</p></article>
-        <article class="card reveal"><span class="num">03</span><h3>Understandable</h3><p>One small system, with a written specification and the reasoning behind every decision, all published in <a href="/docs/">the docs</a>.</p></article>
+        <article class="card reveal"><span class="num">03</span><h3>Understandable</h3><p>One small system, with a written specification and the reasoning behind every decision written down.</p></article>
       </div>
     </section>
 
     <section id="today">
       <span class="eyebrow">What works today</span>
       <h2>A real system, from the boot sector to the window shadows.</h2>
-      <p class="sub">It runs in QEMU and VirtualBox today, brings up every CPU core, and runs protected user programs. Each card is the first line of its section in <a href="/docs/features/">the feature inventory</a>, which lists everything.</p>
+      <p class="sub">It runs in QEMU and VirtualBox today, brings up every CPU core, and runs protected user programs. Each card is the first line of its section in the feature inventory.</p>
       <div class="grid g3">%(cards)s</div>
       %(not_yet)s
     </section>
@@ -1059,7 +1057,7 @@ def build():
           <span class="eyebrow">Architecture</span>
           <h2>A hybrid kernel, in clear layers.</h2>
           <p>Anything that needs sub-microsecond speed or special processor instructions stays in the kernel. Everything else runs as an ordinary, protected program.</p>
-          <p style="margin-top:14px">Each layer only talks to the one below it through well-defined, checked doors. The plain-language tour is in <a href="/docs/about/">About Cerberus</a>.</p>
+          <p style="margin-top:14px">Each layer only talks to the one below it through well-defined, checked doors.</p>
         </div>
         <div class="stack reveal">
           <div class="layer"><b>Applications</b><span>Terminal, file manager, editor</span><em>phase 13</em></div>
@@ -1073,7 +1071,7 @@ def build():
     <section id="measured">
       <span class="eyebrow">Measured</span>
       <h2>Every budget is measured and written down.</h2>
-      <p class="sub">The newest block in <a href="/docs/bench/">the benchmark record</a> (%(bench)s), on QEMU/KVM with 4 cores. Each number is checked against a written budget.</p>
+      <p class="sub">The newest block of the benchmark record (%(bench)s), on QEMU/KVM with 4 cores. Each number is checked against a written budget.</p>
       <div class="grid g4">%(measured)s</div>
     </section>
 
@@ -1096,7 +1094,6 @@ def build():
         <figure class="shot reveal"><img src="/img/screenshots/%(hero_name)s" alt="%(hero_alt)s" width="1280" height="800" loading="lazy" /><figcaption>%(hero_alt)s</figcaption></figure>
       </div>
       <div class="grid g3" style="margin-top:16px">%(gallery)s</div>
-      <p class="note">Everything the desktop can do, key by key, is in <a href="/docs/features/#desktop-kernel-hosted-preview-of-pane">the feature inventory</a>.</p>
     </section>
 
     <section id="roadmap">
@@ -1148,7 +1145,7 @@ def build():
       <p>%(next_text)s</p>
       <div class="cta">
         <a class="btn primary" href="/roadmap/">Read the full roadmap</a>
-        <a class="btn" href="/docs/status/">What is verified right now</a>
+        <a class="btn" href="/roadmap/#releases">Release history</a>
       </div>
     </div>
 """ % {
@@ -1159,7 +1156,7 @@ def build():
         "lv": esc(latest["v"]), "ldate": esc(latest["date"] or ""), "lintro": md_inline(latest["intro"]) if latest["intro"] else "The release notes, straight from the changelog.",
         "news": "".join(news), "tests": n_tests,
         "bugs": ('<p class="minor">Open bugs, from the ledger</p><div class="work reveal">%s</div>' % "".join(
-            '<div><b><a href="/docs/bugs/#%s">%s</a></b> %s</div>' % (slugify("%s — %s" % (b, s)), b, md_inline(s)) for b, s in open_bugs)) if open_bugs else
+            '<div><b>%s</b> %s</div>' % (b, md_inline(s)) for b, s in open_bugs)) if open_bugs else
             '<p class="minor">The bug ledger has no open entries</p>',
         "bench": esc(bench_title), "measured": measured,
         "hero_name": hero_shot.name if hero_shot else "", "hero_alt": esc(captions.get(hero_shot.stem, "")) if hero_shot else "",
@@ -1173,11 +1170,10 @@ def build():
         items = rp["items"] if rp else []
         shown = items[:8]
         lis = "".join('<li class="%s">%s</li>' % ("done" if it["done"] else "", md_inline(it["text"])) for it in shown)
-        more = ('<p class="note">%d more items in <a href="/docs/roadmap/#%s">the roadmap document</a>.</p>' % (
-            len(items) - 8, slugify("Phase %s — %s" % (rp["n"], rp["title"])))) if len(items) > 8 else ""
+        more = ('<p class="note">%d more items in the full plan.</p>' % (len(items) - 8)) if len(items) > 8 else ""
         goal = ('<p class="goal"><b>Done when:</b> %s</p>' % md_inline(rp["goal"])) if rp and rp["goal"] else ""
         if rp and rp["decision"]:
-            goal += '<p class="goal"><b>Owner decision first:</b> %s</p>' % md_inline(rp["decision"])
+            goal += '<p class="goal"><b>Decision to make first:</b> %s</p>' % md_inline(rp["decision"])
         intro = md_inline(rp["intro"]) if rp and rp["intro"] else md_inline(p["text"])
         title = rp["title"] if rp else p["title"]
         return ('<article class="phase %s" id="phase-%s"><header><span class="n">Phase %s</span><h3>%s</h3><span class="tag">%s</span></header>'
@@ -1220,7 +1216,7 @@ def build():
     <div class="head">
       <span class="eyebrow">Roadmap</span>
       <h1>Where Cerberus is going, <span>and how it got here.</span></h1>
-      <p class="lead">Cerberus is built in numbered phases. Each one ends in a tested release, and no phase starts until the one before it passes its acceptance tests. This page is generated from <a href="/docs/to_finish/">the checklist</a>, <a href="/docs/roadmap/">the roadmap document</a> and <a href="/docs/changelog/">the changelog</a>.</p>
+      <p class="lead">Cerberus is built in numbered phases. Each one ends in a tested release, and no phase starts until the one before it passes its acceptance tests. This page is generated from the project's own checklist, plan and changelog.</p>
       <div class="jump">
         <a class="btn small" href="#now">Next up</a>
         <a class="btn small" href="#ahead">What's coming</a>
@@ -1234,10 +1230,8 @@ def build():
     <section id="now">
       <span class="eyebrow">Next up</span>
       <h2>What is being built next.</h2>
-      <p class="sub">The newest release is v%(lv)s (%(ldate)s). %(rn_title)s</p>
+      <p class="sub">The newest release is v%(lv)s (%(ldate)s).</p>
       <div class="ahead">%(now)s</div>
-      <p class="minor">Right now, from the checklist</p>
-      <div class="work"><div>%(rn_text)s</div></div>
     </section>
 
     <section id="ahead">
@@ -1259,7 +1253,7 @@ def build():
         <div>
           <span class="eyebrow">Release history</span>
           <h2>Every version so far.</h2>
-          <p class="sub">From the first snapshot to the latest release, with the real dates, straight from <a href="/docs/changelog/">the changelog</a>. Pick a version to see what it changed.</p>
+          <p class="sub">From the first snapshot to the latest release, with the real dates, straight from the changelog. Pick a version to see what it changed.</p>
         </div>
         <button class="btn" id="toggle" type="button">Expand all</button>
       </div>
@@ -1269,46 +1263,6 @@ def build():
 """ % {"track": track, "last_done": last_done, "next_n": next_n, "lv": esc(latest["v"]), "ldate": esc(latest["date"] or ""),
        "rn_title": right_now[0], "rn_text": right_now[1], "now": now_card, "ahead": ahead,
        "n_done": len(done_phases), "finished": finished, "unreleased": unreleased_html, "releases": rel_html}
-
-    # ---- docs pages
-    doc_pages = []
-    for md_file in sorted(DOCS.glob("*.md")):
-        name = md_file.stem
-        text = md_file.read_text(encoding="utf-8")
-        r = Md(text)
-        body_html = r.render()
-        h1 = next((h for h in r.headings if h[0] == 1), None)
-        title = h1[1] if h1 else name
-        blurb = DOC_BLURBS.get(name)
-        if not blurb:
-            m = re.search(r"\*\*What this file is for\.\*\*\s*(.*?)(?:\n\n|$)", text, re.S)
-            blurb = first_sentence(plain(m.group(1).replace("\n", " ")), 160) if m else ""
-        toc = [h for h in r.headings if h[0] == 2]
-        toc_html = ('<nav class="toc"><b>On this page</b><ul>%s</ul></nav>' % "".join(
-            '<li><a href="#%s">%s</a></li>' % (h[2], md_inline(h[1])) for h in toc)) if len(toc) > 2 else ""
-        words = len(re.findall(r"\w+", text))
-        page = """
-    <div class="head">
-      <span class="eyebrow">Docs &middot; %(file)s</span>
-      <div class="docmeta"><span>%(words)s words</span><span>regenerated with every change</span></div>
-      %(toc)s
-    </div>
-    <article class="prose">%(body)s</article>
-""" % {"file": esc(md_file.name), "words": "{:,}".format(words), "toc": toc_html, "body": body_html}
-        doc_pages.append((name, title, blurb, page))
-
-    order = {n: i for i, n in enumerate(DOC_ORDER)}
-    doc_pages.sort(key=lambda d: order.get(d[0], 99))
-    doc_cards = "".join('<a class="card doc reveal" href="/docs/%s/"><div class="path">docs/%s.md</div><h3>%s</h3><p>%s</p></a>' % (
-        n.lower(), esc(n), esc(plain(t)), esc(b)) for n, t, b, _ in doc_pages)
-    docs_index = """
-    <div class="head">
-      <span class="eyebrow">Docs</span>
-      <h1>Every document, <span>as it is in the repository.</span></h1>
-      <p class="lead">These pages are rendered from the Markdown files in <code>docs/</code> on every update, so they say exactly what the project's own records say. The specification wins over every other document; the status file says what was verified and when.</p>
-    </div>
-    <div class="grid g3">%s</div>
-""" % doc_cards
 
     # ---- write everything
     SITE.mkdir(parents=True, exist_ok=True)
@@ -1323,19 +1277,12 @@ def build():
         "Roadmap and release history — Cerberus OS",
         "Where Cerberus OS is going, phase by phase, and every release from the first snapshot to the latest version.",
         "/roadmap/", roadmap_page, "narrow", latest["v"]), encoding="utf-8")
+    # No document pages on the site (owner, 2026-10-13): a stale /docs/ from an
+    # earlier generation is removed.
     docs_dir = SITE / "docs"
     if docs_dir.exists():
         shutil.rmtree(docs_dir)
-    docs_dir.mkdir()
-    (docs_dir / "index.html").write_text(shell(
-        "Documentation — Cerberus OS", "The Cerberus OS documents, rendered from the repository: about, features, status, roadmap, changelog, bugs, benchmarks, decisions and the specification.",
-        "/docs/", docs_index, "home", latest["v"]), encoding="utf-8")
-    urls = ["/", "/roadmap/", "/docs/"]
-    for n, t, b, page in doc_pages:
-        d = docs_dir / n.lower()
-        d.mkdir()
-        (d / "index.html").write_text(shell("%s — Cerberus OS" % plain(t), b or plain(t), "/docs/%s/" % n.lower(), page, "narrow", latest["v"]), encoding="utf-8")
-        urls.append("/docs/%s/" % n.lower())
+    urls = ["/", "/roadmap/"]
     img = SITE / "img" / "screenshots"
     if img.exists():
         shutil.rmtree(img)
@@ -1377,9 +1324,9 @@ def build():
   "icons": [{ "src": "%s", "sizes": "any", "type": "image/svg+xml" }]
 }
 """ % ICON, encoding="utf-8")
-    print("site: %s (v%s released%s; VERSION %s; phases 0-%d done, next %d; %d docs, %d screenshots, %d releases)" % (
+    print("site: %s (v%s released%s; VERSION %s; phases 0-%d done, next %d; %d screenshots, %d releases)" % (
         SITE, latest["v"], ", %s built but untagged" % ", ".join(p["v"] for p in pending) if pending else "",
-        version_next, last_done, next_n, len(doc_pages), len(screenshots), len(releases)))
+        version_next, last_done, next_n, len(screenshots), len(releases)))
 
 
 if __name__ == "__main__":
