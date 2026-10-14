@@ -289,9 +289,140 @@ output.
 
 ---
 
+## Proposed additions awaiting the owner (review of 2026-10-12)
+
+The owner's review drafts `ROADMAP_PROPOSALS.md` and `CERBERUS_DOCS_NEEDED.md`
+were folded into docs/DECISIONS.md (2026-10-13, "The owner's roadmap
+proposals and docs wish-list") and deleted. Nothing here is scheduled until
+the owner answers decisions 8–15 there; the items are listed so they are
+not lost. Proposed order: 11 → 11B → 11C → 12 → 13 → 13B → 14 → 15 → 14B
+→ 15B → 16 → 17 → 17B → 18 → 18B → 19.
+
+- [ ] **Fixes to make regardless:** a minimal supervisor in phase 12
+  (Pane must restart if it crashes; `init` starts nothing until 18);
+  app identity and the `restrict` core before 12/14 enforce permissions;
+  pty + termios + job control in 13 for Ember; a shared inflate and
+  PNG/JPEG/GIF library in 13; the stale ROADMAP.md lines (0.0.5b
+  animations, performance table at 0.0.5a, missing 0.0.5d section, the
+  file-mmap contradiction, "cannot do yet" omissions).
+- [ ] **Phase 11B — Everyday plumbing.** Pipes/FIFOs; shell grammar (`| <
+  2> & ; && ||`, quoting, `$VAR`, globbing, `~`, `$?`); environment and
+  `PATH`; `/sys` introspection (`/sys/proc/<pid>/{maps,status,fds,ports,
+  threads}`, `/sys/cpu`, `/sys/mem`, `/sys/irq`) replacing `ps`/`irqs`/
+  `heapstat`; file watching via `event_ctl`; `utimes`, file and range
+  locks, cross-directory atomic `rename`, sparse files, `statfs`; the
+  phase 11 carry-overs; resource limits per process and user; memory
+  pressure (swap with a per-boot key, OOM policy protecting `init`, Pane,
+  netd, the shell, pressure events, `madvise`, 2 MiB pages); monotonic vs
+  real-time clocks, a time-zone database, UTF-8 everywhere; tools `chmod
+  chown head tail wc grep find sort diff less du df kill sleep date env
+  tee xargs hexdump uname free top`. Done when `ls /bin | grep s | sort |
+  head -3 > out` works, a fork bomb is stopped with the shell responsive,
+  a memory hog is killed while Pane survives, a watcher sees a change
+  within 10 ms.
+- [ ] **Phase 11C — Debug and observe.** GDB stub over serial (`-s -S`
+  workflow); `.eh_frame` unwinder (fixes the prologue-fault backtrace);
+  `cdb` user debugger, core dumps to `/var/crash`, a symbolised backtrace
+  on every crash; sanitizers (heap quarantine with both stacks, lock-order
+  checker, object leak detector, UBSan, ASan-style libc malloc);
+  always-on per-core flight recorder dumped on panic; tracepoints, `trace
+  <program>`, a sampling profiler with flame-graph output; lockup/stall
+  watchdogs, reboot-on-panic option; coverage-guided syscall-sequence
+  fuzzing, deterministic TCG `-icount` CI, golden-screenshot desktop
+  tests, a 10% benchmark gate.
+- [ ] **Phase 12 additions.** HiDPI/fractional scale and an accessibility
+  tree in the protocol from day one; multiple monitors and hot-plug;
+  typed clipboard and drag and drop via Pane; frame callbacks and vsync
+  pacing with a frame-time overlay; input-method hooks; a capture
+  indicator nothing can cover; virtio-gpu; protocol versioning; input
+  record/replay with golden screenshots.
+- [ ] **Phase 13 additions.** Ember tabs/true colour/search/clickable
+  paths; Slate highlighting/hex view/LSP client/find in files; Crate
+  trash/search/previews/tabs/archives/USB mount; Gauge capability graph
+  and flight-recorder viewer; Dial layouts/locale/power/accessibility and
+  a Permissions page; archive manager, screenshot tool, calendar and
+  notes (port from the kernel desktop), help viewer; combining marks,
+  bidi, emoji, a shaping decision; accessibility as a deliverable
+  (role/name/state on every widget, high contrast, large text, reduce
+  motion, sticky keys, magnifier, colour-blind-safe accents).
+- [ ] **Phase 13B — Real hardware bring-up** (after 13): USB (xHCI, hubs,
+  HID, mass storage); UEFI GOP, SMBIOS in About, Secure Boot status; an
+  AML interpreter (ACPICA or own) for power button, lid, battery, thermal,
+  S3, MWAIT, frequency scaling; touchpads and I2C-HID, brightness keys;
+  invariant-TSC calibration; MSI-X, SMART, TRIM; an IOMMU; e1000e/igc and
+  r8169; `hwreport`, docs/HARDWARE.md. Done when the ISO on a USB stick
+  boots two real PCs with USB input, one suspends and resumes, battery
+  shows in the taskbar.
+- [ ] **Phase 14 additions.** Per-app host allowlists in `netd`, per-app
+  traffic accounting, network namespaces for sandboxes, measured zero-copy
+  receive, IPv6 pulled from 19.
+- [ ] **Phase 14B — Network extras** (after 15): NTP/SNTP (later NTS),
+  mDNS/DNS-SD, DoT/DoH option, WireGuard, SSH client and off-by-default
+  server (Ed25519 only) with scp/SFTP, `pcap` behind a permission; last
+  and optional: one Wi-Fi family with WPA2/WPA3 for the user's own
+  networks, Bluetooth HID, QUIC/HTTP/3.
+- [ ] **Phase 15 additions.** One capability model (handles with rights);
+  per-process mount namespaces; `restrict` allowlists, promises and
+  `--learn`; CET, IBT, PKU, a written Meltdown/Spectre decision, KASLR
+  moved here; passkeys/FIDO2, TOTP, a secure attention key, a guest
+  session; encrypted homes, `explicit_bzero`, `mlock`;
+  docs/THREAT_MODEL.md.
+- [ ] **Phase 15B additions.** Reader mode, content blocking, per-site
+  permissions, a site-isolation test, a developer view, the JavaScript
+  decision gate with a per-tab memory budget.
+- [ ] **Phase 17B — Portable apps** (after 17): a WASM/WASI runtime
+  (SQLite, Lua, CPython in a box); `try` and `box`; far horizon: a Linux
+  syscall layer in a sandbox, a VT-x hypervisor.
+- [ ] **Phase 18B — Resilience** (with or after 18): system generations
+  with automatic rollback; verified boot (signed kernel, hash tree, TPM
+  2.0 sealed key); restartable user-mode drivers; cerfs data checksums,
+  snapshots and `undo`, scrub, online resize, TRIM, compression, quotas,
+  xattrs, reflinks; exFAT, read-only NTFS/ext4; `backup`; local-only
+  crash reports.
+- [ ] **Phase 19 additions.** Sound with per-app volume and capture
+  indicator, camera, printing; an `arch/` split and RISC-V before ARM64;
+  GPU acceleration (virtio-gpu first), video decode; a Spec package
+  ecosystem.
+- [ ] **Signature features** (owner decision 13): record/replay, flight
+  recorder with causal tracing, `why`, `try`, typed tables and a
+  structured shell, chaos mode, file transactions and `undo`, capability
+  types in Spec with generated manifests, typed ports, `fuzzd`, glass-box
+  mode, crash-surviving services, a reproducible self-verifying system, a
+  live capability graph. Suggested first five: flight recorder, chaos
+  mode, typed tables, `why`, replay.
+- [ ] **Spec-0 early** (phase 16 in parallel): integers, functions,
+  `if`/`while`, structs, pointers, a `syscall` intrinsic, x86-64 and ELF
+  out; then slices, enums and `match`, `Result`, `comptime` generics,
+  linear handles, capability types; stage 0 in C++, stage 1 in Spec; a
+  language specification and conformance tests before a second backend.
+- [ ] **Depth items with no home yet:** fair-share and real-time
+  scheduling classes, hyper-thread awareness, per-process CPU/energy
+  accounting, >32 cores; RCU-style name cache; per-user memory accounting,
+  memory compression; kernel lockdown, read-only-after-init, constant-time
+  crypto comparisons; per-core canary and retpolines; a syscall surface
+  review table in docs/SYSCALLS.md.
+- [ ] **Budgets to add to SPEC §20.1:** pipe ≥ 2 GB/s; fork+exec+exit ≤
+  150 µs; port round trip ≤ 2 µs; page-cache hit read ≤ 1 µs; cerfs
+  `fsync` (measure); idle desktop memory ≤ 64 MiB; input-to-photon ≤ 2
+  frames; flight recorder ≤ 2 %; record mode ≤ 3×.
+- [ ] **Project health:** CI matrix (BIOS/UEFI × KVM/TCG/VirtualBox ×
+  debug/`DEBUG=0`), a release-gate checklist, `-Werror` and a static
+  analyser, reproducible builds, the build tree off the Windows drive,
+  fuzz corpora in the repo, a licence policy before any port, an SBOM
+  per ISO.
+- [ ] **Docs to write** (owner, 2026-10-12): INDEX, INVARIANTS, HANDOFF,
+  DEFINITION_OF_DONE, RESEARCH + `docs/research/`, IDEAS first; then
+  ARCHITECTURE, PLAYBOOKS, TESTING, DEBUGGING, LESSONS, ABI/CERFS/
+  PANE_PROTOCOL, DESIGN, GLOSSARY, BUILD, RELEASE, THREAT_MODEL,
+  HARDWARE, `spec-lang/`; generate parts of FEATURES from source; a docs
+  consistency check in CI.
+
 ## Waiting on the owner
 
-Details in `docs/DECISIONS.md`, entry 2026-10-03.
+Details in `docs/DECISIONS.md`, entries 2026-10-03 and 2026-10-13
+(decisions 8–15: ACPI source, capability model, release numbering, text
+shaping, WASI runtime, signature features, 11B/11C before 12 or after,
+which docs first).
 
 - [ ] TLS/cryptography source: port Mbed TLS (recommended), port BearSSL, or
   write in-tree. Before phase 15.

@@ -1418,3 +1418,300 @@ to reorder, hover previews (3); terminal colours/escape sequences, zoom,
 a second terminal (4); a light theme, panel opacity, UI scale (6); screen
 dimming and a boot splash (7); the clock-hover "today" strip (8). Then
 round 3's b–f. The owner said to move to phase 12 after the box.
+
+---
+
+## 2026-10-13 — The owner's roadmap proposals and docs wish-list (OPEN)
+
+On 2026-10-12 the owner put two review drafts in `docs/`
+(`ROADMAP_PROPOSALS.md`, a review of docs/ROADMAP.md at 0.0.5g, and
+`CERBERUS_DOCS_NEEDED.md`, a list of documents a coding agent needs). Both
+were read in full on 2026-10-13 and, at the owner's request, deleted; this
+entry and the "Proposed additions" section of docs/TO_FINISH.md are their
+permanent record. Nothing below changes docs/SPEC.md until the owner
+decides; the proposals keep the letter-suffix convention (11B, 13B …) so
+§5 is never renumbered.
+
+**Problems the review found in the roadmap (to fix regardless):**
+
+- Dependency inversions. Pane (12) runs as a program and must be restarted
+  if it crashes, but `init` starts nothing until the phase 18 service
+  manager → put a *minimal supervisor* (start list, restart on crash, log)
+  in 12. Per-app screenshot/clipboard permission (12) and per-app network
+  permission (14) need application identity and the `restrict` core from
+  15 → pull those forward (11B or 12), or 12 and 14 enforce stubs. Ember
+  (13) needs ptys and termios from 17 → move pty + termios + basic job
+  control to 13. The browser (15B) needs inflate, JPEG and GIF, which no
+  phase lists → a shared inflate and image-codec library in 13. The
+  installer (18) on real disks needs real-hardware testing, now in 19 →
+  phase 13B.
+- Stale lines in ROADMAP.md: 0.0.5b still lists animations as to-do (done
+  in 0.0.5g); the performance table's "Now" column says 0.0.5a; "a
+  `DEBUG=0` build since 0.5.0"; no "Done in 0.0.5d" section; phase 9 says
+  file `mmap` is done in 11 while 11 says shared/demand-paged mappings are
+  left for later; "what it cannot do yet" omits swap, pipes, a debugger,
+  drag and drop.
+- **Release letters run out:** the scheme ends at `0.0.5j` (SPEC §23.1
+  continues with `0.0.6a`, so it does not actually run out, but the owner
+  suggests one minor version per phase, `0.0.6` = phase 12, letters for
+  point releases inside a phase). *Owner decision 10; needed before the
+  next tag.*
+- Missing core tools: `chmod chown head tail wc grep find sort diff less
+  du df kill sleep date env tee xargs hexdump uname free top`.
+
+**Proposed new phases** (full item lists in docs/TO_FINISH.md):
+
+- **11B "Everyday plumbing"** (before Pane): pipes and FIFOs, a real shell
+  grammar, environment variables and `PATH`, a read-only `/sys`
+  introspection file system replacing the ad-hoc `ps`/`irqs`/`heapstat`
+  commands, file watching through `event_ctl`, the missing file calls
+  (`utimes`, locks, `statfs`, sparse files), the phase 11 carry-overs,
+  per-process and per-user resource limits (a fork bomb cannot take the
+  machine), memory pressure (swap with a per-boot key, an OOM policy that
+  protects `init`, Pane, netd and the shell, `madvise`, huge pages),
+  monotonic vs real-time clocks and a time-zone database, UTF-8
+  everywhere, the missing tools, and application identity plus the
+  `restrict` core pulled from 15.
+- **11C "Debug and observe"** (before Pane): a GDB stub over serial, a
+  better unwinder (`.eh_frame`, which also fixes the prologue-fault
+  backtrace bug), `cdb` user-mode debugger with core dumps to
+  `/var/crash`, sanitizers (heap quarantine, kernel-object leak detector,
+  ASan-style malloc in libc), an always-on per-core flight recorder dumped
+  on panic, static tracepoints and `trace <program>`, a sampling profiler,
+  lockup and stall watchdogs, coverage-guided syscall-sequence fuzzing,
+  deterministic TCG `-icount` CI runs, golden-screenshot desktop tests, a
+  benchmark gate that fails on a 10% regression.
+- **Additions to 12 (Pane):** HiDPI and fractional scaling in the protocol
+  from day one, an accessibility tree in the protocol from day one,
+  multiple monitors and hot-plug, typed clipboard formats and drag and
+  drop mediated by Pane, frame callbacks and vsync pacing, input-method
+  hooks, a capture indicator no program can cover, a virtio-gpu driver,
+  protocol versioning and capability negotiation, input record/replay
+  with golden screenshots as the standard desktop test, the minimal
+  supervisor and app identity.
+- **Additions to 13:** pty + termios + job control; Ember tabs, true
+  colour, scrollback search; Slate highlighting, hex view, an LSP client;
+  Crate trash, search, previews, archive browsing; Gauge capability graph
+  and flight-recorder viewer; Dial permissions page; archive manager,
+  screenshot tool, calendar and notes (to port from the kernel desktop),
+  help viewer; shared inflate/PNG/JPEG/GIF library; combining marks,
+  bidirectional text, emoji, a shaping-engine decision (own, HarfBuzz, or
+  Latin-only); accessibility as a deliverable (every widget exposes
+  role/name/state, high contrast, large text, reduce motion, sticky keys,
+  magnifier, colour-blind-safe accents).
+- **13B "Real hardware bring-up"** (after 13, before 14): USB (xHCI, hubs,
+  HID, mass storage), UEFI GOP/SMBIOS/Secure Boot status, an ACPI AML
+  interpreter (port ACPICA or write a small one: *owner decision 8*) for
+  power button, lid, battery, thermal, S3 suspend, MWAIT idle and
+  frequency scaling, laptop touchpads and I2C-HID, invariant-TSC
+  calibration on real silicon, MSI-X, SMART, TRIM, an IOMMU (VT-d /
+  AMD-Vi) to confine DMA devices, real NICs (e1000e/igc, r8169),
+  `hwreport` and docs/HARDWARE.md.
+- **Additions to 14:** per-app network allowlists by host name enforced in
+  `netd`, per-app traffic accounting, network namespaces for sandboxes, a
+  measured zero-copy receive path, IPv6 pulled from 19.
+- **14B "Network extras"** (after 15): NTP/SNTP, mDNS/DNS-SD, DNS over
+  TLS/HTTPS, WireGuard (reuses Curve25519 and ChaCha20-Poly1305), an SSH
+  client and off-by-default server (Ed25519 only) with scp/SFTP, `pcap`
+  behind a permission, and last and optional: one Wi-Fi chipset family
+  with a WPA2/WPA3 client for the user's own networks, Bluetooth HID, QUIC.
+- **Additions to 15:** one capability model (kernel handles with rights,
+  duplicable with fewer rights, passable over ports) so `restrict`, port
+  permissions and file descriptors become views of one thing (*owner
+  decision 9*); per-process mount namespaces for sandboxes; `restrict`
+  with system-call allowlists and pledge-style promises plus
+  `restrict --learn`; CET shadow stacks and IBT, PKU, a written
+  Meltdown/Spectre decision, KASLR moved here from 19; passkeys/FIDO2 and
+  TOTP in the keyring, a secure attention key, a self-wiping guest
+  session; per-user encrypted homes, `explicit_bzero`, `mlock`; a written
+  docs/THREAT_MODEL.md that every later Security block checks against.
+- **Additions to 15B:** reader mode, built-in content blocking, per-site
+  permissions, a site-isolation test, a developer view, and a JavaScript
+  decision gate (QuickJS port vs own engine) with a per-tab memory budget.
+- **17B "Portable apps"** (after 17): a WASM/WASI runtime so unmodified
+  `.wasm` programs (SQLite, Lua, CPython) run sandboxed with their manifest
+  turned into capabilities (*owner decision 12: write in Spec or port*);
+  `try` and `box` throwaway/persistent sandboxes; far horizon, owner
+  decision: a Linux syscall compatibility layer inside a sandbox, and a
+  VT-x hypervisor.
+- **18B "Resilience"** (with or after 18): system generations with
+  automatic rollback after three failed boots, verified boot (signed
+  kernel, hash tree over the read-only root, TPM 2.0 measured boot with
+  the disk key sealed to it), restartable user-mode drivers in an
+  IOMMU-limited DMA window, cerfs data checksums, snapshots and `undo`,
+  scrub with self-repair, online resize, TRIM, compression, quotas,
+  extended attributes, reflinks; exFAT and read-only NTFS/ext4; a
+  deduplicated encrypted `backup`; crash reports that never leave the
+  machine.
+- **Additions to 19:** sound with per-app volume and a capture indicator,
+  camera, printing; an `arch/` split now and a RISC-V port before ARM64;
+  2D then 3D GPU acceleration (virtio-gpu first), video decode; a Spec
+  package ecosystem with reproducible packages.
+
+**Signature features** the review suggests as deliverables (*owner decision
+13 on which go into SPEC §5*), with its suggested first five marked:
+(1) kernel-level record and replay (`record`/`replay`, three tiers:
+syscall-boundary, one-core, instruction-exact) ★; (2) an always-on flight
+recorder with causal trace ids across ports, shown as a cause tree in
+Gauge ★; (3) `why`: every denial records a structured reason chain and
+explains itself in plain words ★; (4) `try`: run any program in a
+throwaway overlay with its own network and no secrets, then keep nothing
+or one file; (5) typed tables and a structured shell (`ps | where mem >
+100MB | sort mem | take 5` over `/sys`) ★; (6) chaos mode for any user's
+own programs (`--fail-alloc`, `--short-reads`, `--disk-errors`,
+`--drop-packets`, `--preempt-random`) ★; (7) multi-file transactions and
+`undo` over snapshots; (8) capability types in Spec with the permission
+manifest generated from the code and a plain-language permission diff on
+update; (9) typed ports with kernel-checked protocols, `portscope`, and
+generated stubs; (10) `fuzzd`, self-fuzzing of the installed system's own
+parsers when idle; (11) glass-box mode, an overlay that shows any window's
+syscalls, memory, ports and faults live, with an annotated boot replay;
+(12) service state that survives a crash (connection tables in
+supervisor-owned shared memory, so `kill -9 netd` loses no download);
+(13) a reproducible, self-verifying system (bit-identical ISO, `verify`
+against a signed manifest); (14) a live capability graph in Gauge with
+click-to-revoke.
+
+**Spec language decisions to make before SPEC §13.1 is built:** no
+undefined behaviour (checked arithmetic with explicit `wrapping` and
+`saturating` forms, every out-of-bounds access defined); errors as values
+with `must_use`; *linear handles* for files, ports, mappings and locks
+instead of a full borrow checker; `unsafe` counted and listed by
+`specc --audit`; typed hardware registers with bit-fields; inline
+assembly, naked functions, interrupt attributes and a freestanding mode so
+the kernel can be rewritten in Spec piece by piece; `comptime` instead of
+macros and templates; packed and aligned layouts with checked sizes;
+structured concurrency with async on `event_wait`; typed port protocols
+and capability types from the signature list; `test`, `bench` and `fuzz`
+blocks and `requires`/`ensures` contracts as language features; a DWARF
+subset, one canonical formatter, a language server, a REPL, incremental
+compilation. The path: **Spec-0** first (integers, functions, `if`/`while`,
+structs, pointers, a `syscall` intrinsic, x86-64 and ELF out: enough for
+`hello`), grown in slices; stage 0 in C++ then stage 1 in Spec with the
+self-hosting fixed point as a test and diverse double compiling later; a
+written language specification and conformance tests before a second
+backend. Phase 16 can start early in parallel as Spec-0, since it does not
+depend on the desktop.
+
+**Kernel and security depth not covered anywhere yet:** fair-share
+scheduling between users, a real-time class for audio and the UI thread,
+hyper-thread awareness, per-process CPU and energy accounting, more than
+32 cores; RCU-style read-mostly structures for the name cache; per-user
+memory accounting, NUMA later, memory compression before swap; kernel
+lockdown mode, a read-only-after-init section, constant-time comparisons
+in every crypto path; the per-core stack canary and the retpoline decision
+in the threat model; a **syscall surface review**: every call with its
+permission check, fuzz coverage and `restrict` category in
+docs/SYSCALLS.md, and no new call without a row.
+
+**Budget rows to add to SPEC §20.1 (measure first, then budget):** pipe
+throughput ≥ 2 GB/s; `fork`+`exec`+exit of a tiny program ≤ 150 µs; port
+round trip ≤ 2 µs; 4 KiB page-cache hit read ≤ 1 µs; `fsync` on cerfs
+(measure); idle desktop memory ≤ 64 MiB; Pane input-to-photon ≤ 2 frames;
+flight recorder overhead ≤ 2 % on `sysbench`; record mode ≤ 3×.
+
+**Project health:** a CI matrix (BIOS/UEFI × KVM/TCG/VirtualBox ×
+debug/`DEBUG=0`), a release-gate checklist before the letter moves,
+`-Wall -Wextra -Werror` plus a static analyser, reproducible builds and
+moving the build tree off the Windows drive (removes the clock-skew
+warnings), fuzz corpora in the repo with every fuzz crash becoming a
+regression test, docs/ARCHITECTURE.md, THREAT_MODEL.md, HARDWARE.md, a
+dependency and licence policy before porting anything (lwIP, Mbed TLS,
+ACPICA, mlibc, QuickJS), and a software bill of materials per ISO.
+
+**Proposed order:** 11 → 11B → 11C → 12 → 13 → 13B → 14 → 15 → 14B → 15B
+→ 16 → 17 → 17B → 18 → 18B → 19.
+
+**Docs the owner wants added** (CERBERUS_DOCS_NEEDED, 2026-10-12), biggest
+payoff first; CLAUDE.md already exists, so that row is done:
+
+1. `docs/INDEX.md`: a task-to-doc map ("adding a syscall → SYSCALLS,
+   INVARIANTS, PLAYBOOKS §2") so a session does not read everything.
+2. `docs/INVARIANTS.md`: rules that must never break: lock ordering, what
+   may run in interrupt context, user-pointer rules, W^X, who may call
+   what.
+3. `docs/HANDOFF.md`: what the last session finished, what is half-done,
+   what is next, known traps; overwritten at the end of every session
+   (STATUS says what is verified; HANDOFF says where to pick up).
+4. `docs/DEFINITION_OF_DONE.md`: the checklist before a phase or feature
+   counts as finished (tests, fuzz, bench not regressed, security items,
+   docs and roadmap updated, boot matrix).
+5. `docs/RESEARCH.md` plus `docs/research/<topic>.md`, one file per topic
+   with a fixed template (question, sources with links and dates and
+   versions, findings with confidence, options against the SPEC budgets,
+   recommendation, status open/recommended/decided/rejected); the rule
+   that register layouts, protocol details and spec facts are checked
+   against the real datasheet, never recalled; a backlog seeded with the
+   open questions (lwIP, Mbed TLS vs BearSSL, ACPICA, mlibc, the
+   capability model); and `docs/IDEAS.md`, a one-line-per-idea inbox.
+6. As each area is reached: ARCHITECTURE (boot flow, memory map, module
+   boundaries, a diagram), PLAYBOOKS (recipes: add a syscall, a driver, a
+   shell command, a test, an app, cut a release), TESTING (how `test all`
+   and the probe work, serial-log assertions and golden screenshots for
+   what the agent cannot see), DEBUGGING (GDB workflow, reading a panic, a
+   symptom-to-cause table, QEMU vs VirtualBox differences), LESSONS (why
+   bugs happened and how to avoid the class), ABI and format docs
+   (calling convention, struct layouts, CERFS.md, PANE_PROTOCOL.md),
+   DESIGN (the desktop's colours, spacing, radii, animation timings),
+   GLOSSARY, BUILD and RELEASE (pinned toolchain versions, the release
+   gate), THREAT_MODEL and HARDWARE, and a `spec-lang/` folder
+   (GRAMMAR.ebnf, examples, a conformance list).
+7. Keep docs from drifting: generate SYSCALLS (done) and parts of FEATURES
+   from the source; a docs check in CI that phase numbers match between
+   ROADMAP and SPEC §5 and that every syscall has a row.
+
+**OPEN — the owner's answers needed:**
+
+8. ACPI: port ACPICA or write a small AML interpreter (before 13B).
+9. Capability model: one handle-with-rights design (recommended by the
+   review) or keep three mechanisms (before 15, ideally before 11B).
+10. Release numbering: keep SPEC §23.1 (`0.0.5j` → `0.0.6a`) or switch to
+    one minor version per phase (before the next tag).
+11. Shaping engine for complex scripts: own, HarfBuzz, or Latin-only for
+    now (before 13).
+12. WASI runtime: write in Spec or port a small existing one (before 17B).
+13. Which signature features go into SPEC §5 as deliverables.
+14. Whether 11B and 11C go in before phase 12 (the review's order) or
+    phase 12 starts now with only the minimal supervisor and the HiDPI
+    scale field, and 11B/11C follow (the recommendation given to the owner
+    on 2026-10-13).
+15. Which of the docs in the wish-list to write first (recommended on
+    2026-10-13: INVARIANTS, HANDOFF, DEFINITION_OF_DONE, short, from what
+    the docs already say).
+
+Rejected: keeping the two drafts as files in `docs/` (the owner asked for
+them to be deleted once understood; two more files for every session to
+read, and both would drift from ROADMAP.md and TO_FINISH.md).
+
+---
+
+## 2026-10-13 — The public website is generated from docs/ (owner)
+
+The owner keeps a public site in the sibling repository
+`D:\Programs\ACCerberus.github.io` (GitHub Pages, https://accerberus.github.io),
+which until now was two hand-written HTML pages at 0.0.5f/0.0.5g with
+invented release dates. The owner asked for the site to pull its content
+from `docs/` and to be updated and pushed every time something changes.
+
+- `tools/gen-site.py` (standard library only; run with WSL's python3)
+  writes the whole site from `VERSION`, `docs/CHANGELOG.md` (the release
+  history, with the real dates), `docs/TO_FINISH.md` (which phases are
+  done and which is next), `docs/ROADMAP.md` (each coming phase's items
+  and "done when"), `docs/BENCH.md` (the newest numbers), `docs/BUGS.md`
+  (open bugs), `docs/SYSCALLS.md` (the call count), `tests/integration/`
+  (the test count) and `docs/screenshots/`. Every file in `docs/` is also
+  rendered as a page under `/docs/` with a small Markdown renderer of our
+  own, so the site says exactly what the docs say.
+- `make site` regenerates the site; `make site-push` regenerates, commits
+  and pushes it (`tools/push-site.sh`). `make dist` regenerates the site
+  too, so a release cannot ship without the site following. The site
+  directory is `SITE_DIR` in the Makefile.
+- The rule in CLAUDE.md "After every iteration": run `make site-push`.
+- The hand-written pages are replaced: their design (dark theme, aurora
+  background, cards, the release dropdowns) is kept in the generator's
+  templates; their content now comes from the docs.
+
+Rejected: a static-site generator from the outside (a dependency under
+§0 rule 14, and a Jekyll build on GitHub's side that cannot be checked
+locally); editing the two HTML files by hand each release (that is how
+they went stale and gained wrong dates).

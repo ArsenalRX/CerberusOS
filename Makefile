@@ -180,7 +180,7 @@ clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test bench fuzz clean vbox vbox-log dist check-tools"
+	@echo "targets: all kernel iso run run-headless run-uefi debug gdb test bench fuzz clean vbox vbox-log dist site site-push check-tools"
 
 # ---------------------------------------------------------------------------
 # Kernel build rules
@@ -451,6 +451,22 @@ dist: $(ISO)
 	@echo "Cerberus $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
 	@echo "snapshot: $(ROOT)/dist/cerberus.iso (Cerberus $(VERSION))"
 	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/cerberus.iso
+	@$(MAKE) --no-print-directory site
+
+# ---------------------------------------------------------------------------
+# The public website (https://accerberus.github.io), generated from docs/
+# by tools/gen-site.py into the sibling repository SITE_DIR (owner,
+# 2026-10-13: the site pulls its content from docs/ and is pushed after
+# every change). `make site` writes it; `make site-push` also commits and
+# pushes it (tools/push-site.sh). `make dist` runs `site` so a release
+# cannot ship without the site following.
+# ---------------------------------------------------------------------------
+SITE_DIR ?= $(abspath $(ROOT)/../ACCerberus.github.io)
+.PHONY: site site-push
+site:
+	@$(PYTHON) $(ROOT)/tools/gen-site.py $(SITE_DIR)
+site-push: site
+	@bash $(ROOT)/tools/push-site.sh $(SITE_DIR) "site: Cerberus $(VERSION_BASE), $(shell date -u +%Y-%m-%d)"
 
 # ---------------------------------------------------------------------------
 # Host tool check with install hints (docs/SPEC.md §3)

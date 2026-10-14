@@ -38,6 +38,14 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
   the owner to pick from.
 - The owner has an ultrawide monitor (32:9 modes matter) and tests in
   VirtualBox with the Hyper-V backend.
+- **Update and push the public website** (owner, 2026-10-13): `make
+  site-push` regenerates https://accerberus.github.io from `docs/` into the
+  sibling repo `D:\Programs\ACCerberus.github.io` (`tools/gen-site.py`,
+  standard library only) and pushes it. Run it after every change to
+  `docs/`, every release and every finished iteration; `make dist` runs
+  `make site` on its own. Never edit the site's HTML by hand: change the
+  docs and regenerate. The generator treats a changelog block as released
+  only when its `v<version>` git tag exists.
 
 ## Build, test, run (all inside WSL Ubuntu-24.04)
 
@@ -52,6 +60,8 @@ wsl -d Ubuntu-24.04 -u root -- bash -c 'cd /mnt/d/Programs/OS && make iso'
 - `make dist` — overwrites `dist/cerberus.iso` (+`VERSION.txt`) and re-points
   every powered-off VirtualBox VM that boots from `dist/`. `make RELEASE=1
   dist` for a release (tagged commit, plain version number).
+- `make site` / `make site-push` — generate (and commit + push) the public
+  website from `docs/` (see "After every iteration").
 - Probe directives in `.expect` files: `!send`, `!key`, `!wait`, `!mouse`,
   `!mouseto`, `!button`, `!wheel`, `!screenshot`, `!kill` (power cut); other
   lines must appear in the serial log in order. Setup lines at the top:

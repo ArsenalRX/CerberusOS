@@ -197,6 +197,10 @@ Last updated: **2026-10-06** (0.0.5j).
   `!button`, `!dblclick`, `!wheel`, `!screenshot`, `!wait`, `!kill`.
 - `tools/run-tests.sh <names>`; `tools/vbox-attach.sh`.
 - `run-cerberus.cmd` boots the ISO in QEMU with KVM from Windows.
+- `make site` / `make site-push`: the public website
+  (https://accerberus.github.io) generated from `docs/` by
+  `tools/gen-site.py` and pushed (`tools/push-site.sh`); every document
+  is a page under `/docs/`, the release history comes from the changelog.
 
 ## Not there yet (so nobody looks for it)
 
