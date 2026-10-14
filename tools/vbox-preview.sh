@@ -63,11 +63,11 @@ super; typetext "monitor"; enter; shot 4-monitor 3
 altf4
 super; typetext "files"; enter;   shot 5-files 2
 altf4
-key e0 5b 14 94 e0 db;       sleep 1      # Super+T: a terminal
+key e0 5b 14 94 e0 db;       sleep 1      # Super+T: the terminal (one exists already; keep it open)
 typetext "help"; enter;      shot 6-terminal 1
-altf4
 super; typetext "about"; enter;   shot 7-about 2
-altf4
+key e0 5b 20 a0 e0 db;       shot 8-show-desktop 1    # Super+D: everything hidden
+key e0 5b 20 a0 e0 db
 w controlvm "$NAME" poweroff >/dev/null 2>&1
 sleep 2
 w unregistervm "$NAME" --delete >/dev/null 2>&1

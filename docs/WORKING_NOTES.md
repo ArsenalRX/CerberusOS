@@ -60,14 +60,16 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
   check during work; the VirtualBox pass is the one that ships.
 - The owner has an ultrawide monitor (32:9 modes matter) and tests in
   VirtualBox with the Hyper-V backend.
-- **Update and push the public website** (owner, 2026-10-13): `make
-  site-push` regenerates https://accerberus.github.io from `docs/` into the
-  sibling repo `D:\Programs\ACCerberus.github.io` (`tools/gen-site.py`,
-  standard library only) and pushes it. Run it after every change to
-  `docs/`, every release and every finished iteration; `make dist` runs
-  `make site` on its own. Never edit the site's HTML by hand: change the
-  docs and regenerate. The generator treats a changelog block as released
-  only when its `v<version>` git tag exists.
+- **The public website is PAUSED** (owner, 2026-10-13 evening: "don't
+  update the website / the ACCerberus folder until I say so"). Do not run
+  `make site` or `make site-push` and do not touch
+  `D:\Programs\ACCerberus.github.io` until the owner lifts this. When they
+  do: `make site-push` regenerates https://accerberus.github.io from
+  `docs/` (`tools/gen-site.py`, standard library only) and pushes it; run
+  it after every change to `docs/` and every release. Never edit the
+  site's HTML by hand: change the docs and regenerate. The generator
+  treats a changelog block as released only when its `v<version>` git
+  tag exists, and the site carries no link to the repository.
 
 ## Build, test, run (all inside WSL Ubuntu-24.04)
 

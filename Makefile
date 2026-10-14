@@ -451,15 +451,14 @@ dist: $(ISO)
 	@echo "Cerberus $(VERSION), built $(BUILD_DATE)" > $(ROOT)/dist/VERSION.txt
 	@echo "snapshot: $(ROOT)/dist/cerberus.iso (Cerberus $(VERSION))"
 	@bash $(ROOT)/tools/vbox-attach.sh $(VBOXMANAGE) $(ROOT)/dist/cerberus.iso
-	@$(MAKE) --no-print-directory site
 
 # ---------------------------------------------------------------------------
 # The public website (https://accerberus.github.io), generated from docs/
-# by tools/gen-site.py into the sibling repository SITE_DIR (owner,
-# 2026-10-13: the site pulls its content from docs/ and is pushed after
-# every change). `make site` writes it; `make site-push` also commits and
-# pushes it (tools/push-site.sh). `make dist` runs `site` so a release
-# cannot ship without the site following.
+# by tools/gen-site.py into the sibling repository SITE_DIR. `make site`
+# writes it; `make site-push` also commits and pushes it
+# (tools/push-site.sh). Neither runs on its own: the owner said on
+# 2026-10-13 (evening) not to touch the site folder until they say so, so
+# `make dist` no longer regenerates it. Run them only on the owner's word.
 # ---------------------------------------------------------------------------
 SITE_DIR ?= $(abspath $(ROOT)/../ACCerberus.github.io)
 .PHONY: site site-push
