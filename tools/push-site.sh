@@ -16,6 +16,8 @@ for g in "/mnt/c/Program Files/Git/cmd/git.exe" "/c/Program Files/Git/cmd/git.ex
 done
 if [ -n "${WSL_DISTRO_NAME:-}" ] && [ "$GIT" != git ]; then
     DIR=$(wslpath -w "$SITE")
+elif command -v cygpath >/dev/null 2>&1; then
+    DIR=$(cygpath -w "$SITE")   # Git Bash: a Windows path survives MSYS_NO_PATHCONV=1
 else
     DIR="$SITE"
 fi
