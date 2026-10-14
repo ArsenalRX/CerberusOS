@@ -35,6 +35,33 @@ class of bug; if there is none, say so.
 
 ## Open
 
+### B-016 — On VirtualBox the pointer only moved when a button was clicked
+- Found: 2026-10-13 (owner, running 0.0.5j in their VM: "it won't move
+  when I move, and when I spam click it moves").
+- Where: `kernel/drivers/vmmdev.cpp`, `kernel/drivers/ps2mouse.cpp`,
+  `process_mouse` in `kernel/gui/desktop.cpp`.
+- Symptom: with mouse integration on, moving the host mouse did nothing;
+  each click jumped the pointer to the host's position.
+- Cause: the desktop asked the guest device for the host's pointer
+  position only when a PS/2 packet arrived (B-003's design), and the guest
+  told the host it spoke the "new protocol" (positions by the device's
+  own interrupt, which the kernel does not handle). In that mode VirtualBox
+  sends no PS/2 motion at all, so packets came only from button changes,
+  and each one fetched the position once. The owner's log also showed
+  "the host does not send absolute mouse positions" at boot: the host
+  switches that on when its window takes the pointer, so a boot-time
+  reading cannot be relied on either.
+- Fix (0.0.6a): the compositor polls the guest device on every tick
+  (100 Hz, one port request) and moves the pointer when the position
+  changed, whether or not a packet arrived; the "new protocol" flag is no
+  longer announced, so the host nudges the PS/2 mouse as well.
+- Guard: none automated (QEMU has no such device); the VirtualBox preview
+  of every build (`tools/vbox-preview.sh`) shows the boot line, and the
+  owner's hand check covers motion. Rule: never rely on a PS/2 packet
+  arriving under VirtualBox.
+- Status: FIXED in the tree 2026-10-13, awaiting the owner's check on
+  their VM (dev build 0.0.6a-dev in `dist/`).
+
 ### B-010 — `eventtest` misses its 1 ms wake-up limit on VirtualBox
 - Found: 2026-10-04, running the phase 11 programs on VirtualBox.
 - Where: `kernel/ipc/event.cpp`, `userland/bin/eventtest.cpp`; the

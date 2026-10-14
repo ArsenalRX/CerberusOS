@@ -24,6 +24,7 @@
 #include <drivers/ps2kbd.h>
 #include <lib/console.h>
 #include <drivers/ps2mouse.h>
+#include <drivers/vmmdev.h>
 #include <drivers/refclock.h>
 #include <drivers/rtc.h>
 #include <gfx/gfx.h>
@@ -3999,6 +4000,22 @@ void process_keyboard() {
 
 void process_mouse() {
     MouseEvent e;
+    // Under VirtualBox the host's pointer position is asked for on every
+    // tick, not only when a PS/2 packet arrives: with mouse integration on
+    // the host sends no PS/2 motion at all, so a pointer that only followed
+    // packets moved on clicks alone (B-016). One small port request per
+    // 10 ms; nothing is redrawn unless the position changed.
+    if (vmmdev_present()) {
+        u32 ax, ay;
+        if (vmmdev_mouse_position(&ax, &ay)) {
+            int nx = (int)(ax * (u32)(g.W - 1) / 65535), ny = (int)(ay * (u32)(g.H - 1) / 65535);
+            if (nx != g.mx || ny != g.my) {
+                g.last_input_us = refclock_now_us();
+                move_cursor(nx, ny);
+                on_motion();
+            }
+        }
+    }
     while (ps2mouse_poll(&e)) {
         g.last_input_us = refclock_now_us();
         if (e.absolute) {

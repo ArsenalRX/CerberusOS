@@ -11,6 +11,10 @@
 // Finds the device and tells the host this guest can take absolute
 // positions. Requires pci_init. Harmless where there is no such device.
 void vmmdev_init();
+// True when the device exists and answered: the desktop then polls the
+// position on every tick, because the host sends no PS/2 motion while it
+// believes the guest takes absolute positions (B-016).
+bool vmmdev_present();
 // True while the host is delivering absolute positions (mouse integration
 // is on in VirtualBox).
 bool vmmdev_mouse_absolute();

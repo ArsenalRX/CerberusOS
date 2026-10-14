@@ -22,6 +22,11 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+### Fixed
+- VirtualBox: the mouse pointer follows the host's pointer again instead
+  of jumping only when a button is clicked (B-016). The desktop now asks
+  the guest device for the pointer position on every tick.
+
 ## 0.0.5j — 2026-10-13
 
 Round 3 continued (hard links) and round 4 of polish, the owner's eight

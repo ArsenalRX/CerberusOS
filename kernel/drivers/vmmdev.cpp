@@ -22,7 +22,12 @@ constexpr u32 OS_UNKNOWN_64 = 0x00100;
 enum : u32 { REQ_GET_MOUSE_STATUS = 1, REQ_SET_MOUSE_STATUS = 2, REQ_REPORT_GUEST_INFO = 50 };
 constexpr u32 MOUSE_GUEST_CAN_ABSOLUTE = 1 << 0;
 constexpr u32 MOUSE_HOST_WANTS_ABSOLUTE = 1 << 1;
-constexpr u32 MOUSE_NEW_PROTOCOL = 1 << 4;      // we draw our own pointer; the host hides its own
+// Not set: MOUSE_NEW_PROTOCOL (1 << 4). With it the host delivers absolute
+// moves through its own interrupt only and sends no PS/2 packet, so a
+// guest that reads positions on PS/2 packets saw the pointer move only on
+// clicks (B-016). Without it the host also nudges the PS/2 mouse, and the
+// desktop polls the position every tick anyway. The host hides its own
+// pointer either way, because we never ask for a host cursor.
 
 struct __attribute__((packed)) Header {
     u32 size;
@@ -91,7 +96,7 @@ void vmmdev_init() {
         kprintf("vmmdev: device at port %#x refused the guest report (rc %d)\n", g_port, g_request.h.rc);
         return;
     }
-    g_request.mouse.features = MOUSE_GUEST_CAN_ABSOLUTE | MOUSE_NEW_PROTOCOL;
+    g_request.mouse.features = MOUSE_GUEST_CAN_ABSOLUTE;
     g_request.mouse.x = g_request.mouse.y = 0;
     if (!submit(REQ_SET_MOUSE_STATUS, sizeof(MouseStatus))) {
         kprintf("vmmdev: could not ask for absolute mouse positions (rc %d)\n", g_request.h.rc);
@@ -105,6 +110,7 @@ void vmmdev_init() {
             g_absolute ? "sends" : "does not send");
 }
 
+bool vmmdev_present() { return g_present; }
 bool vmmdev_mouse_absolute() { return g_absolute; }
 
 bool vmmdev_mouse_position(u32* x, u32* y) {
