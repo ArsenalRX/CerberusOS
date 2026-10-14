@@ -211,7 +211,7 @@ class Md:
             if m:
                 items.append([len(m.group(1).expandtabs(4)), m.group(2)[0].isdigit(), [m.group(3)]])
             elif items:
-                items[-1][2].append(l.strip() if not items[-1][2][-1].startswith("```") and "```" not in "".join(items[-1][2]) else l.strip("\n"))
+                items[-1][2].append(l.rstrip())  # indentation kept for code blocks; item_text strips the rest
         return self.nest(items, 0, len(items), items[0][0] if items else 0)[0]
 
     def nest(self, items, start, end, indent):
@@ -234,21 +234,28 @@ class Md:
 
     def item_text(self, lines):
         # a fenced code block inside a list item keeps its lines
-        if any(l.startswith("```") for l in lines):
+        if any(l.strip().startswith("```") for l in lines):
             out, prose, code, fence = [], [], [], False
+
+            def flush_code():
+                indent = min((len(c) - len(c.lstrip()) for c in code if c.strip()), default=0)
+                out.append("<pre><code>%s</code></pre>" % html.escape("\n".join(c[indent:] for c in code), quote=False))
+                code.clear()
+
             for l in lines:
-                if l.startswith("```"):
+                if l.strip().startswith("```"):
                     if fence:
-                        out.append("<pre><code>%s</code></pre>" % html.escape("\n".join(code), quote=False)); code = []
-                    else:
-                        if prose:
-                            out.append(md_inline(" ".join(prose))); prose = []
+                        flush_code()
+                    elif prose:
+                        out.append(md_inline(" ".join(prose))); prose = []
                     fence = not fence; continue
-                (code if fence else prose).append(l)
+                (code if fence else prose).append(l if fence else l.strip())
+            if code:
+                flush_code()
             if prose:
-                out.append(md_inline(" ".join(prose)))
+                out.append(md_inline(" ".join(p for p in prose if p)))
             return "".join(out)
-        text = " ".join(l for l in lines if l).strip()
+        text = " ".join(l.strip() for l in lines if l.strip()).strip()
         m = re.match(r"^\[( |x|X)\]\s+(.*)$", text)
         if m:
             done = m.group(1).lower() == "x"
