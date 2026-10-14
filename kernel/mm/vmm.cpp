@@ -191,6 +191,10 @@ u64 leaf_flags(u32 f) {
     if (f & vm::WRITE_THROUGH) e |= PTE_PWT;
     if (f & vm::CACHE_DISABLE) e |= PTE_PCD;
     if (f & vm::GLOBAL) e |= PTE_G;
+    // Write-combining is PAT entry 5 (PAT=1, PCD=0, PWT=1) in the kernel's
+    // PAT register; in a 4 KiB leaf the PAT bit is bit 7. A 2 MiB leaf
+    // (kernel mappings only) moves it to bit 12: see map_locked.
+    if (f & vm::WRITE_COMBINE) e |= PTE_PWT | PTE_HUGE;
     return e;
 }
 
@@ -433,7 +437,7 @@ Result<void> AddressSpace::map_locked(vaddr_t virt, paddr_t phys, usize size, u3
             break;
         }
         if (huge) {
-            *e = p | lf | PTE_HUGE;
+            *e = p | (lf & ~PTE_HUGE) | PTE_HUGE | ((flags & vm::WRITE_COMBINE) ? PTE_PAT_HUGE : 0);
             stat_add(g_stats.huge_mappings, 1);
             done += SIZE_2M;
         } else {
@@ -664,7 +668,7 @@ Result<vaddr_t> AddressSpace::mmap(vaddr_t hint, usize len, u32 prot, u32 flags)
 }
 
 Result<vaddr_t> AddressSpace::mmap_device(paddr_t phys, usize len, u32 prot) {
-    if (!len || (prot & ~(vm::WRITE | vm::WRITE_THROUGH | vm::CACHE_DISABLE))) return Error::Invalid;
+    if (!len || (prot & ~(vm::WRITE | vm::WRITE_THROUGH | vm::CACHE_DISABLE | vm::WRITE_COMBINE))) return Error::Invalid;
     paddr_t first = align_down(phys, PAGE_SIZE);
     usize offset = phys - first;
     usize size = align_up(len + offset, PAGE_SIZE);

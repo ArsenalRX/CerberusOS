@@ -38,6 +38,9 @@ int cmd_test(int argc, char** argv);
 int cmd_idle(int argc, char** argv);
 int cmd_timermode(int argc, char** argv);
 int cmd_gui(int argc, char** argv);
+int cmd_pane(int argc, char** argv);
+int run_program(const char* path, int argc, char** argv, bool verbose, const Credentials* cred);
+void program_path(const char* name, char* path, usize cap);
 int cmd_resolution(int argc, char** argv);
 int cmd_notify(int argc, char** argv);
 int cmd_clear(int argc, char** argv);
@@ -79,7 +82,8 @@ const ShellCommandEntry COMMANDS[] = {
 
     {"Desktop", nullptr, nullptr, nullptr},
     {"resolution", "[<width> <height>]", "show or change the screen resolution", cmd_resolution},
-    {"gui", "", "compositor statistics", cmd_gui},
+    {"gui", "[stop|start]", "compositor statistics; stop/start hand the screen to a program", cmd_gui},
+    {"pane", "[args]", "run the Pane window server (phase 12) in place of the kernel desktop", cmd_pane},
     {"notify", "<text...>", "show a notification on the desktop", cmd_notify},
     {"clear", "", "clear the terminal (also Ctrl+L)", cmd_clear},
 
@@ -171,7 +175,29 @@ int cmd_heapstat(int, char**) {
     return 0;
 }
 
-int cmd_gui(int, char**) {
+int cmd_pane(int argc, char** argv) {
+    // The window server as a user program (phase 12): the kernel desktop
+    // hands over the screen for as long as it runs. Typed on the serial
+    // console, or from the terminal window (which comes back afterwards).
+    char path[64];
+    program_path("pane", path, sizeof path);
+    gui_stop();
+    int rc = run_program(path, argc, argv, true, nullptr);
+    gui_resume();
+    return rc;
+}
+
+int cmd_gui(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "stop") == 0) {
+        gui_stop();
+        kprintf("gui: stopped; the screen is free for a program (gui start brings it back)\n");
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "start") == 0) {
+        gui_resume();
+        kprintf("gui: %s\n", gui_active() ? "running" : "not active");
+        return 0;
+    }
     if (!gui_active()) {
         kprintf("gui: not active\n");
         return 1;

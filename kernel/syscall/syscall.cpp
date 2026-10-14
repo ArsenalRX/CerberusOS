@@ -4,6 +4,7 @@
 #include <arch/x86_64/gdt.h>
 #include <arch/x86_64/power.h>
 #include <drivers/refclock.h>
+#include <fs/dev.h>
 #include <fs/file.h>
 #include <fs/pagecache.h>
 #include <fs/vfs.h>
@@ -44,7 +45,7 @@ constexpr usize IO_MAX = 1 * MIB;               // per call; the caller loops fo
 constexpr u64 SLEEP_MAX_MS = 1ull << 31;
 
 constexpr u64 PROT_READ = 1, PROT_WRITE = 2, PROT_EXEC = 4;
-constexpr u64 MAP_PRIVATE = 0x02, MAP_FIXED = 0x10, MAP_ANONYMOUS = 0x20;
+constexpr u64 MAP_SHARED = 0x01, MAP_PRIVATE = 0x02, MAP_FIXED = 0x10, MAP_ANONYMOUS = 0x20;
 constexpr u64 WNOHANG = 1;
 
 inline Process* self() { return thread_current()->process; }
@@ -206,6 +207,9 @@ i64 sys_fstat(u64 fd, u64 out, u64, u64, u64, u64, InterruptFrame*) {
     if (!f) return -err::BADF;
     abi::Stat st;
     file_stat(f->vnode, &st);
+    // A shared-memory block reports its size, so a server handed one can
+    // check it is as large as the sender claims before reading it.
+    if (f->vnode->type == VType::Object && file_object(f, ObjectKind::Shm)) st.size = shm_size(f);
     return copy_to_user(out, &st, sizeof st).ok() ? 0 : -err::FAULT;
 }
 
@@ -424,12 +428,33 @@ i64 sys_umount(u64 target, u64, u64, u64, u64, u64, InterruptFrame*) {
 
 i64 sys_mmap(u64 hint, u64 len, u64 prot, u64 flags, u64 fd, u64 off, InterruptFrame*) {
     if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -err::INVAL;
-    if (flags & ~(MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS)) return -err::INVAL;
-    if (!(flags & MAP_PRIVATE) || len == 0) return -err::INVAL;        // shared mappings are shm_map's job
+    if (flags & ~(MAP_SHARED | MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS)) return -err::INVAL;
+    if (((flags & MAP_SHARED) != 0) == ((flags & MAP_PRIVATE) != 0) || len == 0) return -err::INVAL;
     if ((prot & PROT_WRITE) && (prot & PROT_EXEC)) return -err::INVAL;             // W^X
     if (len > USER_MAX) return -err::NOMEM;
     u32 vm_prot = (prot & PROT_WRITE ? vm::WRITE : 0) | (prot & PROT_EXEC ? vm::EXEC : 0);
     Process* p = self();
+    if (flags & MAP_SHARED) {
+        // A shared mapping is only of a device's memory (the screen): file
+        // mappings shared between processes are shm_create's job for now,
+        // and nothing shared is ever executable.
+        if (flags & (MAP_ANONYMOUS | MAP_FIXED)) return -err::INVAL;
+        if (prot & PROT_EXEC) return -err::INVAL;
+        FdRef f(fd);
+        if (!f) return -err::BADF;
+        Vnode* v = f->vnode;
+        if (v->type != VType::CharDev) return -err::INVAL;     // shared file mappings: shm_create, for now
+        const CharDeviceOps* ops = dev_char_ops(v);
+        if (!ops || !ops->mmap) return -err::NODEV;
+        if (!file_readable(f) || ((prot & PROT_WRITE) && !file_writable(f))) return -err::ACCES;
+        if ((off & (PAGE_SIZE - 1)) || (i64)off < 0 || off + len < off) return -err::INVAL;
+        u32 cache = 0;
+        Result<paddr_t> phys = ops->mmap(dev::minor_of(v->rdev), off, len, &cache);
+        if (!phys.ok()) return errno_of(phys.error());
+        Result<vaddr_t> r = p->space->mmap_device(phys.value(), len, (vm_prot & vm::WRITE) | cache);
+        if (!r.ok()) return errno_of(r.error() == Error::NoSpace ? Error::NoMemory : r.error());
+        return (i64)r.value();
+    }
     if (flags & MAP_ANONYMOUS) {
         if ((i64)fd != -1 || off != 0) return -err::INVAL;
         Result<vaddr_t> r = (flags & MAP_FIXED) ? p->space->mmap(hint, len, vm_prot, mmap_flag::FIXED)

@@ -21,6 +21,8 @@ void ps2_drain();
 // consumes key and mouse events can be woken instead of polling. One hook;
 // nullptr removes it.
 void ps2_set_input_hook(void (*hook)());
+// Runs the hook (a driver that produced an event outside ps2_drain).
+void ps2_notify_input();
 
 // Decoders implemented by the two drivers.
 void ps2kbd_handle_byte(u8 b);

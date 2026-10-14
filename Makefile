@@ -302,7 +302,29 @@ $(CRT0): $(USER_DIR)/libc/src/crt0.S $(ROOT)/Makefile
 
 .PRECIOUS: $(UBUILD)/bin/%.o
 $(UBUILD)/bin/%: $(UBUILD)/bin/%.o $(CRT0) $(LIBC_OBJS) $(USER_DIR)/libc/user.ld $(ROOT)/Makefile
-	$(USER_LD) $(ULDFLAGS) $(CRT0) $< $(LIBC_OBJS) $(LIBGCC) -o $@
+	$(USER_LD) $(ULDFLAGS) $(CRT0) $< $(EXTRA_OBJS) $(LIBC_OBJS) $(LIBGCC) -o $@
+
+# Phase 12: the Pane window server (userland/pane), its client library
+# (userland/libpane) and libgfx, which the kernel and user programs share
+# (kernel/gfx/gfx.cpp is freestanding; here it is built with SSE and the
+# user flags). The fonts blob is embedded as in the kernel.
+LIBPANE_OBJS := $(UBUILD)/libpane/pane.o
+LIBGFX_UOBJ  := $(UBUILD)/gfx/gfx.o
+PANE_OBJS    := $(UBUILD)/pane/main.o $(UBUILD)/pane/fonts.o $(LIBGFX_UOBJ)
+$(UBUILD)/gfx/gfx.o: $(ROOT)/kernel/gfx/gfx.cpp $(ROOT)/Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) $(UCXXFLAGS) -I$(ROOT)/kernel -c $< -o $@
+$(UBUILD)/pane/main.o: UCXXFLAGS += -I$(ROOT)/kernel
+$(UBUILD)/pane/fonts.o: $(USER_DIR)/pane/fonts.S $(ROOT)/kernel/gfx/fonts.bin $(ROOT)/Makefile
+	@mkdir -p $(dir $@)
+	$(CXX) -Wa,-I$(ROOT) -c $< -o $@
+$(UBUILD)/bin/pane: $(PANE_OBJS) $(CRT0) $(LIBC_OBJS) $(USER_DIR)/libc/user.ld $(ROOT)/Makefile
+	@mkdir -p $(dir $@)
+	$(USER_LD) $(ULDFLAGS) $(CRT0) $(PANE_OBJS) $(LIBC_OBJS) $(LIBGCC) -o $@
+$(UBUILD)/bin/panetest: EXTRA_OBJS := $(LIBPANE_OBJS)
+$(UBUILD)/bin/panetest: $(LIBPANE_OBJS)
+USER_BINS += $(UBUILD)/bin/pane
+USER_DEPS += $(PANE_OBJS:.o=.d) $(LIBPANE_OBJS:.o=.d)
 
 # A fixed owner, date and order make the archive identical for identical input.
 # One program (userland/bin/fileutils.cpp) answers to all these names.

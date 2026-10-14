@@ -4000,22 +4000,9 @@ void process_keyboard() {
 
 void process_mouse() {
     MouseEvent e;
-    // Under VirtualBox the host's pointer position is asked for on every
-    // tick, not only when a PS/2 packet arrives: with mouse integration on
-    // the host sends no PS/2 motion at all, so a pointer that only followed
-    // packets moved on clicks alone (B-016). One small port request per
-    // 10 ms; nothing is redrawn unless the position changed.
-    if (vmmdev_present()) {
-        u32 ax, ay;
-        if (vmmdev_mouse_position(&ax, &ay)) {
-            int nx = (int)(ax * (u32)(g.W - 1) / 65535), ny = (int)(ay * (u32)(g.H - 1) / 65535);
-            if (nx != g.mx || ny != g.my) {
-                g.last_input_us = refclock_now_us();
-                move_cursor(nx, ny);
-                on_motion();
-            }
-        }
-    }
+    // Under VirtualBox the host's pointer position arrives as an absolute
+    // event once per tick from the mouse driver (ps2mouse_tick, B-016),
+    // whether or not a PS/2 packet came.
     while (ps2mouse_poll(&e)) {
         g.last_input_us = refclock_now_us();
         if (e.absolute) {
@@ -4568,4 +4555,36 @@ void gui_emergency_text_mode() {
     if (!g.active) return;
     g.active = false;
     fbconsole_enable();
+}
+
+namespace {
+bool g_stopped = false;     // stopped by gui_stop, as opposed to never started
+}
+
+void gui_stop() {
+    if (!g.active) return;
+    g.active = false;       // gui_pump returns at once from now on
+    g_stopped = true;
+    // The compositor may be in the middle of a frame on its own thread; give
+    // it a tick to finish before the screen changes hands.
+    thread_sleep_ms(20);
+}
+
+void gui_resume() {
+    if (!g_stopped) return;
+    g_stopped = false;
+    const FramebufferInfo& fb = g_boot_info.framebuffer;
+    // The program may have changed the resolution through /dev/fb0.
+    if ((int)fb.width != g.W || (int)fb.height != g.H) {
+        g.active = true;
+        if (!set_resolution((int)fb.width, (int)fb.height)) {
+            g.active = false;
+            kprintf("gui: could not adopt %ux%u after the program; staying off\n", fb.width, fb.height);
+            return;
+        }
+    }
+    g.active = true;
+    g.fb = Surface((u32*)fb.address, g.W, g.H, (int)(fb.pitch / 4));
+    refresh_everything();
+    g_compositor_wake_hint();
 }

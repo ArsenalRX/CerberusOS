@@ -6,6 +6,7 @@
 #include <arch/x86_64/percpu.h>
 #include <arch/x86_64/smp.h>
 #include <drivers/lapic.h>
+#include <drivers/ps2mouse.h>
 #include <lib/kprintf.h>
 #include <lib/panic.h>
 #include <lib/string.h>
@@ -813,6 +814,8 @@ void process_destroy(Process* p) {
 // it wakes sleepers and, once a second, restores priorities.
 void sched_tick() {
     if (!g_running) return;
+    // Before the scheduler lock: the mouse driver may wake readers.
+    if (this_cpu()->id == 0) ps2mouse_tick();
     g_lock.acquire();
     Cpu* c = this_cpu();
     Thread* cur = c->current;

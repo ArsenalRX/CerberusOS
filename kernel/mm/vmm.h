@@ -34,7 +34,8 @@ constexpr u32 EXEC = 1 << 2;
 constexpr u32 WRITE_THROUGH = 1 << 3;
 constexpr u32 CACHE_DISABLE = 1 << 4;
 constexpr u32 GLOBAL = 1 << 5;
-constexpr u32 ALL = WRITE | USER | EXEC | WRITE_THROUGH | CACHE_DISABLE | GLOBAL;
+constexpr u32 WRITE_COMBINE = 1 << 6;   // PAT entry 5 (write-combining): framebuffers
+constexpr u32 ALL = WRITE | USER | EXEC | WRITE_THROUGH | CACHE_DISABLE | GLOBAL | WRITE_COMBINE;
 } // namespace vm
 
 namespace mmap_flag {

@@ -296,6 +296,7 @@ int closedir(DIR* d);
 #define PROT_READ 1
 #define PROT_WRITE 2
 #define PROT_EXEC 4
+#define MAP_SHARED 0x01     // only a device's memory (the screen, /dev/fb0), never executable
 #define MAP_PRIVATE 0x02
 #define MAP_FIXED 0x10
 #define MAP_ANONYMOUS 0x20
@@ -331,9 +332,19 @@ int sysinfo(struct sysinfo* out);
 #define EV_KEY 1        // code: key code; value: 1 press, 0 release, 2 repeat
 #define EV_REL 2        // code: REL_X, REL_Y, REL_WHEEL; value: movement
 #define EV_BUTTON 3     // code: 0 left, 1 right, 2 middle; value: 1 press, 0 release
+#define EV_ABS 4        // code: ABS_X, ABS_Y; value: 0..65535 across the screen (a VM's host pointer)
 #define REL_X 0
 #define REL_Y 1
 #define REL_WHEEL 2
+#define ABS_X 0
+#define ABS_Y 1
+// Key codes in EV_KEY events (the keyboard driver's): 1 escape, 2 tab,
+// 3 enter, 4 backspace, 5 delete, 6-9 up/down/left/right, 10 home, 11 end,
+// 12-13 page up/down, 14 super, 15 alt, 16 ctrl, 17 shift, 32-43 F1-F12,
+// 64 a printable key (see unicode).
+#define KEY_ESCAPE 1
+#define KEY_F1 32
+#define KEY_CHAR 64
 struct input_event {
     uint64_t time_us;
     uint16_t type, code;
@@ -347,6 +358,13 @@ struct input_event {
 #define FBIO_GET_INFO 0x4600
 struct fb_info {
     uint32_t width, height, pitch, bpp;
+};
+// Switches the resolution (Bochs-interface adapters only; EBUSY while the
+// kernel desktop owns the screen). A MAP_SHARED mapping of /dev/fb0 keeps
+// its address; its shape follows fb_info afterwards.
+#define FBIO_SET_MODE 0x4601
+struct fb_mode {
+    uint32_t width, height;
 };
 
 // ---- randomness ----

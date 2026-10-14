@@ -31,6 +31,13 @@ void gui_terminal_clear();
 // so a panic or exception dump is visible. Not reversible.
 void gui_emergency_text_mode();
 
+// Hands the screen to a user program (the Pane window server, phase 12):
+// the compositor stops painting and reading input, the text console stays
+// off, and /dev/fb0 may change the resolution. gui_resume takes the screen
+// back and repaints everything. Both are called from the shell's thread.
+void gui_stop();
+void gui_resume();
+
 struct GuiStats {
     u64 frames;
     u64 last_frame_us;

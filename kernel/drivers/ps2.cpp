@@ -8,6 +8,9 @@ void (*g_input_hook)() = nullptr;
 }
 
 void ps2_set_input_hook(void (*hook)()) { g_input_hook = hook; }
+void ps2_notify_input() {
+    if (g_input_hook) g_input_hook();
+}
 
 void ps2_drain() {
     bool any = false;

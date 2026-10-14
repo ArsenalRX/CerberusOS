@@ -17,8 +17,10 @@ namespace input {
 constexpr u16 EV_KEY = 1;       // code: key code; value: 1 press, 0 release, 2 repeat
 constexpr u16 EV_REL = 2;       // code: REL_X, REL_Y, REL_WHEEL; value: movement
 constexpr u16 EV_BUTTON = 3;    // code: 0 left, 1 right, 2 middle; value: 1 press, 0 release
+constexpr u16 EV_ABS = 4;       // code: ABS_X, ABS_Y; value: 0..65535 across the screen (VirtualBox)
 
 constexpr u16 REL_X = 0, REL_Y = 1, REL_WHEEL = 2;
+constexpr u16 ABS_X = 0, ABS_Y = 1;
 
 struct Event {
     u64 time_us;                // since boot

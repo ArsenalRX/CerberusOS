@@ -38,9 +38,15 @@ struct CharDeviceOps {
     Result<usize> (*read)(u32 minor, u64 offset, void* buf, usize n);
     Result<usize> (*write)(u32 minor, u64 offset, const void* buf, usize n);
     Result<i64> (*ioctl)(u32 minor, u32 request, u64 arg);
+    // A shared mapping of the device's memory (mmap with MAP_SHARED): the
+    // physical address of byte `offset`, with `len` bytes mappable from
+    // there, and the vm:: cache flags to map it with. Null = not mappable.
+    Result<paddr_t> (*mmap)(u32 minor, u64 offset, usize len, u32* vm_flags);
 };
 
 void dev_register_char(u32 major, const CharDeviceOps* ops);
+// The operations registered for a character-device node, or null.
+const CharDeviceOps* dev_char_ops(const Vnode* v);
 // The operations behind device vnodes (tmpfs and devfs use them for their
 // CharDev and BlockDev nodes).
 const VnodeOps* dev_vnode_ops();

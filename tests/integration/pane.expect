@@ -1,0 +1,19 @@
+# Phase 12, first slice: the Pane window server runs as a user program on a
+# shared mapping of /dev/fb0 and the input devices, a client puts a window
+# on the screen through the port protocol with a shared-memory buffer, and a
+# 10x10 damage recomposites only those 100 pixels. The kernel desktop hands
+# the screen over for the test and takes it back afterwards.
+cerberus kernel shell
+!send pane --test
+!wait 30
+pane: screen
+pane: client connected
+pane: window 1 created
+pane: full commit composited
+pane: content verified
+pane: 10x10 damage recomposited 100 px
+pane: PASS
+run: /bin/pane exited with status 0
+!send gui
+!wait 2
+gui:

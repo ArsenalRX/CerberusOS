@@ -90,6 +90,8 @@ const CharDeviceOps g_tty = {nullptr, tty_read, tty_write, nullptr};
 
 } // namespace
 
+const CharDeviceOps* dev_char_ops(const Vnode* v) { return char_ops(v); }
+
 void dev_register_char(u32 major, const CharDeviceOps* ops) {
     if (major < MAX_MAJOR) g_char[major] = ops;
 }

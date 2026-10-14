@@ -23,3 +23,6 @@ bool ps2mouse_init();
 // Pops the next event; false if the queue is empty. Safe to poll.
 bool ps2mouse_poll(MouseEvent* out);
 bool ps2mouse_has_wheel();
+// Polls the hypervisor's pointer position (VirtualBox); called once per
+// tick on the bootstrap CPU from the scheduler tick, outside its lock.
+void ps2mouse_tick();

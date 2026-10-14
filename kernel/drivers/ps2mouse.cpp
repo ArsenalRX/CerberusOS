@@ -68,6 +68,9 @@ bool mouse_cmd(u8 b) {
     return false;
 }
 
+u8 g_last_buttons = 0;
+u32 g_last_abs_x = ~0u, g_last_abs_y = ~0u;
+
 void push(const MouseEvent& e) {
     usize next = (g_head + 1) % RING_SIZE;
     if (next == g_tail) return;         // full: drop
@@ -105,14 +108,19 @@ void handle_byte(u8 b) {
     e.ay = (u16)ay;
     push(e);
     // The same packet as events for /dev/input/mouse0.
+    if (e.absolute) {
+        input_report(input::DEV_MOUSE, input::EV_ABS, input::ABS_X, (i32)ax);
+        input_report(input::DEV_MOUSE, input::EV_ABS, input::ABS_Y, (i32)ay);
+        g_last_abs_x = ax;
+        g_last_abs_y = ay;
+    }
     if (e.dx) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_X, e.dx);
     if (e.dy) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_Y, e.dy);
     if (e.dz) input_report(input::DEV_MOUSE, input::EV_REL, input::REL_WHEEL, e.dz);
-    static u8 last_buttons = 0;
     for (u16 b = 0; b < 3; b++)
-        if ((e.buttons ^ last_buttons) & (1 << b))
+        if ((e.buttons ^ g_last_buttons) & (1 << b))
             input_report(input::DEV_MOUSE, input::EV_BUTTON, b, (e.buttons >> b) & 1);
-    last_buttons = e.buttons;
+    g_last_buttons = e.buttons;
 }
 
 bool init_locked();
@@ -195,3 +203,25 @@ bool ps2mouse_poll(MouseEvent* out) {
 }
 
 bool ps2mouse_has_wheel() { return g_has_wheel; }
+
+// Once per timer tick on the bootstrap CPU (sched_tick), outside any lock.
+// Under VirtualBox with mouse integration the host sends no PS/2 motion
+// at all (B-016), so the host's pointer position is asked for here and
+// becomes an event for both the kernel desktop and /dev/input/mouse0.
+void ps2mouse_tick() {
+    if (!g_present || !vmmdev_present()) return;
+    u32 ax, ay;
+    if (!vmmdev_mouse_position(&ax, &ay)) return;
+    if (ax == g_last_abs_x && ay == g_last_abs_y) return;
+    g_last_abs_x = ax;
+    g_last_abs_y = ay;
+    MouseEvent e{};
+    e.buttons = g_last_buttons;
+    e.absolute = true;
+    e.ax = (u16)ax;
+    e.ay = (u16)ay;
+    push(e);
+    input_report(input::DEV_MOUSE, input::EV_ABS, input::ABS_X, (i32)ax);
+    input_report(input::DEV_MOUSE, input::EV_ABS, input::ABS_Y, (i32)ay);
+    ps2_notify_input();
+}

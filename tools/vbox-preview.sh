@@ -68,6 +68,11 @@ typetext "help"; enter;      shot 6-terminal 1
 super; typetext "about"; enter;   shot 7-about 2
 key e0 5b 20 a0 e0 db;       shot 8-show-desktop 1    # Super+D: everything hidden
 key e0 5b 20 a0 e0 db
+# Phase 12: the Pane window server with its demo client, then back (Ctrl+Alt+Q)
+key e0 5b 14 94 e0 db; sleep 1
+typetext "pane --demo"; enter; shot 9-pane 4
+key 1d 38 10 90 b8 9d;      sleep 2
+shot 10-back 1
 w controlvm "$NAME" poweroff >/dev/null 2>&1
 sleep 2
 w unregistervm "$NAME" --delete >/dev/null 2>&1
