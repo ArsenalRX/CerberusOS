@@ -78,6 +78,51 @@ class of bug; if there is none, say so.
 
 ## Fixed
 
+### B-017 — Alt+Tab, Super+arrows and Alt+F4 did nothing in Pane
+- Found: 2026-10-17 (QEMU screenshots of `pane --demo` before the release).
+- Where: `userland/libc/include/cerberus.h`, `userland/pane/main.cpp`,
+  `kernel/drivers/ps2kbd.cpp`.
+- Symptom: the keys reached Pane (Ctrl+Alt+Q worked) but the shortcuts
+  never fired.
+- Cause: `/dev/input/kbd0` reports the physical key (the set-1 make code,
+  0x100 for extended keys: Tab 0x0F, Left 0x14B), as `tests/integration/
+  input.expect` pins; `cerberus.h` described the kernel desktop's logical
+  key numbers instead (Tab 2, arrows 6-9, F1 32), and Pane was written
+  against that comment.
+- Fix (0.0.6b): the header now says what the driver sends and defines
+  `KEY_TAB`, `KEY_F1`, `KEY_UP`... as physical codes; Pane uses them (and
+  the keypad arrows without Num Lock).
+- Guard: `tests/integration/pane-wm.expect` presses each shortcut.
+- Status: FIXED 2026-10-17.
+
+### B-018 — Keys typed in Pane replayed into the kernel desktop afterwards
+- Found: 2026-10-17 (same screenshots: after Ctrl+Alt+Q the desktop had
+  switched windows and maximised About).
+- Where: `gui_resume` in `kernel/gui/desktop.cpp`.
+- Symptom: Pane's Alt+Tab and Super+Up acted a second time on the kernel
+  desktop once it came back.
+- Cause: while stopped, `gui_pump` returns at once, so the keyboard and
+  mouse queues filled up and were processed on resume.
+- Fix (0.0.6b): `gui_resume` drops what was queued while the program had
+  the screen and forgets a held Super.
+- Guard: `tests/integration/pane-wm.expect` returns to the desktop and
+  checks it; the screenshots of the pre-release pass.
+- Status: FIXED 2026-10-17.
+
+### B-019 — No window could be resized and the demo windows vanished
+- Found: 2026-10-17 (same pass).
+- Where: `userland/libpane/pane.cpp`, `userland/bin/panetest.cpp`.
+- Symptom: dragging a window's corner did nothing; `pane --demo` showed an
+  empty screen after five seconds.
+- Cause: libpane never set `WIN_RESIZABLE`, which Pane requires for edge
+  grips; `panetest` used the acceptance test's 5 s idle timeout in demo
+  mode too and quit.
+- Fix (0.0.6b): `create_window(..., resizable = true)`; the demo waits
+  without a timeout.
+- Guard: `tests/integration/pane-wm.expect` resizes a demo window after
+  more than five seconds.
+- Status: FIXED 2026-10-17.
+
 ### B-012 — The Settings window did not scroll when it was small
 - Found: 2026-10-04.
 - Where: `paint_settings` in `kernel/gui/desktop.cpp`.

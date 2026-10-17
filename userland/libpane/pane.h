@@ -57,8 +57,13 @@ public:
 
     // Makes a decorated window with a buffer of the given size; null on
     // failure. The buffer is black until the program draws and commits.
-    Window* create_window(int width, int height, const char* title);
+    // A resizable window gets EVT_CONFIGURE with a new size when the user
+    // drags an edge or snaps it; answer with resize() and a new frame.
+    Window* create_window(int width, int height, const char* title, bool resizable = true);
     void destroy_window(Window* w);
+    // Gives the window a buffer of a new size (after an EVT_CONFIGURE that
+    // changed w/h): the old pixels are gone, draw and commit again.
+    bool resize(Window* w, int width, int height);
     void set_title(Window* w, const char* title);
     // Marks a content rectangle as changed; commit shows every marked
     // rectangle at once. A window with no damage since the last commit is

@@ -43,6 +43,11 @@ overview: docs/ABOUT.md. Plain-language plan: docs/ROADMAP.md.
   the version (bottom-right of the wallpaper and in About). If the owner's
   VM is powered off, rename it `Cerberus <version>` so they know what they
   are running; a saved VM cannot be changed.
+- **Every build overwrites the VM's ISO at once** (owner, 2026-10-13
+  evening): as soon as `make iso` succeeds and a quick smoke test passes,
+  `make dist` (a development build is fine; its version says `-dev`), so
+  the owner can try it while the full test run and the release follow.
+  Never rebuild while `make test` is running; copy the ISO instead.
 - Rewrite the list on the owner's Windows desktop,
   `C:\Users\devot\Desktop\Cerberus <version> - what changed.html`
   (replace the old file; one file): what was fixed, added and what is

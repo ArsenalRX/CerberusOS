@@ -173,6 +173,27 @@ Last updated: **2026-10-06** (0.0.5j).
 - Settings scrolls with the wheel when a tab is taller than the window.
 - Everything is saved to `/data/desktop.conf` when a data disk exists.
 
+## Pane, the window server as a program (phase 12, first slice)
+
+- `pane` in the shell (or `pane --demo` for four demo windows): the kernel
+  desktop hands over the screen, `/bin/pane` composites windows from
+  programs, Ctrl+Alt+Q (or the program ending) brings the desktop back.
+  `pane --test` runs the acceptance check with `/bin/panetest`.
+- Windows: rounded corners and a shadow, title bar with the title and a
+  close button, move by the title bar, resize from any edge or corner,
+  click to focus and raise, Alt+Tab to the next window, Super+Left/Right
+  snap to a half, Super+Up maximises, Super+Down restores, Alt+F4 asks the
+  program to close.
+- For programs: `libpane` (`userland/libpane/pane.h`): `connect`,
+  `create_window`, draw into `Window::pixels`, `damage`, `commit`,
+  `next_event` (keys, pointer, focus, close, frame, configure). The wire
+  protocol is `userland/pane/protocol.h` (version 1).
+- Kernel side: `mmap(MAP_SHARED)` of `/dev/fb0` (write-combined),
+  `FBIO_SET_MODE`, `gui stop|start`, absolute mouse events on
+  `/dev/input/mouse0` under VirtualBox. *The kernel desktop is still the
+  one that boots; its panel, launcher and applications are not in Pane
+  yet.*
+
 ## Security and privacy (in place; see docs/STATUS.md for the full list)
 
 - W^X everywhere, SMEP/SMAP/UMIP, stack protectors, zeroed memory, heap

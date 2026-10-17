@@ -73,7 +73,7 @@ Window* Connection::find(uint32_t id) {
     return nullptr;
 }
 
-Window* Connection::create_window(int width, int height, const char* title) {
+Window* Connection::create_window(int width, int height, const char* title, bool resizable) {
     if (channel_ < 0 || width < 1 || height < 1 || width > 8192 || height > 8192) return nullptr;
     Window* w = nullptr;
     for (int i = 0; i < MAX_WINDOWS && !w; i++)
@@ -86,7 +86,7 @@ Window* Connection::create_window(int width, int height, const char* title) {
     c.h.serial = ++serial_;
     c.width = (uint32_t)width;
     c.height = (uint32_t)height;
-    c.flags = WIN_DECORATED;
+    c.flags = WIN_DECORATED | (resizable ? WIN_RESIZABLE : 0);
     strlcpy(c.title, title ? title : "", sizeof c.title);
     if (!send(&c, sizeof c)) return nullptr;
     // The reply comes in order; events for other windows may precede it
@@ -129,6 +129,39 @@ Window* Connection::create_window(int width, int height, const char* title) {
     w->shm = shm;
     w->bytes = bytes;
     return w;
+}
+
+bool Connection::resize(Window* w, int width, int height) {
+    if (!w || !w->id || width < 1 || height < 1 || width > 8192 || height > 8192) return false;
+    if (width == w->width && height == w->height) return true;
+    size_t bytes = (size_t)width * (size_t)height * 4;
+    int shm = shm_create(bytes);
+    if (shm < 0) return false;
+    void* px = shm_map(shm, PROT_READ | PROT_WRITE);
+    if (px == MAP_FAILED) {
+        ::close(shm);
+        return false;
+    }
+    AttachBuffer a{};
+    a.h = Header{ATTACH_BUFFER, sizeof a, ++serial_, w->id};
+    a.width = (uint32_t)width;
+    a.height = (uint32_t)height;
+    a.stride = (uint32_t)width;
+    a.format = 0;
+    if (!send(&a, sizeof a, &shm, 1)) {
+        shm_unmap(px);
+        ::close(shm);
+        return false;
+    }
+    if (w->pixels) shm_unmap(w->pixels);
+    if (w->shm >= 0) ::close(w->shm);
+    w->pixels = (uint32_t*)px;
+    w->width = width;
+    w->height = height;
+    w->stride = width;
+    w->shm = shm;
+    w->bytes = bytes;
+    return true;
 }
 
 void Connection::destroy_window(Window* w) {

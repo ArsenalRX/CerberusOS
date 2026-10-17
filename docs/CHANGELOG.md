@@ -22,6 +22,43 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+Phase 12, Pane, has started: the window server runs as a user program.
+
+### Added
+- **Pane** (`/bin/pane`), the window server as an ordinary program: it maps
+  the screen through `/dev/fb0`, reads `/dev/input/*`, and programs put
+  windows on it through the port `pane` with shared-memory buffers. First
+  slice: decorated windows (title bar, close button), move by the title
+  bar, stacking and focus by click, keyboard to the focused window,
+  pointer events to the window under it, damage-driven compositing (a
+  10x10 change recomposites 100 pixels), frame callbacks, Alt+F4,
+  Ctrl+Alt+Q to leave. A client only ever sees its own windows and input;
+  a malformed message disconnects that client, never Pane.
+- `pane` in the shell runs it in place of the kernel desktop and brings
+  the desktop back afterwards; `pane --demo` adds four demo windows;
+  `gui stop` / `gui start` hand the screen to any program and back.
+- `libpane` (`userland/libpane`), the client library: connect, create a
+  window, draw into its buffer, damage, commit, receive events. `panetest`
+  is the first client.
+- `mmap` with `MAP_SHARED` on `/dev/fb0` maps the screen write-combined
+  into a program; `FBIO_SET_MODE` changes the resolution from a program.
+- `/dev/input/mouse0` reports the host pointer's absolute position
+  (`EV_ABS`) under VirtualBox, so a user-mode compositor follows it too.
+- `fstat` on a shared-memory descriptor reports the block's size.
+- Pane, second slice: rounded window corners and a shadow; resize from
+  any edge or corner (the program gets the new size and redraws); Alt+Tab;
+  Super+Left/Right snap to a half, Super+Up maximises, Super+Down restores;
+  dragging a snapped window by its title gives it its old size back.
+- `KEY_*` constants in `cerberus.h` for the physical key codes that
+  `/dev/input/kbd0` reports.
+
+### Fixed
+- Pane's Alt+Tab, Super+arrows and Alt+F4 did nothing (B-017).
+- Keys pressed while Pane had the screen were replayed into the kernel
+  desktop when it came back (B-018).
+- Windows could not be resized, and the `pane --demo` windows vanished
+  after five seconds (B-019).
+
 ## 0.0.6a — 2026-10-13
 
 ### Fixed

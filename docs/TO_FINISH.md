@@ -99,23 +99,37 @@ it then ask you to iterate." So, in order, each step a verified build in
    work, then move on to phase 12 whatever is left.**
 4. Then phase 12 (below) when the owner says so.
 
-First steps of phase 12, in order (SPEC §5, §5A and §9 first):
+Phase 12 steps (SPEC §5, §5A and §9), state on 2026-10-13:
 
-1. Write the Pane protocol (docs/SPEC.md §9) as a header shared by server
-   and clients: messages over a port, window buffers as shared memory,
-   input events back to the focused client only.
-2. `pane`, a user program: opens `/dev/fb0` and `/dev/input/*`, creates the
-   port `pane`, waits in `event_wait`. It needs an `mmap` of `/dev/fb0`
-   (not there yet: `/dev/fb0` is read/write only) and a way to change the
-   resolution from user mode (an ioctl over `kernel/drivers/bga.cpp`).
-3. Move libgfx (`kernel/gfx/`) into a library both the kernel and user
-   programs build (it is freestanding already; user programs have SSE).
-4. `libpane` and one client (a terminal needs ptys, which are phase 17: start
-   with a clock or the System Monitor, which needs only `sysinfo`).
-5. Port the compositor, window management, panel, launcher and Settings
-   from `kernel/gui/desktop.cpp`; keep the kernel desktop bootable behind a
-   switch until Pane passes the `desktop*` tests.
-6. The +v2 rows: client isolation tests, fuzz the protocol, 8 ms frames.
+1. [x] The Pane protocol as a header shared by server and clients
+   (`userland/pane/protocol.h`, version 1).
+2. [x] `pane`, a user program on `/dev/fb0` (shared write-combined `mmap`,
+   `FBIO_SET_MODE`) and `/dev/input/*`, port `pane`, `event_wait`;
+   `gui stop|start` and the `pane` shell command hand the screen over.
+3. [x] libgfx built for user programs too (`kernel/gfx/gfx.cpp`, fonts
+   blob embedded).
+4. [x] `libpane` and the first client (`panetest`; `pane --demo`).
+   **Done 2026-10-13 as the first slice**: decorated windows, move,
+   stack, focus, keyboard and pointer routing, damage-driven frames,
+   frame callbacks, client isolation of window ids, size-checked
+   buffers; `tests/integration/pane.expect`.
+5. [ ] **Next:** port the rest from `kernel/gui/desktop.cpp` behind a
+   passing test each time. Done 2026-10-17 (second slice,
+   `tests/integration/pane-wm.expect`): resize from edges and corners
+   with `Configure`, rounded corners, shadows, Alt+Tab, Super+arrow
+   snapping. Still to do: opacity, an Alt+Tab switcher overlay, live
+   resize (configure during the drag); then the panel and launcher as
+   Pane's own layer;
+   then the applications (Files, Notes, Calculator, Settings, System
+   Monitor, Image Viewer) as programs on `libpane`; the terminal needs
+   ptys (phase 17) or a port-fed console; `init` starting Pane with a
+   minimal supervisor (the review's dependency fix); switch the boot to
+   Pane once the `desktop*` tests pass against it.
+6. [ ] The +v2 rows: client isolation tests (a client asking for another
+   window's buffer, injecting input, grabbing the screen: refused and
+   logged), mediated capture and clipboard, secure password entry,
+   `make fuzz` on the protocol, the 8 ms frame at 1920x1080 with ten
+   windows measured in docs/BENCH.md, no work when nothing changed.
 
 - Phase 11 left-overs: demand-paged and shared file mappings, a
   non-blocking `port_send`, signal masks, passing ports through ports.

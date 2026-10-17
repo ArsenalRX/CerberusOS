@@ -107,7 +107,7 @@ struct Connected {
 
 struct Key {
     Header h;
-    uint32_t code;          // key code (the keyboard driver's)
+    uint32_t code;          // physical key (KEY_* in cerberus.h)
     uint32_t unicode;       // character typed, 0 if none
     uint32_t mods;          // 1 shift, 2 ctrl, 4 alt, 8 super, 16 caps, 32 num
     uint32_t pressed;       // 1 press, 0 release, 2 repeat

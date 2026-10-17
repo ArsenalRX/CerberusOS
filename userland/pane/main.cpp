@@ -5,14 +5,15 @@
 // only the damaged parts of the screen into a back buffer and writes those
 // to the framebuffer.
 //
-// First slice (0.0.6b): decorated windows (title bar, close button), move
-// by the title bar, stacking and focus by click, keyboard to the focused
-// window, pointer events to the window under it, damage-driven
-// compositing, frame callbacks, client isolation (a client only ever
-// names its own windows). `pane --test` starts /bin/panetest and checks
-// the acceptance points on its own; `pane` alone runs until Ctrl+Alt+Q.
-// Everything a client sends is checked by size and range; a bad message
-// disconnects that client and never Pane (SPEC §5A phase 12).
+// Slices so far (0.0.6b): decorated windows with rounded corners and a
+// shadow; move by the title bar; resize at the edges and corners; stacking
+// and focus by click; Alt+Tab; Super+arrows snap left/right/maximise/
+// restore; keyboard to the focused window, pointer events to the window
+// under it; damage-driven compositing; frame callbacks; a client only ever
+// names its own windows and a bad message disconnects that client, never
+// Pane (SPEC §5A phase 12). `pane --test` starts /bin/panetest and checks
+// the acceptance points; `pane --demo` shows four windows; Ctrl+Alt+Q
+// leaves (the kernel desktop comes back).
 #include <cerberus.h>
 #include <gfx/gfx.h>
 #include "protocol.h"
@@ -23,7 +24,8 @@ using namespace gfx;
 namespace {
 
 constexpr int MAX_CLIENTS = 16, MAX_WINS = 64, MAX_DAMAGE = 48;
-constexpr int TITLE_H = 28, BORDER = 1, CLOSE_W = 36;
+constexpr int TITLE_H = 28, BORDER = 1, CLOSE_W = 36, RADIUS = 10, SHADOW = 12, GRIP = 7;
+constexpr int MIN_W = 120, MIN_H = 48;
 constexpr int CURSOR_W = 12, CURSOR_H = 19;
 constexpr uint64_t FRAME_MS = 8;
 
@@ -48,9 +50,10 @@ struct Win {
     int bw = 0, bh = 0, stride = 0;
     int shm = -1;
     Rect pending{0, 0, 0, 0};       // damage since the last commit (content-relative)
-    bool committed = false;         // a commit is waiting for the next frame
     bool want_frame = false;        // tell the client when it is shown
     bool ever_committed = false;
+    bool snapped = false;           // geometry set by a snap; `saved` restores it
+    Rect saved{0, 0, 0, 0};
 };
 
 Client g_clients[MAX_CLIENTS];
@@ -78,9 +81,14 @@ uint8_t g_buttons = 0;
 int g_hover = -1;                   // window under the pointer
 int g_drag = -1;                    // window being moved by its title bar
 int g_drag_dx = 0, g_drag_dy = 0;
+int g_resize = -1;                  // window being resized
+int g_resize_edges = 0;             // bit 0 left, 1 right, 2 top, 3 bottom
+Rect g_resize_start{0, 0, 0, 0};
+int g_resize_mx = 0, g_resize_my = 0;
 
 bool g_test = false;
 bool g_demo = false;                // --demo: start /bin/panetest demo and keep running
+bool g_log = false;                 // --test or --demo: window management goes to the log
 bool g_quit = false;
 long g_frames = 0;
 long g_last_commit_px = -1;         // pixels recomposited by the frame after the last commit
@@ -90,10 +98,12 @@ extern "C" const uint8_t _binary_fonts_aa_start[];
 extern "C" const uint8_t _binary_fonts_aa_end[];
 
 // ------------------------------------------------------------ geometry --
+bool decorated(const Win& w) { return w.flags & WIN_DECORATED; }
 Rect frame_rect(const Win& w) {
-    if (!(w.flags & WIN_DECORATED)) return {w.x, w.y, w.w, w.h};
+    if (!decorated(w)) return {w.x, w.y, w.w, w.h};
     return {w.x - BORDER, w.y - TITLE_H - BORDER, w.w + 2 * BORDER, w.h + TITLE_H + 2 * BORDER};
 }
+Rect outer_rect(const Win& w) { return frame_rect(w).inset(-SHADOW); }   // with the shadow
 Rect title_rect(const Win& w) { return {w.x, w.y - TITLE_H, w.w, TITLE_H}; }
 Rect close_rect(const Win& w) { return {w.x + w.w - CLOSE_W, w.y - TITLE_H, CLOSE_W, TITLE_H}; }
 Rect cursor_rect() { return {g_mx, g_my, CURSOR_W, CURSOR_H}; }
@@ -120,15 +130,30 @@ void raise_window(int win) {
     if (i < 0 || i == g_norder - 1) return;
     for (; i < g_norder - 1; i++) g_order[i] = g_order[i + 1];
     g_order[g_norder - 1] = win;
-    add_damage(frame_rect(g_wins[win]));
+    add_damage(outer_rect(g_wins[win]));
 }
 
-int window_at(int x, int y, bool* in_title, bool* in_close) {
+// The resize edges the point touches on a decorated, resizable window.
+int edges_at(const Win& w, int x, int y) {
+    if (!decorated(w) || !(w.flags & WIN_RESIZABLE)) return 0;
+    Rect f = frame_rect(w);
+    if (!f.inset(-GRIP).contains(x, y)) return 0;
+    int e = 0;
+    if (x < f.x + GRIP) e |= 1;
+    if (x >= f.right() - GRIP) e |= 2;
+    if (y < f.y + GRIP) e |= 4;
+    if (y >= f.bottom() - GRIP) e |= 8;
+    return e;
+}
+
+int window_at(int x, int y, bool* in_title, bool* in_close, int* edges) {
     for (int i = g_norder - 1; i >= 0; i--) {
         const Win& w = g_wins[g_order[i]];
-        if (!frame_rect(w).contains(x, y)) continue;
-        if (in_title) *in_title = (w.flags & WIN_DECORATED) && title_rect(w).contains(x, y);
-        if (in_close) *in_close = (w.flags & WIN_DECORATED) && close_rect(w).contains(x, y);
+        int e = edges_at(w, x, y);
+        if (!e && !frame_rect(w).contains(x, y)) continue;
+        if (in_title) *in_title = decorated(w) && !e && title_rect(w).contains(x, y);
+        if (in_close) *in_close = decorated(w) && !e && close_rect(w).contains(x, y);
+        if (edges) *edges = e;
         return g_order[i];
     }
     return -1;
@@ -181,19 +206,30 @@ void set_focus(int win) {
     if (win == g_focus) return;
     if (g_focus >= 0 && g_wins[g_focus].used) {
         send_header(g_wins[g_focus].client, FOCUS_OUT, g_wins[g_focus].id);
-        add_damage(frame_rect(g_wins[g_focus]));
+        add_damage(outer_rect(g_wins[g_focus]));
     }
     g_focus = win;
     if (win >= 0) {
         send_header(g_wins[win].client, FOCUS_IN, g_wins[win].id);
-        add_damage(frame_rect(g_wins[win]));
+        add_damage(outer_rect(g_wins[win]));
     }
+}
+
+void set_geometry(Win& w, int x, int y, int nw, int nh) {
+    add_damage(outer_rect(w));
+    w.x = x;
+    w.y = y;
+    w.w = nw;
+    w.h = nh;
+    if (w.y < TITLE_H + BORDER) w.y = TITLE_H + BORDER;
+    add_damage(outer_rect(w));
+    send_configure(w);
 }
 
 void destroy_window(int win) {
     Win& w = g_wins[win];
     if (!w.used) return;
-    add_damage(frame_rect(w));
+    add_damage(outer_rect(w));
     int i = order_index(win);
     if (i >= 0) {
         for (; i < g_norder - 1; i++) g_order[i] = g_order[i + 1];
@@ -204,6 +240,7 @@ void destroy_window(int win) {
     bool was_focus = g_focus == win;
     if (g_hover == win) g_hover = -1;
     if (g_drag == win) g_drag = -1;
+    if (g_resize == win) g_resize = -1;
     w = Win{};
     if (was_focus) {
         g_focus = -1;
@@ -223,6 +260,19 @@ void drop_client(int ci) {
 }
 
 // ------------------------------------------------------------- drawing --
+// Source-over of a translucent colour onto a rectangle (libgfx fills are
+// opaque; the shadow needs blending).
+void blend_rect(Surface& s, const Rect& r, Color c) {
+    Rect rr = r.intersect(s.clip);
+    if (rr.empty()) return;
+    uint32_t a = alpha_of(c);
+    if (!a) return;
+    for (int y = rr.y; y < rr.bottom(); y++) {
+        uint32_t* row = s.row(y);
+        for (int x = rr.x; x < rr.right(); x++) row[x] = mix(row[x], c | 0xFF000000u, (uint8_t)a);
+    }
+}
+
 void draw_cursor(Surface& s) {
     static const char* const SHAPE[CURSOR_H] = {
         "B           ", "BB          ", "BWB         ", "BWWB        ", "BWWWB       ", "BWWWWB      ",
@@ -239,42 +289,102 @@ void draw_cursor(Surface& s) {
         }
 }
 
-void draw_frame(Surface& s, const Win& w, bool focused) {
-    if (!(w.flags & WIN_DECORATED)) return;
+// The shadow: rings of falling opacity outside the frame, rounded like it.
+void draw_shadow(Surface& s, const Rect& f) {
+    for (int i = SHADOW; i >= 1; i--) {
+        Rect ring = f.inset(-i).translated(0, 2);
+        uint8_t a = (uint8_t)(6 + (SHADOW - i) * 4);
+        // top and bottom bands, then the sides, so each pixel is blended once per ring
+        blend_rect(s, {ring.x, ring.y, ring.w, 1}, rgba(0, 0, 0, a));
+        blend_rect(s, {ring.x, ring.bottom() - 1, ring.w, 1}, rgba(0, 0, 0, a));
+        blend_rect(s, {ring.x, ring.y + 1, 1, ring.h - 2}, rgba(0, 0, 0, a));
+        blend_rect(s, {ring.right() - 1, ring.y + 1, 1, ring.h - 2}, rgba(0, 0, 0, a));
+    }
+}
+
+// The scene under a window's corners is kept before the window is drawn,
+// then blended back by the corner's coverage: rounded corners over any
+// background, square content buffers included.
+struct CornerSave {
+    uint32_t px[4][RADIUS * RADIUS];
+    Rect r[4];
+};
+
+void save_corners(const Surface& s, const Rect& f, CornerSave& cs) {
+    cs.r[0] = {f.x, f.y, RADIUS, RADIUS};
+    cs.r[1] = {f.right() - RADIUS, f.y, RADIUS, RADIUS};
+    cs.r[2] = {f.x, f.bottom() - RADIUS, RADIUS, RADIUS};
+    cs.r[3] = {f.right() - RADIUS, f.bottom() - RADIUS, RADIUS, RADIUS};
+    for (int k = 0; k < 4; k++)
+        for (int y = 0; y < RADIUS; y++)
+            for (int x = 0; x < RADIUS; x++) {
+                int px = cs.r[k].x + x, py = cs.r[k].y + y;
+                cs.px[k][y * RADIUS + x] = s.clip.contains(px, py) ? s.row(py)[px] : 0;
+            }
+}
+
+void restore_corners(Surface& s, const CornerSave& cs) {
+    for (int k = 0; k < 4; k++)
+        for (int y = 0; y < RADIUS; y++)
+            for (int x = 0; x < RADIUS; x++) {
+                int px = cs.r[k].x + x, py = cs.r[k].y + y;
+                if (!s.clip.contains(px, py)) continue;
+                int dx = (k & 1) ? RADIUS - 1 - x : x;
+                int dy = (k & 2) ? RADIUS - 1 - y : y;
+                uint8_t cov = corner_coverage(RADIUS, dx, dy);
+                if (cov == 255) continue;
+                uint32_t under = cs.px[k][y * RADIUS + x];
+                s.row(py)[px] = cov ? mix(under, s.row(py)[px], cov) : under;
+            }
+}
+
+void draw_window(Surface& s, const Win& w, bool focused) {
     Rect f = frame_rect(w);
-    Rect t = title_rect(w);
-    Color bar = focused ? rgb(0x2b, 0x31, 0x44) : rgb(0x1f, 0x23, 0x31);
-    fill_rect(s, t, bar);
-    stroke_rect(s, f, focused ? rgb(0x5a, 0xa2, 0xff) : rgb(0x3a, 0x40, 0x55));
-    draw_text_ellipsis(s, g_bold, t.x + 12, t.y + 6, w.title, w.w - CLOSE_W - 20, focused ? rgb(0xf1, 0xf3, 0xf9) : rgb(0xaa, 0xb1, 0xc5));
-    Rect c = close_rect(w);
-    int cx = c.x + c.w / 2, cy = c.y + c.h / 2;
-    Color x = focused ? rgb(0xf1, 0xf3, 0xf9) : rgb(0x8a, 0x91, 0xa5);
-    draw_line_aa(s, cx - 5, cy - 5, cx + 5, cy + 5, 20, x);
-    draw_line_aa(s, cx + 5, cy - 5, cx - 5, cy + 5, 20, x);
+    CornerSave* cs = nullptr;
+    static CornerSave saved;
+    if (decorated(w)) {
+        draw_shadow(s, f);
+        cs = &saved;
+        save_corners(s, f, *cs);
+        Rect t = title_rect(w);
+        Color bar = focused ? rgb(0x2b, 0x31, 0x44) : rgb(0x1f, 0x23, 0x31);
+        fill_rect(s, f, bar);
+        fill_rect(s, t, bar);
+    }
+    // content: the client's buffer where it covers the window, dark elsewhere
+    Rect content{w.x, w.y, w.w, w.h};
+    if (w.px && w.bw > 0) {
+        Surface buffer((uint32_t*)w.px, w.bw, w.bh, w.stride);
+        Rect shown = Rect{w.x, w.y, w.bw < w.w ? w.bw : w.w, w.bh < w.h ? w.bh : w.h}.intersect(s.clip);
+        if (!shown.empty()) blit(s, shown.x, shown.y, buffer.sub({shown.x - w.x, shown.y - w.y, shown.w, shown.h}));
+        if (w.bw < w.w) fill_rect(s, {w.x + w.bw, w.y, w.w - w.bw, w.h}, rgb(0x10, 0x12, 0x1c));
+        if (w.bh < w.h) fill_rect(s, {w.x, w.y + w.bh, w.w, w.h - w.bh}, rgb(0x10, 0x12, 0x1c));
+    } else {
+        fill_rect(s, content, rgb(0x10, 0x12, 0x1c));
+    }
+    if (decorated(w)) {
+        Rect t = title_rect(w);
+        stroke_rect_rounded(s, f, RADIUS, focused ? rgb(0x5a, 0xa2, 0xff) : rgb(0x3a, 0x40, 0x55));
+        draw_text_ellipsis(s, g_bold, t.x + 12, t.y + 6, w.title, w.w - CLOSE_W - 20,
+                           focused ? rgb(0xf1, 0xf3, 0xf9) : rgb(0xaa, 0xb1, 0xc5));
+        Rect c = close_rect(w);
+        int cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+        Color x = focused ? rgb(0xf1, 0xf3, 0xf9) : rgb(0x8a, 0x91, 0xa5);
+        draw_line_aa(s, cx - 5, cy - 5, cx + 5, cy + 5, 20, x);
+        draw_line_aa(s, cx + 5, cy - 5, cx - 5, cy + 5, 20, x);
+        restore_corners(s, *cs);
+    }
 }
 
 void compose_rect(const Rect& r) {
     Surface s = g_back;
     s.clip = r;
-    // wallpaper
     Surface wsub = g_wall.sub(r);
     blit(s, r.x, r.y, wsub);
-    // windows, bottom to top
     for (int i = 0; i < g_norder; i++) {
         const Win& w = g_wins[g_order[i]];
-        if (!frame_rect(w).overlaps(r)) continue;
-        draw_frame(s, w, g_order[i] == g_focus);
-        if (w.px && w.bw > 0) {
-            Surface content((uint32_t*)w.px, w.bw, w.bh, w.stride);
-            Rect c = Rect{w.x, w.y, w.w, w.h}.intersect(r);
-            if (!c.empty()) {
-                Surface sub = content.sub({c.x - w.x, c.y - w.y, c.w, c.h});
-                blit(s, c.x, c.y, sub);
-            }
-        } else {
-            fill_rect(s, Rect{w.x, w.y, w.w, w.h}.intersect(r), rgb(0x10, 0x12, 0x1c));
-        }
+        if (!outer_rect(w).overlaps(r)) continue;
+        draw_window(s, w, g_order[i] == g_focus);
     }
     if (cursor_rect().overlaps(r)) draw_cursor(s);
 }
@@ -323,11 +433,31 @@ void arm_frame() {
     e.timeout_ms = FRAME_MS;
     e.data = 5;                     // the frame timer (1-4 are the other watches)
     event_ctl(g_ev, EVENT_DEL, EVENT_FD_TIMER, nullptr);
-    int rc = event_ctl(g_ev, EVENT_ADD, EVENT_FD_TIMER, &e);
-    if (rc == 0) g_frame_armed = true;
+    if (event_ctl(g_ev, EVENT_ADD, EVENT_FD_TIMER, &e) == 0) g_frame_armed = true;
 }
 
 // --------------------------------------------------------------- input --
+void snap(Win& w, int side) {
+    // side: 0 left half, 1 right half, 2 maximise, 3 restore
+    if (side == 3) {
+        if (!w.snapped) return;
+        w.snapped = false;
+        set_geometry(w, w.saved.x, w.saved.y, w.saved.w, w.saved.h);
+        if (g_log) printf("pane: window %u restored: %dx%d at %d,%d\n", w.id, w.w, w.h, w.x, w.y);
+        return;
+    }
+    if (!w.snapped) w.saved = {w.x, w.y, w.w, w.h};
+    w.snapped = true;
+    int top = TITLE_H + BORDER + 4;
+    int usable_h = g_H - top - BORDER - 4;
+    if (side == 2) set_geometry(w, BORDER + 4, top, g_W - 2 * (BORDER + 4), usable_h);
+    else if (side == 0) set_geometry(w, BORDER + 4, top, g_W / 2 - 2 * (BORDER + 4), usable_h);
+    else set_geometry(w, g_W / 2 + BORDER + 4, top, g_W / 2 - 2 * (BORDER + 4), usable_h);
+    if (g_log)
+        printf("pane: window %u snapped %s: %dx%d at %d,%d\n", w.id, side == 2 ? "maximised" : side == 0 ? "left" : "right",
+               w.w, w.h, w.x, w.y);
+}
+
 void move_pointer(int nx, int ny) {
     if (nx < 0) nx = 0;
     if (ny < 0) ny = 0;
@@ -338,16 +468,36 @@ void move_pointer(int nx, int ny) {
     g_mx = nx;
     g_my = ny;
     add_damage(cursor_rect());
+    if (g_resize >= 0 && g_wins[g_resize].used) {
+        Win& w = g_wins[g_resize];
+        Rect r = g_resize_start;
+        int dx = g_mx - g_resize_mx, dy = g_my - g_resize_my;
+        if (g_resize_edges & 1) { r.x += dx; r.w -= dx; }
+        if (g_resize_edges & 2) r.w += dx;
+        if (g_resize_edges & 4) { r.y += dy; r.h -= dy; }
+        if (g_resize_edges & 8) r.h += dy;
+        if (r.w < MIN_W) { if (g_resize_edges & 1) r.x -= MIN_W - r.w; r.w = MIN_W; }
+        if (r.h < MIN_H) { if (g_resize_edges & 4) r.y -= MIN_H - r.h; r.h = MIN_H; }
+        if (r.x != w.x || r.y != w.y || r.w != w.w || r.h != w.h) {
+            add_damage(outer_rect(w));
+            w.x = r.x;
+            w.y = r.y;
+            w.w = r.w;
+            w.h = r.h;
+            add_damage(outer_rect(w));
+        }
+        return;
+    }
     if (g_drag >= 0 && g_wins[g_drag].used) {
         Win& w = g_wins[g_drag];
-        add_damage(frame_rect(w));
+        add_damage(outer_rect(w));
         w.x = g_mx - g_drag_dx;
         w.y = g_my - g_drag_dy;
         if (w.y < TITLE_H + BORDER) w.y = TITLE_H + BORDER;
-        add_damage(frame_rect(w));
+        add_damage(outer_rect(w));
         return;
     }
-    int under = window_at(g_mx, g_my, nullptr, nullptr);
+    int under = window_at(g_mx, g_my, nullptr, nullptr, nullptr);
     if (under != g_hover) {
         if (g_hover >= 0 && g_wins[g_hover].used) send_header(g_wins[g_hover].client, POINTER_LEAVE, g_wins[g_hover].id);
         g_hover = under;
@@ -359,7 +509,8 @@ void move_pointer(int nx, int ny) {
 
 void button(uint32_t b, bool pressed) {
     bool in_title = false, in_close = false;
-    int under = window_at(g_mx, g_my, &in_title, &in_close);
+    int edges = 0;
+    int under = window_at(g_mx, g_my, &in_title, &in_close, &edges);
     if (pressed) {
         if (under >= 0) {
             raise_window(under);
@@ -368,19 +519,40 @@ void button(uint32_t b, bool pressed) {
                 send_header(g_wins[under].client, CLOSE_REQUEST, g_wins[under].id);
                 return;
             }
+            if (b == 0 && edges) {
+                Win& w = g_wins[under];
+                g_resize = under;
+                g_resize_edges = edges;
+                g_resize_start = {w.x, w.y, w.w, w.h};
+                g_resize_mx = g_mx;
+                g_resize_my = g_my;
+                w.snapped = false;
+                return;
+            }
             if (b == 0 && in_title) {
+                Win& w = g_wins[under];
+                if (w.snapped) {
+                    // dragging a snapped window gives it its old size back under the pointer
+                    int rel = w.w ? (g_mx - w.x) * w.saved.w / w.w : 0;
+                    w.snapped = false;
+                    set_geometry(w, g_mx - rel, g_my + TITLE_H / 2, w.saved.w, w.saved.h);
+                }
                 g_drag = under;
-                g_drag_dx = g_mx - g_wins[under].x;
-                g_drag_dy = g_my - g_wins[under].y;
+                g_drag_dx = g_mx - w.x;
+                g_drag_dy = g_my - w.y;
                 return;
             }
         }
-    } else if (b == 0 && g_drag >= 0) {
-        if (g_wins[g_drag].used) send_configure(g_wins[g_drag]);
-        g_drag = -1;
+    } else if (b == 0 && (g_drag >= 0 || g_resize >= 0)) {
+        int win = g_drag >= 0 ? g_drag : g_resize;
+        if (g_wins[win].used) send_configure(g_wins[win]);
+        if (g_log && g_wins[win].used)
+            printf("pane: window %u %s: %dx%d at %d,%d\n", g_wins[win].id, g_resize >= 0 ? "resized" : "moved",
+                   g_wins[win].w, g_wins[win].h, g_wins[win].x, g_wins[win].y);
+        g_drag = g_resize = -1;
         return;
     }
-    if (under >= 0 && !in_title) send_pointer(g_wins[under], POINTER_BUTTON, g_mx, g_my, b, pressed, 0);
+    if (under >= 0 && !in_title && !edges) send_pointer(g_wins[under], POINTER_BUTTON, g_mx, g_my, b, pressed, 0);
 }
 
 void read_mouse() {
@@ -390,6 +562,16 @@ void read_mouse() {
     int count = (int)(n / (long)sizeof(input_event));
     int dx = 0, dy = 0;
     int ax = -1, ay = -1;
+    auto flush_motion = [&]() {
+        if (ax >= 0 || ay >= 0) {
+            move_pointer(ax >= 0 ? (int)((int64_t)ax * (g_W - 1) / 65535) : g_mx,
+                         ay >= 0 ? (int)((int64_t)ay * (g_H - 1) / 65535) : g_my);
+            ax = ay = -1;
+        } else if (dx || dy) {
+            move_pointer(g_mx + dx, g_my + dy);
+        }
+        dx = dy = 0;
+    };
     for (int i = 0; i < count; i++) {
         const input_event& e = ev[i];
         if (e.type == EV_REL && e.code == REL_X) dx += e.value;
@@ -397,30 +579,27 @@ void read_mouse() {
         else if (e.type == EV_ABS && e.code == ABS_X) ax = e.value;
         else if (e.type == EV_ABS && e.code == ABS_Y) ay = e.value;
         else {
-            // apply motion collected so far before a button or wheel event
-            if (ax >= 0 || ay >= 0) {
-                move_pointer(ax >= 0 ? (int)((int64_t)ax * (g_W - 1) / 65535) : g_mx,
-                             ay >= 0 ? (int)((int64_t)ay * (g_H - 1) / 65535) : g_my);
-                ax = ay = -1;
-            } else if (dx || dy) {
-                move_pointer(g_mx + dx, g_my + dy);
-                dx = dy = 0;
-            }
+            flush_motion();
             if (e.type == EV_BUTTON) {
                 uint8_t bit = (uint8_t)(1 << e.code);
                 g_buttons = e.value ? (uint8_t)(g_buttons | bit) : (uint8_t)(g_buttons & ~bit);
                 button((uint32_t)e.code, e.value != 0);
             } else if (e.type == EV_REL && e.code == REL_WHEEL) {
-                int under = window_at(g_mx, g_my, nullptr, nullptr);
+                int under = window_at(g_mx, g_my, nullptr, nullptr, nullptr);
                 if (under >= 0) send_pointer(g_wins[under], POINTER_SCROLL, g_mx, g_my, 0, 0, e.value);
             }
         }
     }
-    if (ax >= 0 || ay >= 0)
-        move_pointer(ax >= 0 ? (int)((int64_t)ax * (g_W - 1) / 65535) : g_mx,
-                     ay >= 0 ? (int)((int64_t)ay * (g_H - 1) / 65535) : g_my);
-    else if (dx || dy)
-        move_pointer(g_mx + dx, g_my + dy);
+    flush_motion();
+}
+
+void alt_tab() {
+    if (g_norder < 2) return;
+    // the window just below the top comes to the top (cycles through all)
+    int next = g_order[g_norder - 2];
+    raise_window(next);
+    set_focus(next);
+    if (g_log) printf("pane: alt-tab: window %u on top\n", g_wins[next].id);
 }
 
 void read_keyboard() {
@@ -431,13 +610,32 @@ void read_keyboard() {
     for (int i = 0; i < count; i++) {
         const input_event& e = ev[i];
         if (e.type != EV_KEY) continue;
-        bool ctrl = e.mods & 2, alt = e.mods & 4;
-        if (e.value == 1 && ctrl && alt && (e.unicode == 'q' || e.unicode == 'Q' || e.unicode == 0x11)) {
+        bool ctrl = e.mods & 2, alt = e.mods & 4, super = e.mods & 8;
+        bool press = e.value == 1;
+        if (press && ctrl && alt && (e.unicode == 'q' || e.unicode == 'Q' || e.unicode == 0x11)) {
             g_quit = true;          // Ctrl+Alt+Q: back to the kernel desktop
             return;
         }
-        if (e.value == 1 && alt && e.code == KEY_F1 + 3 && g_focus >= 0) {   // Alt+F4
+        if (press && alt && e.code == KEY_F1 + 3 && g_focus >= 0) {   // Alt+F4
             send_header(g_wins[g_focus].client, CLOSE_REQUEST, g_wins[g_focus].id);
+            continue;
+        }
+        if (press && alt && e.code == KEY_TAB) {                           // Alt+Tab
+            alt_tab();
+            continue;
+        }
+        // Super+arrows: up maximises, left/right snap, down restores
+        // (the keypad arrows without Num Lock count too)
+        bool keypad_arrow = !(e.mods & 32) && (e.code == 0x48 || e.code == 0x4B || e.code == 0x4D || e.code == 0x50);
+        uint16_t arrow = keypad_arrow
+                         ? (uint16_t)(e.code | 0x100) : e.code;
+        if (press && super && g_focus >= 0 && g_wins[g_focus].used &&
+            (arrow == KEY_UP || arrow == KEY_DOWN || arrow == KEY_LEFT || arrow == KEY_RIGHT)) {
+            Win& w = g_wins[g_focus];
+            if (arrow == KEY_LEFT) snap(w, 0);
+            else if (arrow == KEY_RIGHT) snap(w, 1);
+            else if (arrow == KEY_UP) snap(w, 2);
+            else snap(w, 3);
             continue;
         }
         if (g_focus < 0 || !g_wins[g_focus].used) continue;
@@ -524,13 +722,11 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
         w.title[MAX_TITLE - 1] = 0;
         place_new_window(w);
         g_order[g_norder++] = slot;
-        Header h{WINDOW_CREATED, sizeof h, m.h.serial, w.id};
-        Client& cc = g_clients[ci];
-        h.serial = m.h.serial;              // the request's serial, so the client can match it
-        port_try_send(cc.ch, &h, sizeof h, nullptr, 0);
+        Header h{WINDOW_CREATED, sizeof h, m.h.serial, w.id};      // the request's serial, for matching
+        port_try_send(c.ch, &h, sizeof h, nullptr, 0);
         send_configure(w);
         set_focus(slot);
-        add_damage(frame_rect(w));
+        add_damage(outer_rect(w));
         if (g_test) printf("pane: window %u created for %s: %dx%d at %d,%d\n", w.id, c.name, w.w, w.h, w.x, w.y);
         break;
     }
@@ -555,8 +751,8 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
             send_error(ci, w.id, ERR_BUFFER);
             break;
         }
-        // The buffer must be at least as large as the shape claims: the
-        // kernel sizes the block; a short one would read past its end.
+        // The block must be at least as large as the shape claims: a short
+        // one would have Pane read past its end.
         struct stat st;
         if (fstat(fd, &st) < 0 || (size_t)st.st_size < need) {
             shm_unmap(px);
@@ -564,6 +760,7 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
             send_error(ci, w.id, ERR_BUFFER);
             break;
         }
+        if (g_log && w.px) printf("pane: window %u has a new %ux%u buffer\n", w.id, bw, bh);
         if (w.px) shm_unmap(w.px);
         if (w.shm >= 0) close(w.shm);
         w.px = (uint32_t*)px;
@@ -572,8 +769,6 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
         w.bh = (int)bh;
         w.stride = (int)stride;
         w.shm = fd;
-        if (w.bw < w.w) w.w = w.bw;         // the window shows at most what the buffer holds
-        if (w.bh < w.h) w.h = w.bh;
         break;
     }
     case DAMAGE: {
@@ -598,7 +793,6 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
         if (!w.pending.empty()) add_damage(w.pending.translated(w.x, w.y));
         else if (!w.ever_committed) add_damage(Rect{w.x, w.y, w.w, w.h});
         w.pending = {0, 0, 0, 0};
-        w.committed = true;
         w.ever_committed = true;
         w.want_frame = true;
         g_commit_frame = true;
@@ -616,11 +810,10 @@ void handle_message(int ci, const Message& m, uint32_t len, int fd) {
         int wi = find_window(ci, m.h.window);
         if (wi < 0) break;
         Win& w = g_wins[wi];
-        add_damage(frame_rect(w));
-        w.x = m.geometry.x;
-        w.y = m.geometry.y < TITLE_H + BORDER ? TITLE_H + BORDER : m.geometry.y;
-        add_damage(frame_rect(w));
-        send_configure(w);
+        int nw = m.geometry.width > 0 ? m.geometry.width : w.w;
+        int nh = m.geometry.height > 0 ? m.geometry.height : w.h;
+        if (nw > 8192 || nh > 8192) break;
+        set_geometry(w, m.geometry.x, m.geometry.y, nw, nh);
         break;
     }
     case RAISE: {
@@ -687,10 +880,7 @@ void client_ready(int ci, uint32_t events) {
             handle_message(ci, m, (uint32_t)n, nfds ? fds[0] : -1);
         }
     }
-    if ((events & EVENT_HUP) && c.used) {
-        // drain what is left, then let the client go
-        drop_client(ci);
-    }
+    if ((events & EVENT_HUP) && c.used) drop_client(ci);
 }
 
 // --------------------------------------------------------------- setup --
@@ -762,8 +952,6 @@ int start_test_client() {
 }
 
 bool verify_test() {
-    // The test window is the one window panetest made; it is gone by now
-    // (the client exited), so check the back buffer at its last place.
     if (g_frames < 2) {
         printf("pane: FAIL: only %ld frame(s)\n", g_frames);
         return false;
@@ -781,6 +969,7 @@ bool verify_test() {
 int main(int argc, char** argv) {
     g_test = argc > 1 && strcmp(argv[1], "--test") == 0;
     g_demo = argc > 1 && strcmp(argv[1], "--demo") == 0;
+    g_log = g_test || g_demo;
     if (!load_fonts()) {
         printf("pane: the fonts blob is damaged\n");
         return 1;
@@ -801,15 +990,12 @@ int main(int argc, char** argv) {
     event_ctl(g_ev, EVENT_ADD, g_kbd, &e);
     e.data = 3;
     event_ctl(g_ev, EVENT_ADD, g_mouse, &e);
-    int child = -1;
     bool content_checked = false;
-    int test_win_x = 0, test_win_y = 0;
     if (g_test || g_demo) {
         e.events = EVENT_CHILD;
         e.data = 4;
         event_ctl(g_ev, EVENT_ADD, EVENT_FD_CHILD, &e);
-        child = start_test_client();
-        if (child < 0) {
+        if (start_test_client() < 0) {
             printf("pane: cannot start /bin/panetest\n");
             return 1;
         }
@@ -830,7 +1016,6 @@ int main(int argc, char** argv) {
                 int status = 0;
                 while (waitpid(-1, &status, 1) > 0) {}
                 if (g_test) {
-                    // one last frame so the departed window's area is repainted
                     if (g_ndmg || g_dmg_all) frame();
                     bool ok = verify_test() && content_checked;
                     if (!content_checked) printf("pane: FAIL: the window's content was never seen on screen\n");
@@ -848,13 +1033,11 @@ int main(int argc, char** argv) {
             for (int i = 0; i < MAX_WINS; i++) {
                 const Win& w = g_wins[i];
                 if (!w.used || !w.ever_committed || !w.px) continue;
-                test_win_x = w.x;
-                test_win_y = w.y;
                 if (g_last_commit_px == 100) {
                     uint32_t blue = g_back.row(w.y + 100)[w.x + 100] & 0xFFFFFF;
                     uint32_t red = g_back.row(w.y + 25)[w.x + 25] & 0xFFFFFF;
                     if (blue == 0x2040C0 && red == 0xE03030) {
-                        printf("pane: content verified on screen at %d,%d\n", test_win_x, test_win_y);
+                        printf("pane: content verified on screen at %d,%d\n", w.x, w.y);
                         content_checked = true;
                     } else {
                         printf("pane: FAIL: expected blue 2040c0 and red e03030, saw %06x and %06x\n", blue, red);

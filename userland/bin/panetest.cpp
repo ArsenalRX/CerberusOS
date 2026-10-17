@@ -29,7 +29,9 @@ int main(int argc, char** argv) {
     int frames = 0;
     bool red_done = false;
     pane::Window* extra[3] = {};
-    while (c.next_event(&e, 5000)) {
+    // The test gives up after 5 s without events; the demo stays until
+    // its first window is closed or Pane goes away.
+    while (c.next_event(&e, demo ? ~0ull : 5000)) {
         if (e.type == pane::EVT_DISCONNECTED) break;
         if (e.type == pane::EVT_FRAME && e.window == w) {
             frames++;
@@ -55,6 +57,17 @@ int main(int argc, char** argv) {
         if (e.type == pane::EVT_CLOSE) {
             if (e.window == w) break;
             c.destroy_window(e.window);
+        }
+        if (e.type == pane::EVT_CONFIGURE && e.window && (e.w != e.window->width || e.h != e.window->height)) {
+            // resized by the user: a new buffer, drawn again
+            pane::Window* win = e.window;
+            uint32_t colour = win == w ? 0xFF2040C0 : win->pixels ? win->pixels[0] : 0xFF208060;
+            if (c.resize(win, e.w, e.h)) {
+                fill(win, 0, 0, win->width, win->height, colour);
+                if (win == w) fill(win, 20, 20, 10, 10, 0xFFE03030);
+                c.damage(win, 0, 0, win->width, win->height);
+                c.commit(win);
+            }
         }
         if (e.type == pane::EVT_KEY && e.pressed && e.unicode == 'q') break;
     }

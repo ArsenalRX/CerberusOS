@@ -338,13 +338,33 @@ int sysinfo(struct sysinfo* out);
 #define REL_WHEEL 2
 #define ABS_X 0
 #define ABS_Y 1
-// Key codes in EV_KEY events (the keyboard driver's): 1 escape, 2 tab,
-// 3 enter, 4 backspace, 5 delete, 6-9 up/down/left/right, 10 home, 11 end,
-// 12-13 page up/down, 14 super, 15 alt, 16 ctrl, 17 shift, 32-43 F1-F12,
-// 64 a printable key (see unicode).
-#define KEY_ESCAPE 1
-#define KEY_F1 32
-#define KEY_CHAR 64
+// Key codes in EV_KEY events are physical keys: the set-1 make code, plus
+// 0x100 for the extended (E0-prefixed) keys; the layout only changes
+// `unicode`. The common ones:
+#define KEY_ESCAPE 0x01
+#define KEY_BACKSPACE 0x0E
+#define KEY_TAB 0x0F
+#define KEY_ENTER 0x1C
+#define KEY_LCTRL 0x1D
+#define KEY_LSHIFT 0x2A
+#define KEY_RSHIFT 0x36
+#define KEY_LALT 0x38
+#define KEY_SPACE 0x39
+#define KEY_F1 0x3B          // F1..F10 = 0x3B..0x44
+#define KEY_F11 0x57
+#define KEY_F12 0x58
+#define KEY_HOME 0x147
+#define KEY_UP 0x148
+#define KEY_PAGE_UP 0x149
+#define KEY_LEFT 0x14B
+#define KEY_RIGHT 0x14D
+#define KEY_END 0x14F
+#define KEY_DOWN 0x150
+#define KEY_PAGE_DOWN 0x151
+#define KEY_INSERT 0x152
+#define KEY_DELETE 0x153
+#define KEY_LSUPER 0x15B
+#define KEY_RSUPER 0x15C
 struct input_event {
     uint64_t time_us;
     uint16_t type, code;

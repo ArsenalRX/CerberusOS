@@ -4585,6 +4585,19 @@ void gui_resume() {
     }
     g.active = true;
     g.fb = Surface((u32*)fb.address, g.W, g.H, (int)(fb.pitch / 4));
+    // The program drew whatever it liked: forget what the screen held, so
+    // the next frame writes every pixel instead of only the ones that
+    // differ from the last frame this desktop drew (every real colour has
+    // alpha 0xFF, so nothing matches a zeroed shadow).
+    memset(g.front, 0, (usize)g.W * g.H * sizeof(u32));
+    // Keys and mouse movement queued while the program had the screen were
+    // meant for it (Pane's Alt+Tab, Super+arrows, Ctrl+Alt+Q): drop them
+    // instead of replaying them into the desktop.
+    KeyEvent ke;
+    while (ps2kbd_poll_event(&ke)) {}
+    MouseEvent me;
+    while (ps2mouse_poll(&me)) {}
+    g.super_down = false;
     refresh_everything();
     g_compositor_wake_hint();
 }

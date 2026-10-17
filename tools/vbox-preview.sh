@@ -31,7 +31,7 @@ typetext() {  # lower-case letters, digits, space, enter
             o) code=18;; p) code=19;; q) code=10;; r) code=13;; s) code=1f;; t) code=14;; u) code=16;;
             v) code=2f;; w) code=11;; x) code=2d;; y) code=15;; z) code=2c;; ' ') code=39;;
             1) code=02;; 2) code=03;; 3) code=04;; 4) code=05;; 5) code=06;; 6) code=07;; 7) code=08;;
-            8) code=09;; 9) code=0a;; 0) code=0b;; *) continue;;
+            8) code=09;; 9) code=0a;; 0) code=0b;; -) code=0c;; .) code=34;; /) code=35;; *) continue;;
         esac
         press "$code"
     done

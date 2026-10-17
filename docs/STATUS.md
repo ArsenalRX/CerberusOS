@@ -68,7 +68,12 @@ them). Nothing is half-written.
 
 ## Current phase
 
-**Phase 11 — IPC: COMPLETE (2026-10-04).** Phases 0–3 complete
+**Phase 12 — Pane: IN PROGRESS (started 2026-10-13).** The first slice
+is in: the window server runs as a user program on a shared mapping of
+`/dev/fb0`, with the port protocol, `libpane` and a client, behind
+`tests/integration/pane.expect`; the kernel desktop still boots and hands
+the screen over with `pane` / `gui stop`. What is left is listed in
+docs/TO_FINISH.md (phase 12 steps 5 and 6). Phases 0–3 complete
 2026-09-14; phases 4–7 complete 2026-10-03; phases 8 to 11 complete
 2026-10-04. Desktop preview (owner-requested, brought forward from phases
 12-13) runs in its own thread; 0.0.5g (2026-10-05) is a polish release of

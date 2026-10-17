@@ -1,0 +1,39 @@
+# Phase 12, second slice: Pane's window management. With the four demo
+# windows up: Alt+Tab brings the next window to the top, Super+Left snaps
+# it to the left half, Super+Up maximises it, Super+Down gives it its old
+# place back, dragging the bottom-right corner of the top window resizes
+# it and the program answers with a buffer of the new size. Keys typed
+# for Pane are not replayed into the kernel desktop afterwards.
+cerberus kernel shell
+!send pane --demo
+!wait 8
+pane: screen
+!keys alt tab
+!wait 1
+pane: alt-tab: window 3 on top
+!keys meta_l left
+!wait 1
+pane: window 3 snapped left: 630x762 at 5,33
+!keys meta_l up
+!wait 1
+pane: window 3 snapped maximised: 1270x762 at 5,33
+!keys meta_l down
+!wait 1
+pane: window 3 restored: 280x160 at 144,152
+!keys alt tab
+!wait 1
+pane: alt-tab: window 4 on top
+!mouseto 494 342
+!button left down
+!mouse 100 60
+!button left up
+!wait 2
+pane: window 4 resized: 420x220
+pane: window 4 has a new 420x220 buffer
+!keys ctrl alt q
+!wait 3
+pane: 
+run: /bin/pane exited with status 0
+!send gui
+!wait 2
+gui:

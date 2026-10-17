@@ -1744,6 +1744,59 @@ build they test to be a named, tagged version they can go back to).
 
 ---
 
+## 2026-10-13 — Phase 12, first slice: how Pane leaves the kernel
+
+The owner said to continue on the roadmap, so phase 12 started without
+the proposed 11B/11C (decision 14 stays open; nothing here stops them
+from coming later). Choices made:
+
+- **The screen reaches a program as a shared, write-combined mapping of
+  `/dev/fb0`** (`mmap` with `MAP_SHARED`, a new `mmap` op in
+  `CharDeviceOps`, `vm::WRITE_COMBINE` = PAT entry 5 as the kernel's own
+  framebuffer mapping). `MAP_SHARED` of anything but such a device stays
+  EINVAL; nothing shared is executable. Rejected: `read`/`write` on
+  `/dev/fb0` (a frame per `write` system call, copies twice); a special
+  system call (the POSIX shape is what ported software expects).
+- **The kernel desktop keeps the boot path.** `gui stop` / `gui start`
+  (and the `pane` shell command around `run /bin/pane`) hand the screen
+  over and take it back with a full repaint; `FBIO_SET_MODE` is refused
+  while the kernel desktop is active. The panel, launcher and the
+  built-in applications stay in the kernel until Pane can host them; the
+  desktop tests keep passing meanwhile. Rejected: switching the boot to
+  Pane now (nothing to show on it yet).
+- **The protocol** (`userland/pane/protocol.h`): fixed-size messages
+  with a header `{type, length, serial, window}`; every message's length
+  must equal its type's struct, or the client is dropped (SPEC §5A). A
+  window's buffer is a shared-memory descriptor attached to
+  `AttachBuffer`; the server checks the block's size with `fstat` (which
+  now reports it) before reading a pixel, so a short buffer cannot make
+  the server read past its end. A client can only name its own windows.
+  The server never waits on a client (`port_try_send`): a stuck program
+  cannot stop the screen. `Connected` carries a `scale` (100 = 1:1) so
+  HiDPI is in the protocol from day one (the review's phase 12 addition).
+- **libgfx is shared by building `kernel/gfx/gfx.cpp` a second time for
+  user programs** (with SSE) instead of moving it; the fonts blob is
+  embedded in Pane as in the kernel. Rejected: a separate copy (would
+  drift).
+- **Input:** Pane reads `/dev/input/kbd0` and `mouse0`. Under VirtualBox
+  the host's absolute position now reaches `/dev/input` as `EV_ABS`
+  events, produced once per tick by the mouse driver (`ps2mouse_tick`,
+  called from the scheduler tick outside its lock; B-016's per-tick poll
+  moved there from the kernel desktop, which now consumes the same
+  events).
+- **Frame pacing:** a one-shot 8 ms event timer armed only while damage
+  is pending; nothing runs when nothing changed. A 10x10 commit
+  recomposites exactly 100 pixels (`tests/integration/pane.expect`).
+- Not yet (next slices): the panel, launcher and applications in Pane;
+  resize; opacity, shadows and rounded corners; the Alt+Tab switcher;
+  capture and clipboard mediation; the protocol fuzzer; the 8 ms budget
+  measurement at 1920x1080 with ten windows; `init` starting Pane and a
+  supervisor restarting it.
+
+Rejected: writing the compositor anew from scratch in one go (the kernel
+desktop is the model, ported piece by piece behind a passing test each
+time).
+
 ## 2026-10-13 — No assistant attribution anywhere in the repository (owner)
 
 The owner asked for the assistant's name to be removed from everything
