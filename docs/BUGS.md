@@ -62,6 +62,22 @@ class of bug; if there is none, say so.
 - Status: FIXED 2026-10-13 (0.0.6a); the owner's check on their VM is
   still to come.
 
+### B-020 — `test vmm` miscounts frames when the run is slow (emulation)
+- Found: 2026-10-17, `make test` under QEMU without KVM (WSL had lost
+  nested virtualisation): `vmm` and `shell-tests` failed at
+  `tests/kernel/test_vmm.cpp:252`; both pass when run alone.
+- Where: the teardown check of `tests/kernel/test_vmm.cpp`.
+- Symptom: `pm1.used_frames - pm0.used_frames == kept` fails.
+- Cause (established in part): the check compares the system-wide count
+  of used frames, so any frame another thread takes during the test (the
+  desktop runs alongside) breaks it. Not caused by 0.0.6b: the 0.0.6a
+  release fails the same way under emulation. Which thread allocates is
+  not pinned down.
+- Fix: none yet. Options: count only the test's own address spaces, or
+  pause the desktop for the test.
+- Guard: none; under KVM the full run passes.
+- Status: OPEN.
+
 ### B-010 — `eventtest` misses its 1 ms wake-up limit on VirtualBox
 - Found: 2026-10-04, running the phase 11 programs on VirtualBox.
 - Where: `kernel/ipc/event.cpp`, `userland/bin/eventtest.cpp`; the
