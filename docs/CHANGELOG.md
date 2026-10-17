@@ -22,6 +22,8 @@ then `0.0.6a`, one letter per release (docs/SPEC.md §23.1). Releases
 
 ## Unreleased
 
+## 0.0.6b — 2026-10-17
+
 Phase 12, Pane, has started: the window server runs as a user program.
 
 ### Added

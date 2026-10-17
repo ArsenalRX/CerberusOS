@@ -18,11 +18,15 @@ matching docs/TO_FINISH.md.
 something works that does not, the next session builds on a broken base; if
 it omits half-done work, that work is lost or done twice.
 
-Last updated: **2026-10-13**.
+Last updated: **2026-10-17**.
 
 ## Version
 
-**0.0.6a is the current release (2026-10-13, evening):** the VirtualBox
+**0.0.6b is the current release (2026-10-17):** phase 12 started — Pane,
+the window server as a user program (first and second slices: windows
+with rounded corners and shadows, move, resize, Alt+Tab, Super+arrow
+snapping; `pane` / `pane --demo` in the shell), B-017 to B-019 fixed.
+Before it, **0.0.6a (2026-10-13, evening):** the VirtualBox
 mouse fix (B-016), 53 of 53 tests. Before it, **0.0.5j** (2026-10-13), built
 and fully tested on 2026-10-06 and released after the session of
 2026-10-06 ran out before tagging it. 0.0.5j holds: hard links, and
@@ -43,13 +47,17 @@ polish), 0.0.5a (phase 8). Every release moves one letter (`0.0.5a` …
 `0.0.5j`, then `0.0.6a`; docs/SPEC.md §23.1); releases 0.3.0 to 0.7.0 keep
 their old numbers. The release is always `dist/cerberus.iso`
 (`dist/VERSION.txt` names the version); each release overwrites it. The
-tree now builds as `0.0.6a-dev+<commit>`. The source is also on GitHub:
+tree now builds as `0.0.6c-dev+<commit>`. The source is also on GitHub:
 https://github.com/ArsenalRX/CerberusOS (`origin`; pushed on the owner's
 request, 2026-10-04: push `main` and the tags after every verified release,
 and keep README.md and `docs/screenshots/` current). History:
 docs/CHANGELOG.md.
 
-**Where the last session stopped (2026-10-13):** 0.0.5j released, in
+**Where the last session stopped (2026-10-17):** 0.0.6b released with
+the Pane second slice; next is phase 12 step 5 (docs/TO_FINISH.md).
+WSL had no nested virtualisation that day (no KVM), so the tests ran
+under emulation: 53 of 55, the two failures are B-020 (also on 0.0.6a
+under emulation). **Earlier (2026-10-13):** 0.0.5j released, in
 `dist/`, pushed; the owner's VirtualBox VM is "Cerberus 0.0.5j" (in
 their `VirtualBox VMs` folder, 4 CPUs, a 1 GiB disk for `/data`). The
 session also folded the owner's roadmap review into docs/DECISIONS.md
@@ -89,6 +97,13 @@ performance are requirements; our own web browser is phase 15B (owner,
 2026-10-04). See docs/DECISIONS.md.
 
 ## Last verified
+
+- 2026-10-17, 0.0.6b code: `make test` under QEMU **without KVM** (TCG,
+  4 CPUs): 53 of 55 passed; `vmm` and `shell-tests` failed in the
+  frame-count check (B-020), `vmm` passed when re-run alone, and 0.0.6a
+  fails the same way under TCG. `make bench` and `make fuzz` not re-run
+  (no budgeted or hostile-input kernel path changed; the Pane protocol
+  fuzzer is still to be written).
 
 All on 2026-10-06, on the 0.0.5j code (0.0.5h and 0.0.5i the day before:
 49 of 49 each).
