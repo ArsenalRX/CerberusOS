@@ -71,6 +71,8 @@ key e0 5b 20 a0 e0 db
 # Phase 12: the Pane window server with its demo client, then back (Ctrl+Alt+Q)
 key e0 5b 14 94 e0 db; sleep 1
 typetext "pane --demo"; enter; shot 9-pane 4
+key 38 0f 8f b8;             shot 9b-pane-alttab 1          # Alt+Tab
+key e0 5b e0 4b e0 cb e0 db; shot 9c-pane-snap 1            # Super+Left
 key 1d 38 10 90 b8 9d;      sleep 2
 shot 10-back 1
 w controlvm "$NAME" poweroff >/dev/null 2>&1

@@ -9,7 +9,8 @@ x86-64 hardware (today: QEMU and VirtualBox), brings up every CPU core, runs
 protected user programs, stores files on a journaled disk format of its own,
 and draws a desktop with windows you can move, resize and close.
 
-> **Status: early.** Version `0.0.5j`. Build phases 0 to 11 of 19 are done.
+> **Status: early.** Version `0.0.6b`. Build phases 0 to 11 of 19 are done;
+> phase 12 (Pane, the desktop as a program) is under way.
 > The project site, generated from these docs: https://accerberus.github.io
 > How the work is organised: [docs/WORKING_NOTES.md](docs/WORKING_NOTES.md).
 > It runs in a virtual machine, not yet on your laptop, and it is not
@@ -23,6 +24,8 @@ and draws a desktop with windows you can move, resize and close.
 ![The calendar with a reminder, opened from the taskbar clock](docs/screenshots/calendar.png)
 
 ![Dragging a window to the screen edge: the snap outline](docs/screenshots/snap.png)
+
+![Pane, the window server running as a program, with four windows from a client](docs/screenshots/pane.png)
 
 ---
 
@@ -81,7 +84,8 @@ phase starts until the one before it passes its acceptance tests.
 | 11 | Programs talking to each other: ports, shared memory, signals, threads, futexes, event queues |
 
 The desktop you see in the screenshots is a preview that currently runs
-inside the kernel; phase 12 moves it into its own protected program.
+inside the kernel; phase 12 moves it into its own protected program. The
+first part of that, Pane, already runs: `pane --demo` in the terminal.
 
 The project was called *Lumen* until October 2026.
 
